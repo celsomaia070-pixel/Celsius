@@ -147,8 +147,8 @@ Regras:
 # Interface Streamlit principal
 # ==============================
 
-st.set_page_config(page_title="LUKA'S agente local de IA")
-st.title("LUKA'S agente local de IA")
+st.set_page_config(page_title="KAFÚ agente local de IA")
+st.title("KAFÚ agente local de IA do Vitor")
 
 if "mensagens" not in st.session_state:
     st.session_state.mensagens = []
