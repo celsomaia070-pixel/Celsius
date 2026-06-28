@@ -23,7 +23,13 @@ def carregar_memorias():
             memorias = json.load(f)
             EMBEDDINGS_CACHE.clear()
             for memoria in memorias:
-                EMBEDDINGS_CACHE[memoria] = modelo_embedding.encode([memoria])[0]
+                # Verificar e ajustar a entrada para o método encode
+                if isinstance(memoria, dict):
+                    memoria_texto = memoria.get('texto', '')
+                else:
+                    memoria_texto = memoria
+
+                EMBEDDINGS_CACHE[memoria] = modelo_embedding.encode([memoria_texto])[0]
             return memorias
     return []
 
