@@ -9,25 +9,30 @@ import streamlit as st
 from duckduckgo_search import DDGS
 from sentence_transformers import SentenceTransformer
 
-
 ARQUIVO_MEMORIAS = "memorias.json"
+EMBEDDINGS_CACHE = {}
 
 # Carregar modelo de embedding uma unica vez.
 modelo_embedding = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def carregar_memorias():
-    """Carrega as memorias salvas."""
+    """Carrega as memorias salvas e seus embeddings."""
     if os.path.exists(ARQUIVO_MEMORIAS):
         with open(ARQUIVO_MEMORIAS, "r", encoding="utf-8") as f:
-            return json.load(f)
+            memorias = json.load(f)
+            EMBEDDINGS_CACHE.clear()
+            for memoria in memorias:
+                EMBEDDINGS_CACHE[memoria] = modelo_embedding.encode([memoria])[0]
+            return memorias
     return []
 
 
 def salvar_memorias(memorias):
-    """Salva as memorias em arquivo."""
+    """Salva as memorias em arquivo e atualiza o cache de embeddings."""
     with open(ARQUIVO_MEMORIAS, "w", encoding="utf-8") as f:
         json.dump(memorias, f, ensure_ascii=False, indent=2)
+    carregar_memorias()  # Atualizar o cache de embeddings
 
 
 def buscar_memorias(texto):
@@ -37,16 +42,14 @@ def buscar_memorias(texto):
         if not memorias:
             return []
 
-        embeddings = modelo_embedding.encode([texto] + memorias)
-        query_embedding = embeddings[0]
-        mem_embeddings = embeddings[1:]
+        query_embedding = modelo_embedding.encode([texto])[0]
 
-        similarities = np.dot(mem_embeddings, query_embedding) / (
-            np.linalg.norm(mem_embeddings, axis=1) * np.linalg.norm(query_embedding)
+        similarities = np.dot(list(EMBEDDINGS_CACHE.values()), query_embedding) / (
+            np.linalg.norm(list(EMBEDDINGS_CACHE.values()), axis=1) * np.linalg.norm(query_embedding)
         )
 
         top_indices = np.argsort(similarities)[::-1][:3]
-        return [memorias[i] for i in top_indices if similarities[i] > 0.3]
+        return [list(EMBEDDINGS_CACHE.keys())[i] for i in top_indices if similarities[i] > 0.3]
     except Exception as e:
         print(f"Erro na busca de memorias: {e}")
         return []
