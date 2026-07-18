@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Testes
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dados locais (não commitar dados de usuário)
+chroma_db/
+chats.json
+memorias.json
+*.log
+voices/
+
+# Build
+build/
+dist/
+*.egg-info/
+celsius.egg-info/
+.DS_Store
+Thumbs.db
