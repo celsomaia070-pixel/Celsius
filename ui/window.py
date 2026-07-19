@@ -68,11 +68,7 @@ class MessageBubble(QWidget):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        if self.is_user:
-            # User messages: stretch on LEFT pushes content to RIGHT edge
-            container_layout.addStretch(1)
-
-        # Message content widget - NO stretch factor (let empty space expand)
+        # Message content widget - give it stretch factor to claim space
         self.message_widget = QWidget()
         msg_layout = QVBoxLayout(self.message_widget)
         msg_layout.setContentsMargins(16, 0, 16, 0)
@@ -116,12 +112,13 @@ class MessageBubble(QWidget):
             self.content_label.enterEvent = lambda e: self._show_actions()
             self.content_label.leaveEvent = lambda e: self._hide_actions()
 
-        # Add message_widget WITHOUT stretch factor (0 = don't expand)
-        container_layout.addWidget(self.message_widget, 0)
-
-        if not self.is_user:
-            # Assistant messages: stretch on RIGHT pushes content to LEFT edge
-            container_layout.addStretch(1)
+        # Add message_widget WITH stretch factor so it expands
+        # Use alignment to position: right for user, left for assistant
+        container_layout.addWidget(self.message_widget, 1)
+        if self.is_user:
+            container_layout.setAlignment(self.message_widget, Qt.AlignRight)
+        else:
+            container_layout.setAlignment(self.message_widget, Qt.AlignLeft)
 
         main_layout.addWidget(self.container)
         
