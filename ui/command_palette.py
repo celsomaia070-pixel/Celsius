@@ -244,15 +244,14 @@ class CommandPaletteManager:
 
     def _execute_action(self, action_id: str):
         handlers = {
-            "new_chat": lambda: self.window.limpar_historico(),
-            "clear_chat": lambda: self.window.limpar_historico(),
+            "new_chat": self.window._new_conversation,
+            "clear_chat": self.window.chat_view.clear,
             "toggle_sidebar": lambda: self.window.sidebar.setVisible(not self.window.sidebar.isVisible()),
-            "toggle_theme": lambda: self.window._toggle_theme(),
-            "settings": lambda: self.window._show_settings(),
-            "export_chat": lambda: self.window._export_chat(),
-            "change_model": lambda: self.window.combo_modelo.showPopup(),
-            "voice_toggle": lambda: self.window.alternar_voz(),
-            "generate_report": lambda: self.window.gerar_relatorio(),
+            "toggle_theme": self.window._toggle_theme,
+            "settings": self.window._show_settings,
+            "change_model": lambda: self.window.input_area.model_combo.showPopup(),
+            "voice_toggle": self.window._toggle_voice,
+            "generate_report": self.window._generate_report,
         }
 
         if action_id in handlers:

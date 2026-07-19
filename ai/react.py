@@ -3,8 +3,6 @@ import json
 import re
 from datetime import datetime
 
-import ollama
-
 import core.config as config
 from ai.tools import REGISTRO_FERRAMENTAS, executar_ferramenta, obter_schemas_ollama
 from core.config import NUM_CTX, NUM_PREDICT
@@ -202,6 +200,7 @@ def _parsear_tool_call(texto):
 
 def _testar_tools_support():
     try:
+        import ollama
         response = ollama.chat(
             model=config.MODELO_LLM,
             messages=[{"role": "user", "content": "teste"}],
@@ -232,6 +231,8 @@ def _modelo_suporta_tools():
 
 
 def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, history=None):
+    import ollama
+
     pergunta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()

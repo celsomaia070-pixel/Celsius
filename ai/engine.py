@@ -3,8 +3,6 @@ import random
 from collections.abc import Callable
 from datetime import datetime
 
-import ollama
-
 import core.config as config
 from ai.react import loop_react
 from core.commands import executar_comando
@@ -227,6 +225,7 @@ def gerar_resposta_com_imagem(
     ]
 
     try:
+        import ollama
         stream = ollama.chat(
             model=config.MODELO_LLM,
             messages=mensagens_api,

@@ -29,7 +29,7 @@ from core.memory import get_memory_service
 from processors import processar_arquivo
 from ui.command_palette import CommandPaletteManager
 from ui.sidebar import Sidebar
-from ui.theme import LIGHT_SCHEME, ThemeMode, get_stylesheet
+from ui.theme import DARK_SCHEME, LIGHT_SCHEME, ThemeMode, get_stylesheet
 from workers.ai_worker import WorkerManager
 
 
@@ -71,7 +71,7 @@ class MessageBubble(QWidget):
         # Message content widget - give it stretch factor to claim space
         self.message_widget = QWidget()
         msg_layout = QVBoxLayout(self.message_widget)
-        msg_layout.setContentsMargins(16, 0, 16, 0)
+        msg_layout.setContentsMargins(8, 0, 8, 0)
         msg_layout.setSpacing(4)
 
         # Label: "Voce" or "Celsius"
@@ -113,18 +113,12 @@ class MessageBubble(QWidget):
             self.content_label.leaveEvent = lambda e: self._hide_actions()
 
         # Add message_widget WITH stretch factor so it expands
-        # Use alignment to position: right for user, left for assistant
         container_layout.addWidget(self.message_widget, 1)
-        if self.is_user:
-            container_layout.setAlignment(self.message_widget, Qt.AlignRight)
-        else:
-            container_layout.setAlignment(self.message_widget, Qt.AlignLeft)
 
         main_layout.addWidget(self.container)
         
         # Ensure message widget expands properly to fill available space
         self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.message_widget.setMinimumWidth(300)
 
     def _add_attachments(self, layout):
         from PySide6.QtWidgets import QHBoxLayout
@@ -324,7 +318,7 @@ class ModernChatView(QWidget):
 
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(40, 20, 40, 20)
+        self.content_layout.setContentsMargins(0, 20, 0, 20)
         self.content_layout.setSpacing(4)
         self.content_layout.addStretch()
 
@@ -798,7 +792,7 @@ class ModernChatWindow(QMainWindow):
         root_layout.addWidget(content_widget, 1)
 
     def _apply_theme(self):
-        scheme = LIGHT_SCHEME
+        scheme = DARK_SCHEME if self._theme_mode == ThemeMode.DARK else LIGHT_SCHEME
         self.setStyleSheet(get_stylesheet(scheme))
 
         self._top_bar.setStyleSheet(f"""

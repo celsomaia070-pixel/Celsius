@@ -9,6 +9,13 @@ class SecurityError(Exception):
 def validate_path(path: str | Path, base_dir: Path | None = None) -> Path:
     path = Path(path).resolve()
 
+    if base_dir is not None:
+        base_dir = Path(base_dir).resolve()
+        try:
+            path.relative_to(base_dir)
+        except ValueError:
+            raise SecurityError(f"Path traversal attempt blocked: {path}") from None
+
     if not path.exists():
         raise SecurityError(f"File not found: {path}")
 
