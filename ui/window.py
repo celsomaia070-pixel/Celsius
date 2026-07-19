@@ -1117,7 +1117,7 @@ class ModernChatWindow(QMainWindow):
             on_finished=self._on_ai_finished,
             on_status=self._on_ai_status,
             on_step=self._on_ai_step,
-            on_chunk=lambda token: self.chat_view.append_streaming(token),
+            on_chunk=lambda token: (print(f"[DEBUG] chunk: {token[:20]}"), self.chat_view.append_streaming(token)),
         )
 
     def _on_ai_status(self, msg: str):
@@ -1127,6 +1127,7 @@ class ModernChatWindow(QMainWindow):
         pass
 
     def _on_ai_finished(self, response: str):
+        print(f"[DEBUG] _on_ai_finished called, response len: {len(response)}")
         self.chat_view.finish_streaming()
         if self._current_conv_id and self._current_conv_id in self._conversations:
             self._conversations[self._current_conv_id]["messages"].append(("assistant", response))
@@ -1183,6 +1184,7 @@ class ModernChatWindow(QMainWindow):
                 self.chat_view.add_assistant_message(f"Erro ao iniciar microfone: {e}")
 
     def _on_mic_recognized(self, text: str):
+        print(f"[DEBUG] _on_mic_recognized: '{text}'")
         self._mic_worker = None
         self.input_area.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#9E9EA3"))
         self.input_area.btn_mic.setToolTip("Gravar áudio")
@@ -1191,6 +1193,7 @@ class ModernChatWindow(QMainWindow):
             self._on_send_message(text)
 
     def _on_mic_error(self, msg: str):
+        print(f"[DEBUG] _on_mic_error: {msg}")
         self._mic_worker = None
         self.input_area.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#9E9EA3"))
         self.input_area.btn_mic.setToolTip("Gravar áudio")

@@ -23,6 +23,7 @@ class VozWorker(QThread):
 
         try:
             import edge_tts
+            print(f"[TTS DEBUG] Starting TTS for: {self.texto[:50]}")
 
             temp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
             self._arquivo_voz = temp.name
@@ -37,6 +38,7 @@ class VozWorker(QThread):
 
             loop.run_until_complete(_gerar())
             loop.close()
+            print(f"[TTS DEBUG] Audio saved to: {self._arquivo_voz}")
 
             if not self._should_stop:
                 self._reproduzir()

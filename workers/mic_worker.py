@@ -44,7 +44,7 @@ class MicWorker(QRunnable):
         try:
             device = sd.default.device[0]
             info = sd.query_devices(device)
-            print(f"[MIC] Usando dispositivo: {info['name']}")
+            print(f"[MIC DEBUG] Usando dispositivo: {info['name']}")
 
             self._lock_stream = sd.InputStream(
                 device=device,
@@ -61,7 +61,7 @@ class MicWorker(QRunnable):
                     continue
 
         except Exception as e:
-            print(f"[MIC] ERRO: {e}")
+            print(f"[MIC DEBUG] ERRO: {e}")
             traceback.print_exc()
             self.signals.error.emit(f"Erro ao acessar microfone: {e}")
             return
@@ -75,10 +75,12 @@ class MicWorker(QRunnable):
                 self._lock_stream = None
 
         if not lista_frames:
+            print("[MIC DEBUG] Nenhum audio capturado")
             self.signals.error.emit("Nenhum audio capturado.")
             return
 
         gravacao_total = np.concatenate(lista_frames, axis=0)
+        print(f"[MIC DEBUG] Audio captured, shape: {gravacao_total.shape}")
 
         try:
             audio_float32 = gravacao_total.flatten().astype(np.float32) / 32768.0
@@ -87,19 +89,21 @@ class MicWorker(QRunnable):
             import torch
             audio_tensor = torch.from_numpy(audio_float32)
 
+            print("[MIC DEBUG] Starting Whisper transcription...")
             result = model.transcribe(
                 audio_tensor,
                 language="pt",
                 fp16=False
             )
             texto = result["text"].strip()
+            print(f"[MIC DEBUG] Transcription: '{texto}'")
             if texto:
                 self.signals.recognized.emit(texto)
             else:
                 self.signals.error.emit("Nao entendi o audio.")
 
         except Exception as e:
-            print(f"[MIC] ERRO reconhecimento: {e}")
+            print(f"[MIC DEBUG] ERRO reconhecimento: {e}")
             traceback.print_exc()
             self.signals.error.emit(f"Erro ao reconhecer audio: {e}")
 
