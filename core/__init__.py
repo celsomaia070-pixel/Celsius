@@ -14,9 +14,9 @@ from core.config import (
     Settings,
     get_settings,
 )
-from core.llama_server import (
+from core.llama_cpp import (
+    get_llama,
     get_llama_client_config,
-    get_server_manager,
     start_llama_server,
     stop_llama_server,
 )

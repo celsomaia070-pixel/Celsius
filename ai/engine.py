@@ -192,9 +192,7 @@ def gerar_resposta_com_imagem(
     fn_chunk: Callable[[str], None] | None = None,
 ) -> str:
     import base64
-    from openai import OpenAI
-
-    settings = get_settings()
+    from core.llama_cpp import get_llama
 
     if fn_status:
         fn_status("Analisando imagem...")
@@ -206,7 +204,7 @@ def gerar_resposta_com_imagem(
 
     data_e_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
 
-    mensagens_api = [
+    mensagens = [
         {
             "role": "system",
             "content": (
@@ -229,25 +227,23 @@ def gerar_resposta_com_imagem(
     ]
 
     try:
-        client_config = get_llama_client_config()
-        client = OpenAI(**client_config)
-        stream = client.chat.completions.create(
-            model=config.MODELO_LLM,
-            messages=mensagens_api,
+        llama = get_llama()
+        stream = llama.chat_completion(
+            messages=mensagens,
             temperature=0.7,
-            max_tokens=settings.num_predict,
+            max_tokens=2048,
             stream=True,
         )
 
         resposta = ""
         for chunk in stream:
-            token = chunk.choices[0].delta.content or ""
+            token = chunk["choices"][0]["delta"].get("content", "") or ""
             resposta += token
             if fn_chunk:
                 fn_chunk(token)
         return resposta.strip()
     except Exception as e:
-        return f"Erro ao analisar imagem: {e}"
+        return f"Erro ao analisar imagem: {e}. Nota: O modelo atual pode nao suportar visao. Use um modelo multimodal (ex: Qwen2.5-VL, LLaVA) com arquivo mmproj para suporte a imagens."
 
 
 def get_session_context() -> ConversationContext:

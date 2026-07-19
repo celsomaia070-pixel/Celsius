@@ -1,13 +1,14 @@
+"""ReAct loop using llama-cpp-python directly for GPU/CPU inference."""
 import gc
 import json
 import re
 from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional
 
 import core.config as config
 from ai.tools import REGISTRO_FERRAMENTAS, executar_ferramenta, obter_schemas_openai
-from core.config import NUM_CTX, NUM_PREDICT
-from core.llama_server import get_llama_client_config
-from openai import OpenAI
+from core.config import NUM_PREDICT
+from core.llama_cpp import get_llama
 
 MAX_ITERACOES = 3
 
@@ -24,7 +25,7 @@ SYSTEM_PROMPT_REACT = (
     "navegar na web, indexar documentos, e muito mais.\n"
     "Quando perguntado sobre suas funcionalidades, liste-as como agente:\n\n"
     "Suas capacidades como agente multimodal:\n"
-    "- Analise de documentos (PDF, DOCX, ODF) com extração de metadados\n"
+    "- Analise de documentos (PDF, DOCX, ODF) com extracao de metadados\n"
     "- Analise visual de imagens (OCR, descricoes, metadados EXIF)\n"
     "- Transcricao de audio com Whisper\n"
     "- Execucao de codigo Python em sandbox seguro\n"
@@ -48,7 +49,6 @@ SYSTEM_PROMPT_REACT = (
     "- Use tabelas quando fizer sentido organizar informacoes\n"
     "- Estruture com topicos, subtopicos e listas claras\n"
     "- Explique o POR QUE alem do QUE\n"
-    "- Ofereca profundidade, nao apenas superficie\n"
     "- Se aperfeicoe a resposta com informacoes adicionais uteis\n"
     "- Use emojis com moderacao (1-3 por resposta)\n"
     "- Responda SEMPRE em portugues do Brasil\n"
@@ -91,7 +91,7 @@ SYSTEM_PROMPT_TOOLS_TEXT = (
     "navegar na web, indexar documentos, e muito mais.\n"
     "Quando perguntado sobre suas funcionalidades, liste-as como agente:\n\n"
     "Suas capacidades como agente multimodal:\n"
-    "- Analise de documentos (PDF, DOCX, ODF) com extração de metadados\n"
+    "- Analise de documentos (PDF, DOCX, ODF) com extracao de metadados\n"
     "- Analise visual de imagens (OCR, descricoes, metadados EXIF)\n"
     "- Transcricao de audio com Whisper\n"
     "- Execucao de codigo Python em sandbox seguro\n"
@@ -136,15 +136,13 @@ SYSTEM_PROMPT_TOOLS_TEXT = (
     "## Ferramentas Disponiveis\n"
     "{ferramentas_texto}\n\n"
     "## Formato (APENAS quando precisar de ferramenta)\n"
-    "<tool_call>\n"
-    '{{"name": "nome_ferramenta", "arguments": {{"parametro": "valor"}}}}\n'
-    "</tool_call>\n\n"
-    "LEMBRE-SE: TODAS as respostas DEVEM ser em portugues do Brasil.\n"
+    "MENSAGEM_TAGS\n"
+    '{"name": "nome_ferramenta", "arguments": {"parametro": "valor"}}\n'
+    "FIM_TAGS\n"
 )
 
-
 class PassoReact:
-    def __init__(self, tipo, conteudo, ferramenta=None, resultado=None):
+    def __init__(self, tipo: str, conteudo: str, ferramenta: Optional[str] = None, resultado: Optional[str] = None):
         self.tipo = tipo
         self.conteudo = conteudo
         self.ferramenta = ferramenta
@@ -163,7 +161,7 @@ class PassoReact:
         return self.conteudo
 
 
-def _formatar_ferramentas_texto():
+def _formatar_ferramentas_texto() -> str:
     linhas = []
     for f in REGISTRO_FERRAMENTAS:
         params = f.schema.get("properties", {})
@@ -178,8 +176,8 @@ def _formatar_ferramentas_texto():
     return "\n".join(linhas)
 
 
-def _parsear_tool_call(texto):
-    padrao_tags = r"<tool_call>\s*(\{.*?\})\s*</tool_call>"
+def _parsear_tool_call(texto: str):
+    padrao_tags = r"MENSAGEM_TAGS(.*?)FIM_TAGS"
     match = re.search(padrao_tags, texto, re.DOTALL)
     if match:
         try:
@@ -200,40 +198,32 @@ def _parsear_tool_call(texto):
     return None, None
 
 
-def _testar_tools_support():
+def _testar_tools_support() -> bool:
     try:
-        client_config = get_llama_client_config()
-        client = OpenAI(**client_config)
-        response = client.chat.completions.create(
-            model=config.MODELO_LLM,
-            messages=[{"role": "user", "content": "teste"}],
-            tools=[{
-                "type": "function",
-                "function": {
-                    "name": "teste",
-                    "description": "teste",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }],
-            max_tokens=1,
-        )
+        llama = get_llama()
         return True
     except Exception:
         return False
 
 
-_tools_support_cache = None
+_tools_support_cache: Optional[bool] = None
 
 
-def _modelo_suporta_tools():
+def _modelo_suporta_tools() -> bool:
     global _tools_support_cache
     if _tools_support_cache is None:
         _tools_support_cache = _testar_tools_support()
     return _tools_support_cache
 
 
-
-def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, history=None):
+def loop_react(
+    prompt_dict: Dict[str, Any],
+    fn_status: Optional[Callable[[str], None]] = None,
+    fn_passo: Optional[Callable[[Any], None]] = None,
+    fn_chunk: Optional[Callable[[str], None]] = None,
+    history: Optional[List[Dict]] = None,
+) -> tuple[str, List[PassoReact]]:
+    """Main ReAct loop using llama-cpp-python directly."""
     pergunta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()
@@ -295,7 +285,6 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
 
     mensagens = [{"role": "system", "content": system_content}]
 
-    # Inject conversation history if provided
     if history:
         for msg in history:
             mensagens.append(msg)
@@ -304,9 +293,7 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
     mensagens.append({"role": "user", "content": pergunta_final})
 
     passos = []
-
-    client_config = get_llama_client_config()
-    client = OpenAI(**client_config)
+    llama = get_llama()
 
     for i in range(MAX_ITERACOES):
         if fn_status:
@@ -314,7 +301,6 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
 
         try:
             kwargs = {
-                "model": config.MODELO_LLM,
                 "messages": mensagens,
                 "temperature": 0.3,
                 "max_tokens": min(NUM_PREDICT, 4096),
@@ -324,7 +310,7 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
                 kwargs["tools"] = ferramentas_openai
                 kwargs["tool_choice"] = "auto"
 
-            stream = client.chat.completions.create(**kwargs)
+            stream = llama.create_chat_completion(**kwargs)
         except Exception as e:
             return f"Erro ao conectar com o LLM: {e}", passos
 
@@ -333,31 +319,29 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
         tool_calls_buffer = {}
 
         for chunk in stream:
-            choice = chunk.choices[0]
-            delta = choice.delta
-            token = delta.content or ""
+            choice = chunk["choices"][0]
+            delta = choice.get("delta", {})
+            token = delta.get("content", "") or ""
             if token:
                 conteudo_acumulado += token
                 if fn_chunk:
                     fn_chunk(token)
 
-            if usa_tools_nativo and delta.tool_calls:
-                for call in delta.tool_calls:
-                    idx = call.index
+            if usa_tools_nativo and delta.get("tool_calls"):
+                for call in delta["tool_calls"]:
+                    idx = call.get("index", 0)
                     if idx not in tool_calls_buffer:
                         tool_calls_buffer[idx] = {"name": "", "arguments": ""}
-                    if call.function.name:
-                        tool_calls_buffer[idx]["name"] = call.function.name
-                    if call.function.arguments:
-                        tool_calls_buffer[idx]["arguments"] += call.function.arguments
+                    if call["function"].get("name"):
+                        tool_calls_buffer[idx]["name"] = call["function"]["name"]
+                    if call["function"].get("arguments"):
+                        tool_calls_buffer[idx]["arguments"] += call["function"]["arguments"]
 
-        # Para ferramentas não-nativas, parsear tool calls do conteúdo acumulado
         if not usa_tools_nativo and conteudo_acumulado:
             nome_tool, args_tool = _parsear_tool_call(conteudo_acumulado)
             if nome_tool:
                 tool_calls_acumulados.append({"function": {"name": nome_tool, "arguments": args_tool}})
-                # Remover a parte do tool call do conteúdo para exibição
-                texto_antes = re.sub(r"<tool_call>.*", "", conteudo_acumulado, flags=re.DOTALL).strip()
+                texto_antes = re.sub(r"MENSAGEM_TAGS.*", "", conteudo_acumulado, flags=re.DOTALL)
                 texto_antes = re.sub(r'\{"name".*', "", texto_antes).strip()
                 if len(texto_antes) > 50:
                     conteudo_acumulado = texto_antes
@@ -376,7 +360,6 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
 
         if conteudo_acumulado:
             if usa_tools_nativo:
-                # Convert tool_calls to OpenAI format for message history
                 tool_calls_msg = None
                 if tool_calls_acumulados:
                     tool_calls_msg = []
@@ -439,8 +422,8 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
     return resposta_fallback, passos
 
 
-def _limpar_resposta(texto):
-    texto = re.sub(r"<tool_call>.*?</tool_call>", "", texto, flags=re.DOTALL)
+def _limpar_resposta(texto: str) -> str:
+    texto = re.sub(r"MENSAGEM_TAGS.*?FIM_TAGS", "", texto, flags=re.DOTALL)
     texto = re.sub(r"^[sS]ou o [cC]elsius,?\s*(seu\s+)?(assistente\s+)?(de\s+)?IA\.?\s*", "", texto)
     texto = re.sub(r"\(Nota:.*?\)", "", texto, flags=re.DOTALL)
     return texto.strip()

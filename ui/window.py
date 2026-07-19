@@ -701,6 +701,13 @@ class ModernChatWindow(QMainWindow):
         self._pending_doc_name = ""
         self._memories_enabled = True
 
+        # Thinking animation
+        self._thinking_timer = QTimer()
+        self._thinking_timer.setInterval(400)
+        self._thinking_timer.timeout.connect(self._animate_thinking)
+        self._thinking_base_text = ""
+        self._thinking_dots = 0
+
         self.setWindowTitle("Celsius")
         self.resize(1100, 700)
         self._setup_ui()
@@ -771,8 +778,19 @@ class ModernChatWindow(QMainWindow):
             self.logo_label.setPixmap(pixmap.scaledToHeight(80, Qt.SmoothTransformation))
         top_bar_layout.addWidget(self.logo_label, 1)
 
-        # Placeholder for symmetry
-        top_bar_layout.addSpacing(36)
+        # Status label (thinking indicator)
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #6E6E73;
+                font-size: 13px;
+                font-style: italic;
+                padding-right: 8px;
+            }
+        """)
+        self.status_label.hide()
+        top_bar_layout.addWidget(self.status_label)
 
         main_layout.addWidget(self._top_bar)
 
@@ -800,6 +818,26 @@ class ModernChatWindow(QMainWindow):
         """)
 
         self.chat_view.set_scheme(scheme)
+
+    def _animate_thinking(self):
+        """Animate thinking dots: . -> .. -> ... -> ."""
+        self._thinking_dots = (self._thinking_dots % 3) + 1
+        dots = "." * self._thinking_dots
+        self.status_label.setText(f"{self._thinking_base_text}{dots}")
+
+    def _start_thinking(self, base_text: str):
+        """Start thinking animation with base text."""
+        self._thinking_base_text = base_text
+        self._thinking_dots = 0
+        self.status_label.setText(f"{base_text}.")
+        self.status_label.show()
+        self._thinking_timer.start()
+
+    def _stop_thinking(self):
+        """Stop thinking animation."""
+        self._thinking_timer.stop()
+        self.status_label.hide()
+        self.status_label.setText("")
 
     def _toggle_sidebar(self):
         self.sidebar.setVisible(not self.sidebar.isVisible())
@@ -1141,13 +1179,27 @@ class ModernChatWindow(QMainWindow):
         )
 
     def _on_ai_status(self, msg: str):
-        pass
+        """Handle AI status updates - show thinking animation."""
+        if not msg:
+            self._stop_thinking()
+            return
+
+        # Start thinking animation with appropriate message
+        if "Raciocinando" in msg or "pensando" in msg.lower():
+            self._start_thinking("Pensando")
+        elif "Executando" in msg:
+            self._start_thinking("Espere enquanto busco as informações")
+        elif "Analisando" in msg:
+            self._start_thinking("Analisando")
+        else:
+            self._start_thinking("Processando")
 
     def _on_ai_step(self, step):
         pass
 
     def _on_ai_finished(self, response: str):
         print(f"[DEBUG] _on_ai_finished called, response len: {len(response)}")
+        self._stop_thinking()
         self.chat_view.finish_streaming()
         if self._current_conv_id and self._current_conv_id in self._conversations:
             self._conversations[self._current_conv_id]["messages"].append(("assistant", response))
