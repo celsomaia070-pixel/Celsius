@@ -17,8 +17,8 @@ class Settings:
     audio_temp_file: Path = field(init=False)
     audio_mic_file: Path = field(init=False)
 
-    default_llm_model: str = "gemma3:12b"
-    llm_model: str = "gemma3:12b"
+    default_llm_model: str = "qwen2.5vl:7b"
+    llm_model: str = "qwen2.5vl:7b"
     embedding_model: str = "all-MiniLM-L6-v2"
     whisper_model: str = "base"
 

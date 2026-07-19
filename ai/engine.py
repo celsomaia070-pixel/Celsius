@@ -169,11 +169,15 @@ def gerar_resposta(
     if memorias:
         prompt_dict["_memorias"] = memorias
 
+    # Get conversation history for context
+    history = _session_context.get_history()
+
     resposta, passos = loop_react(
         prompt_dict,
         fn_status=fn_status,
         fn_passo=fn_passo,
         fn_chunk=fn_chunk,
+        history=history,
     )
 
     _session_context.add_user(pergunta_direta if pergunta_direta else "[Analise de arquivo]")

@@ -62,16 +62,31 @@ class MessageBubble(QWidget):
         main_layout.setContentsMargins(0, 4, 0, 4)
         main_layout.setSpacing(4)
 
+        # Container for alignment
+        self.container = QWidget()
+        container_layout = QHBoxLayout(self.container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        if self.is_user:
+            container_layout.addStretch(1)
+
+        # Message content widget
+        self.message_widget = QWidget()
+        msg_layout = QVBoxLayout(self.message_widget)
+        msg_layout.setContentsMargins(16, 0, 16, 0)
+        msg_layout.setSpacing(4)
+
         # Label: "Voce" or "Celsius"
         label = QLabel("Voce" if self.is_user else "Celsius")
         label.setStyleSheet(f"color: {s.text_primary}; font-size: 14px; font-weight: 700; background: transparent; border: none;")
-        main_layout.addWidget(label)
+        msg_layout.addWidget(label)
 
         # Attachments
         if self.attachments:
-            self._add_attachments(main_layout)
+            self._add_attachments(msg_layout)
 
-        # Text content - QTextBrowser auto-resizes to content
+        # Text content
         self.content_label = QTextEdit()
         self.content_label.setReadOnly(True)
         self.content_label.setFocusPolicy(Qt.NoFocus)
@@ -89,16 +104,23 @@ class MessageBubble(QWidget):
             }}
         """)
         self.content_label.document().contentsChanged.connect(self._adjust_height)
-        main_layout.addWidget(self.content_label)
+        msg_layout.addWidget(self.content_label)
 
         # Actions for assistant - on hover
         if not self.is_user:
             self.actions_widget = self._create_actions()
-            main_layout.addWidget(self.actions_widget)
+            msg_layout.addWidget(self.actions_widget)
             self.actions_widget.hide()
             self.setMouseTracking(True)
             self.content_label.enterEvent = lambda e: self._show_actions()
             self.content_label.leaveEvent = lambda e: self._hide_actions()
+
+        container_layout.addWidget(self.message_widget)
+
+        if not self.is_user:
+            container_layout.addStretch(1)
+
+        main_layout.addWidget(self.container)
 
     def _add_attachments(self, layout):
         from PySide6.QtWidgets import QHBoxLayout
@@ -1026,10 +1048,13 @@ class ModernChatWindow(QMainWindow):
         try:
             data = {}
             for cid, conv in self._conversations.items():
+                created = conv["created"]
+                if isinstance(created, datetime):
+                    created = created.isoformat()
                 data[cid] = {
                     "title": conv["title"],
                     "messages": conv["messages"],
-                    "created": conv["created"],
+                    "created": created,
                 }
             path = self.settings.chats_file
             with open(path, "w", encoding="utf-8") as f:

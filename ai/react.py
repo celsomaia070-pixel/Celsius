@@ -231,7 +231,7 @@ def _modelo_suporta_tools():
 
 
 
-def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None):
+def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, history=None):
     pergunta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()
@@ -292,6 +292,11 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None):
             system_content += f"\n## Modo Agente: {agente.nome}\n{agent_prompt}\n"
 
     mensagens = [{"role": "system", "content": system_content}]
+
+    # Inject conversation history if provided
+    if history:
+        for msg in history:
+            mensagens.append(msg)
 
     pergunta_final = pergunta if pergunta else "Faca um resumo direto do arquivo anexado."
     mensagens.append({"role": "user", "content": pergunta_final})

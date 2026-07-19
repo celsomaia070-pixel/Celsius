@@ -7,7 +7,7 @@ from core.config import ModelConfig, Settings, _get_base_dir
 class TestConfig:
     def test_settings_creation(self):
         settings = Settings()
-        assert settings.default_llm_model == "gemma3:12b"
+        assert settings.default_llm_model == "qwen2.5vl:7b"
         assert settings.embedding_model == "all-MiniLM-L6-v2"
         assert settings.base_dir is not None
         assert isinstance(settings.base_dir, Path)
