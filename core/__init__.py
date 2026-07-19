@@ -14,6 +14,12 @@ from core.config import (
     Settings,
     get_settings,
 )
+from core.llama_server import (
+    get_llama_client_config,
+    get_server_manager,
+    start_llama_server,
+    stop_llama_server,
+)
 from core.logging_config import get_logger, setup_logging
 from core.memory import (
     MemoryService,

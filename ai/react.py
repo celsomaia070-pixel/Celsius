@@ -4,8 +4,10 @@ import re
 from datetime import datetime
 
 import core.config as config
-from ai.tools import REGISTRO_FERRAMENTAS, executar_ferramenta, obter_schemas_ollama
+from ai.tools import REGISTRO_FERRAMENTAS, executar_ferramenta, obter_schemas_openai
 from core.config import NUM_CTX, NUM_PREDICT
+from core.llama_server import get_llama_client_config
+from openai import OpenAI
 
 MAX_ITERACOES = 3
 
@@ -200,8 +202,9 @@ def _parsear_tool_call(texto):
 
 def _testar_tools_support():
     try:
-        import ollama
-        response = ollama.chat(
+        client_config = get_llama_client_config()
+        client = OpenAI(**client_config)
+        response = client.chat.completions.create(
             model=config.MODELO_LLM,
             messages=[{"role": "user", "content": "teste"}],
             tools=[{
@@ -212,7 +215,7 @@ def _testar_tools_support():
                     "parameters": {"type": "object", "properties": {}},
                 },
             }],
-            options={"num_predict": 1},
+            max_tokens=1,
         )
         return True
     except Exception:
@@ -231,8 +234,6 @@ def _modelo_suporta_tools():
 
 
 def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, history=None):
-    import ollama
-
     pergunta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()
@@ -247,13 +248,13 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
 
     if usa_tools_nativo:
         system_content = SYSTEM_PROMPT_REACT.format(data_hora=data_hora)
-        ferramentas_ollama = obter_schemas_ollama()
+        ferramentas_openai = obter_schemas_openai()
     else:
         ferramentas_texto = _formatar_ferramentas_texto()
         system_content = SYSTEM_PROMPT_TOOLS_TEXT.format(
             data_hora=data_hora, ferramentas_texto=ferramentas_texto
         )
-        ferramentas_ollama = None
+        ferramentas_openai = None
 
     if texto_doc:
         system_content += (
@@ -304,33 +305,26 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
 
     passos = []
 
+    client_config = get_llama_client_config()
+    client = OpenAI(**client_config)
+
     for i in range(MAX_ITERACOES):
         if fn_status:
             fn_status(f"Raciocinando... (passo {i + 1})")
-
-        # Para ferramentas nativas, usa streaming; para fallback, não streaming
-        use_streaming = usa_tools_nativo
 
         try:
             kwargs = {
                 "model": config.MODELO_LLM,
                 "messages": mensagens,
-                "options": {
-                    "temperature": 0.3,
-                    "num_ctx": min(NUM_CTX, 4096),
-                    "num_predict": NUM_PREDICT if not usa_tools_nativo else min(NUM_PREDICT, 800),
-                },
-                "stream": use_streaming,
+                "temperature": 0.3,
+                "max_tokens": min(NUM_PREDICT, 4096),
+                "stream": True,
             }
-            if usa_tools_nativo and ferramentas_ollama:
-                kwargs["tools"] = ferramentas_ollama
+            if usa_tools_nativo and ferramentas_openai:
+                kwargs["tools"] = ferramentas_openai
+                kwargs["tool_choice"] = "auto"
 
-            if use_streaming:
-                stream = ollama.chat(**kwargs)
-            else:
-                response = ollama.chat(**kwargs)
-                # Wrap single response in iterator for unified handling
-                stream = [response]
+            stream = client.chat.completions.create(**kwargs)
         except Exception as e:
             return f"Erro ao conectar com o LLM: {e}", passos
 
@@ -339,24 +333,23 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
         tool_calls_buffer = {}
 
         for chunk in stream:
-            mensagem = chunk["message"]
-            token = mensagem.get("content", "")
+            choice = chunk.choices[0]
+            delta = choice.delta
+            token = delta.content or ""
             if token:
                 conteudo_acumulado += token
-                if fn_chunk and use_streaming:
+                if fn_chunk:
                     fn_chunk(token)
 
-            if usa_tools_nativo:
-                tool_calls = mensagem.get("tools", [])
-                if tool_calls:
-                    for call in tool_calls:
-                        idx = call.get("index", 0)
-                        if idx not in tool_calls_buffer:
-                            tool_calls_buffer[idx] = {"name": "", "arguments": ""}
-                        if "name" in call["function"]:
-                            tool_calls_buffer[idx]["name"] = call["function"]["name"]
-                        if "arguments" in call["function"]:
-                            tool_calls_buffer[idx]["arguments"] += call["function"]["arguments"]
+            if usa_tools_nativo and delta.tool_calls:
+                for call in delta.tool_calls:
+                    idx = call.index
+                    if idx not in tool_calls_buffer:
+                        tool_calls_buffer[idx] = {"name": "", "arguments": ""}
+                    if call.function.name:
+                        tool_calls_buffer[idx]["name"] = call.function.name
+                    if call.function.arguments:
+                        tool_calls_buffer[idx]["arguments"] += call.function.arguments
 
         # Para ferramentas não-nativas, parsear tool calls do conteúdo acumulado
         if not usa_tools_nativo and conteudo_acumulado:
@@ -383,7 +376,17 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
 
         if conteudo_acumulado:
             if usa_tools_nativo:
-                mensagens.append({"role": "assistant", "content": conteudo_acumulado, "tools": tool_calls_acumulados if tool_calls_acumulados else None})
+                # Convert tool_calls to OpenAI format for message history
+                tool_calls_msg = None
+                if tool_calls_acumulados:
+                    tool_calls_msg = []
+                    for j, call in enumerate(tool_calls_acumulados):
+                        tool_calls_msg.append({
+                            "id": f"call_{j}",
+                            "type": "function",
+                            "function": call["function"],
+                        })
+                mensagens.append({"role": "assistant", "content": conteudo_acumulado, "tool_calls": tool_calls_msg})
             else:
                 mensagens.append({"role": "assistant", "content": conteudo_acumulado})
 
@@ -417,6 +420,7 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, histor
             if usa_tools_nativo:
                 mensagens.append({
                     "role": "tool",
+                    "tool_call_id": f"call_{len(mensagens)}",
                     "content": str(resultado),
                 })
             else:

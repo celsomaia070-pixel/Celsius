@@ -19,6 +19,8 @@ class Settings:
 
     default_llm_model: str = "qwen2.5vl:7b"
     llm_model: str = "qwen2.5vl:7b"
+    # Local GGUF model filename (bundled with app)
+    local_model_file: str = "qwen2.5-vl-7b-q4_k_m.gguf"
     embedding_model: str = "all-MiniLM-L6-v2"
     whisper_model: str = "base"
 
@@ -59,6 +61,10 @@ class Settings:
 
     def set_llm_model(self, model_id: str) -> None:
         self.llm_model = model_id
+
+    def get_local_model_path(self) -> Path:
+        """Get path to local GGUF model file (works with PyInstaller)."""
+        return _get_base_dir() / "resources" / self.local_model_file
 
 
 def _get_base_dir() -> Path:

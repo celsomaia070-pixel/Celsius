@@ -23,6 +23,16 @@ class Ferramenta:
             },
         }
 
+    def para_openai(self):
+        return {
+            "type": "function",
+            "function": {
+                "name": self.nome,
+                "description": self.descricao,
+                "parameters": self.schema,
+            },
+        }
+
 
 def _validate_path(path: str) -> Path:
     """Validate and resolve path within allowed directory."""
@@ -329,6 +339,10 @@ REGISTRO_FERRAMENTAS = [
 
 def obter_schemas_ollama():
     return [f.para_ollama() for f in REGISTRO_FERRAMENTAS]
+
+
+def obter_schemas_openai():
+    return [f.para_openai() for f in REGISTRO_FERRAMENTAS]
 
 
 def obter_ferramenta(nome):

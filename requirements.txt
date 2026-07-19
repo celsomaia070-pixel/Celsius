@@ -1,5 +1,5 @@
 PySide6>=6.5
-ollama>=0.4
+openai>=1.30
 sentence-transformers>=2.2,<4.0
 numpy>=1.24
 duckduckgo_search>=4.0

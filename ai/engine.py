@@ -192,6 +192,8 @@ def gerar_resposta_com_imagem(
     fn_chunk: Callable[[str], None] | None = None,
 ) -> str:
     import base64
+    from openai import OpenAI
+
     settings = get_settings()
 
     if fn_status:
@@ -219,27 +221,27 @@ def gerar_resposta_com_imagem(
         },
         {
             "role": "user",
-            "content": pergunta_final,
-            "images": [imagem_b64],
+            "content": [
+                {"type": "text", "text": pergunta_final},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{imagem_b64}"}},
+            ],
         },
     ]
 
     try:
-        import ollama
-        stream = ollama.chat(
+        client_config = get_llama_client_config()
+        client = OpenAI(**client_config)
+        stream = client.chat.completions.create(
             model=config.MODELO_LLM,
             messages=mensagens_api,
-            options={
-                "temperature": 0.7,
-                "num_ctx": settings.num_ctx,
-                "num_predict": settings.num_predict,
-            },
+            temperature=0.7,
+            max_tokens=settings.num_predict,
             stream=True,
         )
 
         resposta = ""
         for chunk in stream:
-            token = chunk["message"]["content"]
+            token = chunk.choices[0].delta.content or ""
             resposta += token
             if fn_chunk:
                 fn_chunk(token)
