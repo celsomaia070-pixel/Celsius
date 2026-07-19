@@ -62,7 +62,7 @@ class MessageBubble(QWidget):
         main_layout.setContentsMargins(0, 4, 0, 4)
         main_layout.setSpacing(4)
 
-        # Container for alignment
+        # Container for alignment - expands full width
         self.container = QWidget()
         container_layout = QHBoxLayout(self.container)
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -71,7 +71,7 @@ class MessageBubble(QWidget):
         if self.is_user:
             container_layout.addStretch(1)
 
-        # Message content widget
+        # Message content widget - give it stretch factor to expand
         self.message_widget = QWidget()
         msg_layout = QVBoxLayout(self.message_widget)
         msg_layout.setContentsMargins(16, 0, 16, 0)
@@ -115,16 +115,17 @@ class MessageBubble(QWidget):
             self.content_label.enterEvent = lambda e: self._show_actions()
             self.content_label.leaveEvent = lambda e: self._hide_actions()
 
-        container_layout.addWidget(self.message_widget)
+        # Give message_widget stretch factor to expand horizontally
+        container_layout.addWidget(self.message_widget, 1)
 
         if not self.is_user:
             container_layout.addStretch(1)
 
         main_layout.addWidget(self.container)
         
-        # Ensure message widget has max width for proper text wrapping
-        self.message_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        self.message_widget.setMaximumWidth(10000)  # Will be constrained by parent
+        # Ensure message widget expands properly
+        self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.message_widget.setMinimumWidth(300)
 
     def _add_attachments(self, layout):
         from PySide6.QtWidgets import QHBoxLayout
