@@ -365,17 +365,26 @@ class ModernChatView(QWidget):
 
     def append_streaming(self, token: str):
         if self._streaming_bubble:
-            self._streaming_content += token
-            self._streaming_bubble.update_content(self._streaming_content)
-            if self._auto_scroll:
-                self._scroll_to_bottom()
+            try:
+                self._streaming_content += token
+                self._streaming_bubble.update_content(self._streaming_content)
+                if self._auto_scroll:
+                    self._scroll_to_bottom()
+            except RuntimeError:
+                # Widget was deleted
+                self._streaming_bubble = None
+                self._streaming_content = ""
 
     def finish_streaming(self):
         if self._streaming_bubble:
-            self._streaming_bubble.finish_streaming()
-            self.messages.append(("assistant", self._streaming_content))
-            self._streaming_bubble = None
-            self._streaming_content = ""
+            try:
+                self._streaming_bubble.finish_streaming()
+                self.messages.append(("assistant", self._streaming_content))
+                self._streaming_bubble = None
+                self._streaming_content = ""
+            except RuntimeError:
+                self._streaming_bubble = None
+                self._streaming_content = ""
 
     def _scroll_to_bottom(self):
         QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(
