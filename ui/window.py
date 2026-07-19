@@ -121,6 +121,10 @@ class MessageBubble(QWidget):
             container_layout.addStretch(1)
 
         main_layout.addWidget(self.container)
+        
+        # Ensure message widget has max width for proper text wrapping
+        self.message_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.message_widget.setMaximumWidth(10000)  # Will be constrained by parent
 
     def _add_attachments(self, layout):
         from PySide6.QtWidgets import QHBoxLayout
@@ -264,7 +268,15 @@ class MessageBubble(QWidget):
 
     def _adjust_height(self):
         doc = self.content_label.document()
-        doc.setTextWidth(self.content_label.viewport().width())
+        # Use the content_label's width, fallback to parent widget width
+        w = self.content_label.width()
+        if w <= 0:
+            w = self.message_widget.width()
+        if w <= 0:
+            w = self.container.width()
+        if w <= 0:
+            w = 600  # fallback
+        doc.setTextWidth(w)
         h = int(doc.size().height()) + 8
         self.content_label.setMinimumHeight(h)
 
@@ -277,6 +289,11 @@ class MessageBubble(QWidget):
     def finish_streaming(self):
         self.is_streaming = False
         self.update_content(self._full_content)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Reflow text when bubble resizes
+        self._adjust_height()
 
 
 class ModernChatView(QWidget):
