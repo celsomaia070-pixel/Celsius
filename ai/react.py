@@ -302,6 +302,9 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None):
         if fn_status:
             fn_status(f"Raciocinando... (passo {i + 1})")
 
+        # Para ferramentas nativas, usa streaming; para fallback, não streaming
+        use_streaming = usa_tools_nativo
+
         try:
             kwargs = {
                 "model": config.MODELO_LLM,
@@ -311,52 +314,82 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None):
                     "num_ctx": min(NUM_CTX, 4096),
                     "num_predict": NUM_PREDICT if not usa_tools_nativo else min(NUM_PREDICT, 800),
                 },
+                "stream": use_streaming,
             }
             if usa_tools_nativo and ferramentas_ollama:
                 kwargs["tools"] = ferramentas_ollama
 
-            response = ollama.chat(**kwargs)
+            if use_streaming:
+                stream = ollama.chat(**kwargs)
+            else:
+                response = ollama.chat(**kwargs)
+                # Wrap single response in iterator for unified handling
+                stream = [response]
         except Exception as e:
             return f"Erro ao conectar com o LLM: {e}", passos
 
-        mensagem = response["message"]
-        conteudo = mensagem.get("content", "")
+        conteudo_acumulado = ""
+        tool_calls_acumulados = []
+        tool_calls_buffer = {}
 
-        if usa_tools_nativo:
-            tool_calls = mensagem.get("tools", [])
-        else:
-            nome_tool, args_tool = _parsear_tool_call(conteudo)
+        for chunk in stream:
+            mensagem = chunk["message"]
+            token = mensagem.get("content", "")
+            if token:
+                conteudo_acumulado += token
+                if fn_chunk and use_streaming:
+                    fn_chunk(token)
+
+            if usa_tools_nativo:
+                tool_calls = mensagem.get("tools", [])
+                if tool_calls:
+                    for call in tool_calls:
+                        idx = call.get("index", 0)
+                        if idx not in tool_calls_buffer:
+                            tool_calls_buffer[idx] = {"name": "", "arguments": ""}
+                        if "name" in call["function"]:
+                            tool_calls_buffer[idx]["name"] = call["function"]["name"]
+                        if "arguments" in call["function"]:
+                            tool_calls_buffer[idx]["arguments"] += call["function"]["arguments"]
+
+        # Para ferramentas não-nativas, parsear tool calls do conteúdo acumulado
+        if not usa_tools_nativo and conteudo_acumulado:
+            nome_tool, args_tool = _parsear_tool_call(conteudo_acumulado)
             if nome_tool:
-                texto_antes = re.sub(r"<tool_call>.*", "", conteudo, flags=re.DOTALL).strip()
+                tool_calls_acumulados.append({"function": {"name": nome_tool, "arguments": args_tool}})
+                # Remover a parte do tool call do conteúdo para exibição
+                texto_antes = re.sub(r"<tool_call>.*", "", conteudo_acumulado, flags=re.DOTALL).strip()
                 texto_antes = re.sub(r'\{"name".*', "", texto_antes).strip()
                 if len(texto_antes) > 50:
-                    passos.append(PassoReact("resposta", texto_antes))
-                    if fn_passo:
-                        fn_passo(passos[-1])
-                    if fn_chunk:
-                        fn_chunk(texto_antes)
-                    return _limpar_resposta(texto_antes), passos
-                tool_calls = [{"function": {"name": nome_tool, "arguments": args_tool}}]
-            else:
-                tool_calls = []
+                    conteudo_acumulado = texto_antes
+                else:
+                    conteudo_acumulado = ""
 
-        if conteudo:
+        if tool_calls_buffer:
+            for idx in sorted(tool_calls_buffer.keys()):
+                tc = tool_calls_buffer[idx]
+                if tc["name"]:
+                    try:
+                        args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    tool_calls_acumulados.append({"function": {"name": tc["name"], "arguments": args}})
+
+        if conteudo_acumulado:
             if usa_tools_nativo:
-                mensagens.append({"role": "assistant", "content": conteudo, "tools": tool_calls if tool_calls else None})
+                mensagens.append({"role": "assistant", "content": conteudo_acumulado, "tools": tool_calls_acumulados if tool_calls_acumulados else None})
             else:
-                mensagens.append({"role": "assistant", "content": conteudo})
+                mensagens.append({"role": "assistant", "content": conteudo_acumulado})
 
-        if not tool_calls:
-            if conteudo:
-                if fn_chunk:
-                    fn_chunk(conteudo)
-                passos.append(PassoReact("resposta", conteudo))
+        if not tool_calls_acumulados:
+            if conteudo_acumulado:
+                passos.append(PassoReact("resposta", conteudo_acumulado))
                 if fn_passo:
                     fn_passo(passos[-1])
-                return _limpar_resposta(conteudo), passos
+                return _limpar_resposta(conteudo_acumulado), passos
             continue
 
-        for call in tool_calls:
+        for call in tool_calls_acumulados:
             nome_func = call["function"]["name"]
             args = call["function"]["arguments"]
 
@@ -383,7 +416,7 @@ def loop_react(prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None):
             else:
                 mensagens.append({
                     "role": "user",
-                    "content": f"Resultado de {nome_func}:\n{resultado}\n\nAgora continue com a proxima acao ou forneça a resposta final.",
+                    "content": f"Resultado de {nome_func}:\n{resultado}\n\nAgora continue com a proxima acao ou forneca a resposta final.",
                 })
 
             gc.collect()
