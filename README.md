@@ -16,6 +16,12 @@ Celsius é um agente de IA multimodal avançado com capacidades reais de ação,
 - **Texto-para-Fala**: edge-tts (pt-BR)
 - **Fala-para-Texto**: SpeechRecognition + Google
 - **Sistema Multi-Agente**: Agentes especializados (RAG, Código, Web, Arquivos, Memória)
+- **Ícones SVG nativos**: Substituição do `qtawesome` por módulo próprio (`ui/icons.py`) — 23 ícones, zero dependências externas
+- **Memória semântica melhorada**: threshold 0.15, top_k 10, injeção de até 15 memórias no prompt; busca retorna todas quando total ≤ limite
+- **Histórico de conversa**: Arquivos e imagens agora persistem no contexto da sessão
+- **Indicador "Pensando..."**: Movido para dentro do chat (widget dedicado), sem texto fixo na barra superior
+- **Cursor piscante em streaming**: Animação `▌` durante geração de resposta
+- **Mensagens do usuário**: Alinhadas à direita, largura total, fade-in suave
 
 ## Requisitos
 

@@ -1,6 +1,5 @@
 from datetime import datetime
 
-import qtawesome as qta
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
@@ -15,6 +14,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ui.icons import icon
 
 
 class ConversationItem(QListWidgetItem):
@@ -43,6 +44,7 @@ class Sidebar(QWidget):
     open_memories = Signal()
     settings_requested = Signal()
 
+    # Default light colors (overridden by set_scheme)
     BG = "#FFFFFF"
     BG_SECONDARY = "#F5F5F7"
     BG_HOVER = "#F0F0F2"
@@ -59,7 +61,34 @@ class Sidebar(QWidget):
         self.setFixedWidth(280)
         self._conversations: dict[str, ConversationItem] = {}
         self._memories_enabled = True
+        self._scheme = None
         self._setup_ui()
+
+    def set_scheme(self, scheme):
+        """Update color scheme and reapply styles."""
+        self._scheme = scheme
+        # Update class variables from scheme
+        self.BG = scheme.bg_primary
+        self.BG_SECONDARY = scheme.bg_secondary
+        self.BG_HOVER = scheme.bg_hover
+        self.BG_SELECTED = scheme.bg_active
+        self.BORDER = scheme.border_default
+        self.TEXT_PRIMARY = scheme.text_primary
+        self.TEXT_SECONDARY = scheme.text_secondary
+        self.TEXT_MUTED = scheme.text_muted
+        self.ACCENT = scheme.accent_primary
+        self._apply_scheme()
+
+    def _apply_scheme(self):
+        if not self._scheme:
+            return
+        s = self._scheme
+        self.setStyleSheet(f"""
+            QWidget {{
+                background: {s.bg_primary};
+                border-right: 1px solid {s.border_default};
+            }}
+        """)
 
     def _setup_ui(self):
         self.setStyleSheet(f"""
@@ -89,7 +118,7 @@ class Sidebar(QWidget):
         header_layout.addStretch()
 
         self.new_chat_btn = QPushButton()
-        self.new_chat_btn.setIcon(qta.icon("fa5s.plus", color=self.ACCENT))
+        self.new_chat_btn.setIcon(icon("plus", self.ACCENT))
         self.new_chat_btn.setToolTip("Nova conversa (Ctrl+N)")
         self.new_chat_btn.setFixedSize(32, 32)
         self.new_chat_btn.setCursor(Qt.PointingHandCursor)
@@ -126,7 +155,7 @@ class Sidebar(QWidget):
             }}
         """)
         self.search_input.addAction(
-            qta.icon("fa5s.search", color=self.TEXT_MUTED),
+            icon("search", self.TEXT_MUTED),
             QLineEdit.LeadingPosition,
         )
         self.search_input.textChanged.connect(self._filter_conversations)
@@ -173,7 +202,7 @@ class Sidebar(QWidget):
 
         # Memory button
         self.memory_btn = QPushButton()
-        self.memory_btn.setIcon(qta.icon("fa5s.brain", color="#8E8E93"))
+        self.memory_btn.setIcon(icon("brain", "#8E8E93"))
         self.memory_btn.setText("Memorias")
         self.memory_btn.setToolTip("Gerenciar memorias do usuario")
         self.memory_btn.setCursor(Qt.PointingHandCursor)
@@ -198,7 +227,7 @@ class Sidebar(QWidget):
 
         # Settings button
         self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(qta.icon("fa5s.cog", color="#8E8E93"))
+        self.settings_btn.setIcon(icon("cog", "#8E8E93"))
         self.settings_btn.setText("Configuracoes")
         self.settings_btn.setCursor(Qt.PointingHandCursor)
         self.settings_btn.setStyleSheet(f"""
@@ -285,10 +314,10 @@ class Sidebar(QWidget):
             }}
         """)
 
-        rename_action = menu.addAction(qta.icon("fa5s.edit", color="#8E8E93"), "Renomear")
+        rename_action = menu.addAction(icon("edit", "#8E8E93"), "Renomear")
         rename_action.triggered.connect(lambda: self._rename_conversation(item))
 
-        delete_action = menu.addAction(qta.icon("fa5s.trash", color=self.RED), "Excluir")
+        delete_action = menu.addAction(icon("trash", self.RED), "Excluir")
         delete_action.triggered.connect(
             lambda: self.conversation_delete_requested.emit(item.conv_id)
         )

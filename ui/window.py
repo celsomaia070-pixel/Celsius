@@ -4,13 +4,13 @@ import re
 from datetime import datetime
 from uuid import uuid4
 
-import qtawesome as qta
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,6 +28,7 @@ from core.config import get_settings
 from core.memory import get_memory_service
 from processors import processar_arquivo
 from ui.command_palette import CommandPaletteManager
+from ui.icons import icon
 from ui.sidebar import Sidebar
 from ui.theme import DARK_SCHEME, LIGHT_SCHEME, ThemeMode, get_stylesheet
 from workers.ai_worker import WorkerManager
@@ -54,6 +55,17 @@ class MessageBubble(QWidget):
         self._scheme = scheme or LIGHT_SCHEME
         self._setup_ui()
         self._render_content()
+        self._fade_in()
+        self._cursor_visible = True
+        self._cursor_timer = QTimer()
+        self._cursor_timer.setInterval(530)
+        self._cursor_timer.timeout.connect(self._blink_cursor)
+        if self.is_streaming:
+            self._cursor_timer.start()
+
+    def _blink_cursor(self):
+        self._cursor_visible = not self._cursor_visible
+        self.update_content(self._full_content)
 
     def _setup_ui(self):
         s = self._scheme
@@ -68,16 +80,24 @@ class MessageBubble(QWidget):
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        # Message content widget - give it stretch factor to claim space
-        self.message_widget = QWidget()
-        msg_layout = QVBoxLayout(self.message_widget)
-        msg_layout.setContentsMargins(8, 0, 8, 0)
-        msg_layout.setSpacing(4)
+        if self.is_user:
+            container_layout.addStretch()
+            self.message_widget = QWidget()
+            msg_layout = QVBoxLayout(self.message_widget)
+            msg_layout.setContentsMargins(8, 0, 8, 0)
+            msg_layout.setSpacing(4)
+        else:
+            self.message_widget = QWidget()
+            msg_layout = QVBoxLayout(self.message_widget)
+            msg_layout.setContentsMargins(8, 0, 8, 0)
+            msg_layout.setSpacing(4)
 
         # Label: "Voce" or "Celsius"
-        label = QLabel("Voce" if self.is_user else "Celsius")
-        label.setStyleSheet(f"color: {s.text_primary}; font-size: 14px; font-weight: 700; background: transparent; border: none;")
-        msg_layout.addWidget(label)
+        self.name_label = QLabel("Voce" if self.is_user else "Celsius")
+        self.name_label.setStyleSheet(f"color: {s.text_primary}; font-size: 14px; font-weight: 700; background: transparent; border: none;")
+        if not self.is_user and self.is_streaming:
+            self.name_label.hide()
+        msg_layout.addWidget(self.name_label)
 
         # Attachments
         if self.attachments:
@@ -86,7 +106,7 @@ class MessageBubble(QWidget):
         # Text content
         self.content_label = QTextEdit()
         self.content_label.setReadOnly(True)
-        self.content_label.setFocusPolicy(Qt.NoFocus)
+        self.content_label.setFocusPolicy(Qt.StrongFocus)
         self.content_label.setFrameStyle(0)
         self.content_label.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.content_label.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -112,13 +132,19 @@ class MessageBubble(QWidget):
             self.content_label.enterEvent = lambda e: self._show_actions()
             self.content_label.leaveEvent = lambda e: self._hide_actions()
 
-        # Add message_widget WITH stretch factor so it expands
-        container_layout.addWidget(self.message_widget, 1)
+        # Add message_widget
+        if self.is_user:
+            container_layout.addWidget(self.message_widget, 0)
+        else:
+            container_layout.addWidget(self.message_widget, 1)
 
         main_layout.addWidget(self.container)
-        
-        # Ensure message widget expands properly to fill available space
-        self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+
+        # Ensure message widget expands properly
+        if self.is_user:
+            self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        else:
+            self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
     def _add_attachments(self, layout):
         from PySide6.QtWidgets import QHBoxLayout
@@ -150,8 +176,8 @@ class MessageBubble(QWidget):
         layout.addStretch()
 
         btn = QPushButton()
-        btn.setIcon(qta.icon("fa5s.copy", color=s.text_muted))
-        btn.setToolTip("Copiar")
+        btn.setIcon(icon("copy", s.text_muted))
+        btn.setToolTip("Copiar mensagem (Ctrl+C)")
         btn.setCursor(Qt.PointingHandCursor)
         btn.setFixedSize(26, 26)
         btn.setStyleSheet(f"""
@@ -162,8 +188,14 @@ class MessageBubble(QWidget):
                 background: {s.bg_hover};
             }}
         """)
+        btn.clicked.connect(self._copy_content)
         layout.addWidget(btn)
         return widget
+
+    def _copy_content(self):
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.content_label.toPlainText())
 
     def _show_actions(self):
         if hasattr(self, 'actions_widget'):
@@ -274,14 +306,30 @@ class MessageBubble(QWidget):
         h = int(doc.size().height()) + 8
         self.content_label.setMinimumHeight(h)
 
+    def _fade_in(self):
+        effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(effect)
+        self._fade_anim = QPropertyAnimation(effect, b"opacity")
+        self._fade_anim.setDuration(300)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.start()
+
     def update_content(self, content: str):
         self.content = content
         self._full_content = content
-        self.content_label.setHtml(self._markdown_to_html(content))
+        display = content
+        if self.is_streaming and self._cursor_visible:
+            display += "▌"
+        self.content_label.setHtml(self._markdown_to_html(display))
         self._adjust_height()
 
     def finish_streaming(self):
         self.is_streaming = False
+        self._cursor_timer.stop()
+        if hasattr(self, 'name_label'):
+            self.name_label.show()
         self.update_content(self._full_content)
 
     def resizeEvent(self, event):
@@ -350,6 +398,7 @@ class ModernChatView(QWidget):
         return bubble
 
     def start_streaming(self) -> MessageBubble:
+        self.hide_thinking()
         bubble = MessageBubble("", is_user=False, is_streaming=True, scheme=self._scheme)
         self.content_layout.insertWidget(self.content_layout.count() - 1, bubble)
         self._streaming_bubble = bubble
@@ -391,6 +440,55 @@ class ModernChatView(QWidget):
                 widget.deleteLater()
         self.messages.clear()
 
+    def show_thinking(self, text: str):
+        self.hide_thinking()
+        # Remove the bottom stretch
+        self._saved_stretch = self.content_layout.takeAt(self.content_layout.count() - 1)
+        # Add stretch before thinking to push it to center
+        self.content_layout.addStretch()
+        # Thinking widget
+        self._thinking_widget = QWidget()
+        vl = QVBoxLayout(self._thinking_widget)
+        vl.setContentsMargins(8, 4, 8, 4)
+        vl.setSpacing(2)
+        self._thinking_label = QLabel(text)
+        self._thinking_label.setStyleSheet("color: #6E6E73; font-size: 14px; font-style: italic; background: transparent; border: none;")
+        vl.addWidget(self._thinking_label)
+        self.content_layout.addWidget(self._thinking_widget)
+        # Add stretch after thinking
+        self.content_layout.addStretch()
+        self._scroll_to_bottom()
+
+    def update_thinking(self, text: str):
+        if hasattr(self, '_thinking_label') and self._thinking_label:
+            self._thinking_label.setText(text)
+
+    def hide_thinking(self):
+        if hasattr(self, '_thinking_widget') and self._thinking_widget:
+            # Remove thinking widget and its surrounding stretches
+            for i in range(self.content_layout.count() - 1, -1, -1):
+                item = self.content_layout.itemAt(i)
+                if item and item.widget() == self._thinking_widget:
+                    self.content_layout.takeAt(i)
+                    self._thinking_widget.deleteLater()
+                    self._thinking_widget = None
+                    self._thinking_label = None
+                    # Remove stretch after
+                    if i < self.content_layout.count():
+                        after = self.content_layout.itemAt(i)
+                        if after and after.spacerItem():
+                            self.content_layout.takeAt(i)
+                    # Remove stretch before
+                    if i > 0:
+                        before = self.content_layout.itemAt(i - 1)
+                        if before and before.spacerItem():
+                            self.content_layout.takeAt(i - 1)
+                    break
+            # Restore the bottom stretch
+            if hasattr(self, '_saved_stretch') and self._saved_stretch:
+                self.content_layout.addItem(self._saved_stretch)
+                self._saved_stretch = None
+
     def set_scheme(self, scheme):
         self._scheme = scheme
 
@@ -419,7 +517,7 @@ class ModernInputArea(QWidget):
 
         # Attachment button
         self.btn_attach = QPushButton()
-        self.btn_attach.setIcon(qta.icon("fa5s.paperclip", color="#9E9EA3"))
+        self.btn_attach.setIcon(icon("paperclip", "#9E9EA3"))
         self.btn_attach.setToolTip("Anexar arquivo")
         self.btn_attach.setCursor(Qt.PointingHandCursor)
         self.btn_attach.setFixedSize(40, 40)
@@ -466,7 +564,7 @@ class ModernInputArea(QWidget):
 
         # Mic button
         self.btn_mic = QPushButton()
-        self.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#9E9EA3"))
+        self.btn_mic.setIcon(icon("microphone", "#9E9EA3"))
         self.btn_mic.setToolTip("Gravar áudio")
         self.btn_mic.setCursor(Qt.PointingHandCursor)
         self.btn_mic.setFixedSize(40, 40)
@@ -486,7 +584,7 @@ class ModernInputArea(QWidget):
 
         # Voice toggle button
         self.btn_voice = QPushButton()
-        self.btn_voice.setIcon(qta.icon("fa5s.volume-up", color="#9E9EA3"))
+        self.btn_voice.setIcon(icon("volume-up", "#9E9EA3"))
         self.btn_voice.setToolTip("Leitura em voz alta")
         self.btn_voice.setCursor(Qt.PointingHandCursor)
         self.btn_voice.setFixedSize(40, 40)
@@ -511,7 +609,7 @@ class ModernInputArea(QWidget):
 
         # Send button
         self.btn_send = QPushButton()
-        self.btn_send.setIcon(qta.icon("fa5s.paper-plane", color="#FFFFFF"))
+        self.btn_send.setIcon(icon("paper-plane", "#FFFFFF"))
         self.btn_send.setToolTip("Enviar (Enter)")
         self.btn_send.setCursor(Qt.PointingHandCursor)
         self.btn_send.setFixedSize(40, 40)
@@ -531,7 +629,7 @@ class ModernInputArea(QWidget):
 
         # Model selector (compact)
         self.model_combo = QComboBox()
-        self.model_combo.setFixedWidth(160)
+        self.model_combo.setFixedWidth(220)
         self.model_combo.setStyleSheet("""
             QComboBox {
                 background: #F7F7F8;
@@ -561,12 +659,15 @@ class ModernInputArea(QWidget):
         """)
         layout.addWidget(self.model_combo)
 
-        # Load models
-        settings = get_settings()
-        for model in settings.available_models:
-            self.model_combo.addItem(model.name, model.id)
-        idx = next((i for i, m in enumerate(settings.available_models)
-                   if m.id == settings.llm_model), 0)
+        # Load models from GGUF registry
+        from core.config import GGUF_MODELS
+        from core.model_downloader import is_model_downloaded
+        self._combo_models = GGUF_MODELS
+        current_id = get_settings().llm_model
+        for i, model in enumerate(GGUF_MODELS):
+            status = "✓" if is_model_downloaded(model.id) else "↓"
+            self.model_combo.addItem(f"{status} {model.name} ({model.quant})", model.id)
+        idx = next((i for i, m in enumerate(GGUF_MODELS) if m.id == current_id), 0)
         self.model_combo.setCurrentIndex(idx)
         self.model_combo.currentIndexChanged.connect(
             lambda: self.change_model.emit(self.model_combo.currentData())
@@ -699,6 +800,8 @@ class ModernChatWindow(QMainWindow):
         self._voz_worker = None
         self._pending_doc_text = ""
         self._pending_doc_name = ""
+        self._pending_image_path = ""
+        self._pending_file_path = ""
         self._memories_enabled = True
 
         # Thinking animation
@@ -756,7 +859,7 @@ class ModernChatWindow(QMainWindow):
 
         # Hamburger toggle
         self.hamburger_btn = QPushButton()
-        self.hamburger_btn.setIcon(qta.icon("fa5s.bars", color="#6E6E73"))
+        self.hamburger_btn.setIcon(icon("bars", "#6E6E73"))
         self.hamburger_btn.setToolTip("Mostrar/esconder sidebar")
         self.hamburger_btn.setFixedSize(36, 36)
         self.hamburger_btn.setCursor(Qt.PointingHandCursor)
@@ -778,19 +881,7 @@ class ModernChatWindow(QMainWindow):
             self.logo_label.setPixmap(pixmap.scaledToHeight(80, Qt.SmoothTransformation))
         top_bar_layout.addWidget(self.logo_label, 1)
 
-        # Status label (thinking indicator)
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.status_label.setStyleSheet("""
-            QLabel {
-                color: #6E6E73;
-                font-size: 13px;
-                font-style: italic;
-                padding-right: 8px;
-            }
-        """)
-        self.status_label.hide()
-        top_bar_layout.addWidget(self.status_label)
+        top_bar_layout.addStretch()
 
         main_layout.addWidget(self._top_bar)
 
@@ -818,33 +909,31 @@ class ModernChatWindow(QMainWindow):
         """)
 
         self.chat_view.set_scheme(scheme)
+        self.sidebar.set_scheme(scheme)
 
     def _animate_thinking(self):
         """Animate thinking dots: . -> .. -> ... -> ."""
         self._thinking_dots = (self._thinking_dots % 3) + 1
         dots = "." * self._thinking_dots
-        self.status_label.setText(f"{self._thinking_base_text}{dots}")
+        self.chat_view.update_thinking(f"{self._thinking_base_text}{dots}")
 
     def _start_thinking(self, base_text: str):
         """Start thinking animation with base text."""
         self._thinking_base_text = base_text
         self._thinking_dots = 0
-        self.status_label.setText(f"{base_text}.")
-        self.status_label.show()
+        self.chat_view.show_thinking(f"{base_text}.")
         self._thinking_timer.start()
 
     def _stop_thinking(self):
         """Stop thinking animation."""
         self._thinking_timer.stop()
-        self.status_label.hide()
-        self.status_label.setText("")
+        self.chat_view.hide_thinking()
 
     def _toggle_sidebar(self):
         self.sidebar.setVisible(not self.sidebar.isVisible())
 
     def _register_shortcuts(self):
-        # Command palette
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.palette_manager._show_palette)
+        # Command palette (Ctrl+K is registered in CommandPaletteManager.__init__)
         # New chat
         QShortcut(QKeySequence("Ctrl+N"), self, activated=self._new_conversation)
         # Clear chat
@@ -1001,7 +1090,7 @@ class ModernChatWindow(QMainWindow):
         btn_row = QHBoxLayout()
 
         btn_add = QPushButton("Salvar Memoria")
-        btn_add.setIcon(qta.icon("fa5s.save", color="#FFFFFF"))
+        btn_add.setIcon(icon("save", "#FFFFFF"))
         btn_add.setStyleSheet("""
             QPushButton {
                 background: #000000;
@@ -1019,7 +1108,7 @@ class ModernChatWindow(QMainWindow):
         btn_row.addWidget(btn_add)
 
         btn_delete = QPushButton("Excluir Selecionada")
-        btn_delete.setIcon(qta.icon("fa5s.trash", color="#FF3B30"))
+        btn_delete.setIcon(icon("trash", "#FF3B30"))
         btn_delete.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -1161,11 +1250,15 @@ class ModernChatWindow(QMainWindow):
             "pergunta": text,
             "documento": self._pending_doc_text,
             "nome_documento": self._pending_doc_name,
+            "caminho_documento": self._pending_file_path,
+            "caminho_imagem": self._pending_image_path,
             "tipo_documento": "",
             "memorias_ativas": self._memories_enabled,
         }
         self._pending_doc_text = ""
         self._pending_doc_name = ""
+        self._pending_file_path = ""
+        self._pending_image_path = ""
 
         # Start streaming
         self.chat_view.start_streaming()
@@ -1211,13 +1304,15 @@ class ModernChatWindow(QMainWindow):
         if self._voz_worker is not None:
             self._voz_worker.stop()
         from workers.tts_worker import VozWorker
-        self._voz_worker = VozWorker(texto)
-        self._voz_worker.erro_tts.connect(lambda msg: print(f"[TTS] {msg}"))
-        self._voz_worker.finished.connect(self._on_tts_finished)
-        self._voz_worker.start()
+        worker = VozWorker(texto)
+        self._voz_worker = worker
+        worker.erro_tts.connect(lambda msg: print(f"[TTS] {msg}"))
+        worker.finished.connect(lambda: self._on_tts_finished(worker))
+        worker.start()
 
-    def _on_tts_finished(self):
-        self._voz_worker = None
+    def _on_tts_finished(self, worker):
+        if self._voz_worker is worker:
+            self._voz_worker = None
 
     def _attach_file(self):
         caminho, _ = QFileDialog.getOpenFileName(
@@ -1228,12 +1323,23 @@ class ModernChatWindow(QMainWindow):
             return
 
         nome = os.path.basename(caminho)
+        extensao = os.path.splitext(caminho)[1].lower()
+        image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"]
 
         try:
-            texto = processar_arquivo(caminho)
-            self._pending_doc_text = texto or ""
-            self._pending_doc_name = nome
-            self.input_area.add_attachment(nome)
+            if extensao in image_exts:
+                self._pending_image_path = caminho
+                self._pending_doc_text = ""
+                self._pending_doc_name = nome
+                self.input_area.add_attachment(f"🖼 {nome}")
+            else:
+                from pathlib import Path as _Path
+                texto = processar_arquivo(caminho, base_dir=_Path(caminho).parent)
+                self._pending_doc_text = texto or ""
+                self._pending_doc_name = nome
+                self._pending_file_path = caminho
+                self._pending_image_path = ""
+                self.input_area.add_attachment(nome)
         except Exception as e:
             self.chat_view.add_assistant_message(f"Erro ao processar arquivo: {e}")
 
@@ -1241,7 +1347,7 @@ class ModernChatWindow(QMainWindow):
         if self._mic_worker is not None:
             self._mic_worker.stop()
             self._mic_worker = None
-            self.input_area.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#9E9EA3"))
+            self.input_area.btn_mic.setIcon(icon("microphone", "#9E9EA3"))
             self.input_area.btn_mic.setToolTip("Gravar áudio")
         else:
             try:
@@ -1250,7 +1356,7 @@ class ModernChatWindow(QMainWindow):
                 self._mic_worker.signals.recognized.connect(self._on_mic_recognized)
                 self._mic_worker.signals.error.connect(self._on_mic_error)
                 self.worker_manager.pool.start(self._mic_worker)
-                self.input_area.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#D32F2F"))
+                self.input_area.btn_mic.setIcon(icon("microphone", "#D32F2F"))
                 self.input_area.btn_mic.setToolTip("Parar gravação")
             except Exception as e:
                 self.chat_view.add_assistant_message(f"Erro ao iniciar microfone: {e}")
@@ -1258,7 +1364,7 @@ class ModernChatWindow(QMainWindow):
     def _on_mic_recognized(self, text: str):
         print(f"[DEBUG] _on_mic_recognized: '{text}'")
         self._mic_worker = None
-        self.input_area.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#9E9EA3"))
+        self.input_area.btn_mic.setIcon(icon("microphone", "#9E9EA3"))
         self.input_area.btn_mic.setToolTip("Gravar áudio")
         if text.strip():
             self.input_area.input.setText(text)
@@ -1267,7 +1373,7 @@ class ModernChatWindow(QMainWindow):
     def _on_mic_error(self, msg: str):
         print(f"[DEBUG] _on_mic_error: {msg}")
         self._mic_worker = None
-        self.input_area.btn_mic.setIcon(qta.icon("fa5s.microphone", color="#9E9EA3"))
+        self.input_area.btn_mic.setIcon(icon("microphone", "#9E9EA3"))
         self.input_area.btn_mic.setToolTip("Gravar áudio")
         self.chat_view.add_assistant_message(f"Erro no microfone: {msg}")
 
@@ -1277,8 +1383,108 @@ class ModernChatWindow(QMainWindow):
             self._voz_worker = None
 
     def _change_model(self, model_id: str):
+        from core.config import get_model_by_id
+        from core.model_downloader import download_mmproj, download_model, is_model_downloaded
+
+        model = get_model_by_id(model_id)
+        if not model:
+            self.chat_view.add_assistant_message(f"Modelo '{model_id}' nao encontrado.")
+            return
+
         self.settings.set_llm_model(model_id)
-        self.chat_view.add_assistant_message(f"Modelo alterado para **{model_id}**")
+
+        if not is_model_downloaded(model_id):
+            self._start_thinking(f"Baixando {model.name} ({model.size_gb}GB)")
+            self.chat_view.add_assistant_message(
+                f"Baixando **{model.name}** ({model.quant}, {model.size_gb}GB)...\n"
+                f"Isso pode levar alguns minutos dependendo da velocidade da internet."
+            )
+            # Download in background
+            from PySide6.QtCore import QThread
+            from PySide6.QtCore import Signal as QSignal
+
+            class DownloadWorker(QThread):
+                finished = QSignal(bool, str)
+
+                def run(self):
+                    try:
+                        download_model(model_id, fn_status=lambda s: None)
+                        if model.has_mmproj:
+                            download_mmproj(model_id, fn_status=lambda s: None)
+                        self.finished.emit(True, "")
+                    except Exception as e:
+                        self.finished.emit(False, str(e))
+
+            self._download_worker = DownloadWorker()
+            self._download_worker.finished.connect(
+                lambda ok, err: self._on_model_downloaded(ok, err, model_id)
+            )
+            self._download_worker.start()
+        else:
+            self._do_switch_model(model_id)
+
+    def _on_model_downloaded(self, ok: bool, error: str, model_id: str):
+        self._stop_thinking()
+        if ok:
+            self._do_switch_model(model_id)
+        else:
+            self.chat_view.add_assistant_message(f"Erro ao baixar modelo: {error}")
+
+    def _do_switch_model(self, model_id: str):
+        from core.config import get_model_by_id
+        model = get_model_by_id(model_id)
+        name = model.name if model else model_id
+
+        self._start_thinking(f"Carregando {name}")
+        self.chat_view.add_assistant_message(f"Alterando modelo para **{name}**...")
+
+        from PySide6.QtCore import QThread
+        from PySide6.QtCore import Signal as QSignal
+
+        class SwitchWorker(QThread):
+            finished = QSignal(bool, str)
+
+            def run(self):
+                try:
+                    from core.llama_cpp import switch_llama_model
+                    switch_llama_model(model_id, n_gpu_layers=-1, n_ctx=8192, n_batch=1024)
+                    self.finished.emit(True, "")
+                except Exception as e:
+                    self.finished.emit(False, str(e))
+
+        self._switch_worker = SwitchWorker()
+        self._switch_worker.finished.connect(
+            lambda ok, err: self._on_model_switched(ok, err, model_id)
+        )
+        self._switch_worker.start()
+
+    def _on_model_switched(self, ok: bool, error: str, model_id: str):
+        self._stop_thinking()
+        if ok:
+            from core.config import get_model_by_id
+            model = get_model_by_id(model_id)
+            name = model.name if model else model_id
+            self.chat_view.add_assistant_message(
+                f"Modelo alterado para **{name}**. Pronto para uso."
+            )
+            # Refresh combo indicators
+            self._refresh_model_combo()
+        else:
+            self.chat_view.add_assistant_message(
+                f"Erro ao trocar modelo: {error}\n"
+                f"Verifique se o arquivo GGUF esta na pasta resources/."
+            )
+
+    def _refresh_model_combo(self):
+        """Update download status indicators in model combo."""
+        from core.model_downloader import is_model_downloaded
+        combo = self.input_area.model_combo
+        for i in range(combo.count()):
+            model_id = combo.itemData(i)
+            model = next((m for m in self.input_area._combo_models if m.id == model_id), None)
+            if model:
+                status = "✓" if is_model_downloaded(model_id) else "↓"
+                combo.setItemText(i, f"{status} {model.name} ({model.quant})")
 
     def _generate_report(self):
         pass

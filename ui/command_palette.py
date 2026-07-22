@@ -1,4 +1,3 @@
-import qtawesome as qta
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
@@ -11,6 +10,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ui.icons import icon
 
 
 class CommandPalette(QDialog):
@@ -156,7 +157,7 @@ class CommandPalette(QDialog):
 
             icon_label = QLabel()
             icon_label.setPixmap(
-                qta.icon(action["icon"], color="#8B949E").pixmap(20, 20)
+                icon(action["icon"], "#8B949E").pixmap(20, 20)
             )
             layout.addWidget(icon_label)
 
@@ -243,6 +244,9 @@ class CommandPaletteManager:
         self.palette.show()
 
     def _execute_action(self, action_id: str):
+        def _noop():
+            self.window.chat_view.add_assistant_message("Funcionalidade em desenvolvimento.")
+
         handlers = {
             "new_chat": self.window._new_conversation,
             "clear_chat": self.window.chat_view.clear,
@@ -252,6 +256,14 @@ class CommandPaletteManager:
             "change_model": lambda: self.window.input_area.model_combo.showPopup(),
             "voice_toggle": self.window._toggle_voice,
             "generate_report": self.window._generate_report,
+            "export_chat": _noop,
+            "import_chat": _noop,
+            "web_search": _noop,
+            "run_code": _noop,
+            "index_document": _noop,
+            "list_documents": _noop,
+            "memory_view": self.window._show_memories_dialog,
+            "add_memory": _noop,
         }
 
         if action_id in handlers:

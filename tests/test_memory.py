@@ -30,12 +30,17 @@ class TestMemoryService:
         memory_service.add("O usuario odeia brocolis")
         memory_service.add("O usuario programa em Python")
 
+        # With only 3 memories (below inject_all_memories_limit=15),
+        # all are returned regardless of query
         results = memory_service.search("pizza")
-        assert len(results) == 1
-        assert "pizza" in results[0].lower()
+        assert len(results) == 3
 
-        results = memory_service.search("usuario")
-        assert len(results) <= 3  # top_k limit
+        # Test with enough memories to trigger semantic search
+        memory_service.clear()
+        for i in range(20):
+            memory_service.add(f"Memoria numero {i} sobre assunto {chr(65 + i % 26)}")
+        results = memory_service.search("Memoria numero 5")
+        assert len(results) <= 10  # top_memories limit
 
     def test_search_empty(self, memory_service):
         results = memory_service.search("anything")
