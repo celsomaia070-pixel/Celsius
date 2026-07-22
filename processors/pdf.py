@@ -19,7 +19,7 @@ class ProcessadorPDF(ProcessadorArquivo):
         if metadados:
             campos = []
             if metadados.title:
-                campos.append(f"Titulo: {metadados.title}")
+                campos.append(f"Título: {metadados.title}")
             if metadados.author:
                 campos.append(f"Autor: {metadados.author}")
             if metadados.subject:
@@ -35,13 +35,13 @@ class ProcessadorPDF(ProcessadorArquivo):
         for i, pagina in enumerate(leitor.pages):
             texto_pagina = pagina.extract_text() or ""
             if texto_pagina.strip():
-                texto += f"[Pagina {i + 1}/{total_paginas}]\n{texto_pagina}\n\n"
+                texto += f"Página {i + 1}/{total_paginas}\n{texto_pagina}\n\n"
 
         texto = texto.strip()
         if len(texto) > LIMITE_TEXTO_DOCUMENTO:
             texto = texto[:LIMITE_TEXTO_DOCUMENTO] + "\n... [Documento truncado] ..."
 
-        resultado = f"PDF: {total_paginas} paginas"
+        resultado = f"PDF: {total_paginas} páginas"
         if info_meta:
             resultado += f"\n{info_meta}"
         resultado += f"\n\n{texto}"

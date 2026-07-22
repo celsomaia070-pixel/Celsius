@@ -35,16 +35,10 @@ class Ferramenta:
 
 
 def _validate_path(path: str) -> Path:
-    """Validate and resolve path within allowed directory."""
-    settings = get_settings()
+    """Validate path exists and is accessible."""
     path = Path(path).resolve()
-    base_dir = settings.base_dir.resolve()
-    try:
-        path.relative_to(base_dir)
-    except ValueError:
-        raise ValueError(f"Path traversal attempt blocked: {path}")
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+        raise FileNotFoundError(f"Arquivo nao encontrado: {path}")
     return path
 
 
@@ -52,7 +46,7 @@ def _tool_processar_arquivo(caminho: str) -> str:
     from processors import processar_arquivo
     path = _validate_path(caminho)
     settings = get_settings()
-    return processar_arquivo(str(path), base_dir=settings.base_dir)
+    return processar_arquivo(str(path), base_dir=path.parent)
 
 
 def _tool_pesquisar_web(query: str) -> str:

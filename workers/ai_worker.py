@@ -108,7 +108,7 @@ class WorkerManager:
 
     def cancel_all(self):
         for worker in self._active_workers:
-            pass
+            worker.setAutoDelete(True)
         self.pool.clear()
         self._active_workers.clear()
 

@@ -9,11 +9,11 @@ from duckduckgo_search import DDGS
 def pesquisar_web(texto):
     resultados = []
     try:
-        with DDGS() as ddgs:
-            for item in ddgs.text(texto, max_results=2):
-                resultados.append(
-                    f"- {item.get('title', '')}\n{item.get('body', '')}"
-                )
+        ddgs = DDGS()
+        for item in ddgs.text(texto, max_results=5):
+            resultados.append(
+                f"- {item.get('title', '')}\n{item.get('body', '')}"
+            )
     except Exception as e:
         return f"Erro na pesquisa: {e}"
     return "\n".join(resultados)
@@ -80,10 +80,10 @@ def executar_comando(texto):
 
     padroes_hora = [
         r"que horas sao",
-        r"horas",
-        r"hora\b",
+        r"\bhoras\b",
+        r"\bhora\b",
         r"qual a hora",
-        r"horario",
+        r"\bhorario\b",
     ]
     if any(re.search(p, texto_lower) for p in padroes_hora):
         return f"Hora atual: {datetime.now().strftime('%H:%M')}"

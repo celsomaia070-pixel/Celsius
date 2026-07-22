@@ -51,8 +51,11 @@ class ProcessadorODF(ProcessadorArquivo):
                     conteudo = ""
                     for p in celula.getElementsByType(P):
                         conteudo += teletype.extractText(p) if hasattr(teletype, "extractText") else ""
-                    if repeticoes and int(repeticoes) > 10:
-                        continue
+                    try:
+                        if repeticoes and int(repeticoes) > 10:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
                     celulas.append(conteudo.strip())
                 if any(c for c in celulas):
                     texto += " | ".join(celulas) + "\n"

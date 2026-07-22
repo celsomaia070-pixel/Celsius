@@ -10,6 +10,7 @@ venv/
 build/
 dist/
 *.egg-info/
+celsius.egg-info/
 
 # IDE
 .idea/
@@ -19,6 +20,7 @@ dist/
 # Testes
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 
@@ -28,11 +30,8 @@ chats.json
 memorias.json
 *.log
 voices/
+resources/
 
-# Build
-build/
-dist/
-*.egg-info/
-celsius.egg-info/
+# OS
 .DS_Store
 Thumbs.db

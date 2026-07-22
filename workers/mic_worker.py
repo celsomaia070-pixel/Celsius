@@ -8,6 +8,9 @@ from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 from core.config import get_settings
 
+# Singleton for whisper model - shared across all MicWorker instances
+_whisper_model = None
+
 
 class MicWorkerSignals(QObject):
     recognized = Signal(str)
@@ -26,13 +29,15 @@ class MicWorker(QRunnable):
         self.rodando = True
         self._lock_stream = None
         self.signals = MicWorkerSignals()
-        self._model = None
 
     def _get_model(self):
-        if self._model is None:
+        global _whisper_model
+        if _whisper_model is None:
             model_name = self.settings.whisper_model
-            self._model = whisper.load_model(model_name)
-        return self._model
+            print(f"[MIC] Carregando modelo Whisper: {model_name}")
+            _whisper_model = whisper.load_model(model_name)
+            print(f"[MIC] Modelo Whisper carregado com sucesso")
+        return _whisper_model
 
     def callback_audio(self, indata, frames, time, status):
         if self.rodando:
@@ -44,7 +49,7 @@ class MicWorker(QRunnable):
         try:
             device = sd.default.device[0]
             info = sd.query_devices(device)
-            print(f"[MIC DEBUG] Usando dispositivo: {info['name']}")
+            print(f"[MIC] Usando dispositivo: {info['name']}")
 
             self._lock_stream = sd.InputStream(
                 device=device,
@@ -61,7 +66,7 @@ class MicWorker(QRunnable):
                     continue
 
         except Exception as e:
-            print(f"[MIC DEBUG] ERRO: {e}")
+            print(f"[MIC] ERRO: {e}")
             traceback.print_exc()
             self.signals.error.emit(f"Erro ao acessar microfone: {e}")
             return
@@ -75,35 +80,50 @@ class MicWorker(QRunnable):
                 self._lock_stream = None
 
         if not lista_frames:
-            print("[MIC DEBUG] Nenhum audio capturado")
+            print("[MIC] Nenhum audio capturado")
             self.signals.error.emit("Nenhum audio capturado.")
             return
 
         gravacao_total = np.concatenate(lista_frames, axis=0)
-        print(f"[MIC DEBUG] Audio captured, shape: {gravacao_total.shape}")
+        print(f"[MIC] Audio capturado, shape: {gravacao_total.shape}")
+
+        min_samples = int(self.fs * 1.0)
+        if len(gravacao_total) < min_samples:
+            self.signals.error.emit("Audio muito curto. Fale por mais tempo.")
+            return
 
         try:
             audio_float32 = gravacao_total.flatten().astype(np.float32) / 32768.0
+
+            max_vol = np.max(np.abs(audio_float32))
+            if max_vol < 0.005:
+                self.signals.error.emit("Audio muito silencioso. Fale mais alto.")
+                return
+            if max_vol > 0.01:
+                audio_float32 = audio_float32 / max_vol * 0.8
 
             model = self._get_model()
             import torch
             audio_tensor = torch.from_numpy(audio_float32)
 
-            print("[MIC DEBUG] Starting Whisper transcription...")
+            print("[MIC] Iniciando transcrição Whisper...")
             result = model.transcribe(
                 audio_tensor,
                 language="pt",
-                fp16=False
+                fp16=False,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.3,
+                logprob_threshold=-1.0,
             )
             texto = result["text"].strip()
-            print(f"[MIC DEBUG] Transcription: '{texto}'")
-            if texto:
+            print(f"[MIC] Transcrição: '{texto}'")
+            if texto and len(texto) > 1:
                 self.signals.recognized.emit(texto)
             else:
-                self.signals.error.emit("Nao entendi o audio.")
+                self.signals.error.emit("Nao entendi o audio. Tente falar mais alto e claro.")
 
         except Exception as e:
-            print(f"[MIC DEBUG] ERRO reconhecimento: {e}")
+            print(f"[MIC] ERRO reconhecimento: {e}")
             traceback.print_exc()
             self.signals.error.emit(f"Erro ao reconhecer audio: {e}")
 
