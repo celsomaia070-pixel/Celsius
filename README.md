@@ -54,12 +54,69 @@ python main.py
 ## Uso
 
 ```bash
-# Executar aplicação
-python -m celsius
-
-# Ou diretamente
 python main.py
 ```
+
+### Atalhos de Teclado
+
+| Atalho | Ação |
+|---|---|
+| `Ctrl+K` | Paleta de comandos |
+| `Ctrl+N` | Nova conversa |
+| `Ctrl+B` | Mostrar/esconder sidebar |
+| `Ctrl+Shift+L` | Alternar tema claro/escuro |
+| `Ctrl+Shift+Del` | Limpar conversa atual |
+| `Ctrl+,` | Configurações |
+| `Enter` | Enviar mensagem |
+
+### Bate-Papo
+
+- **Enviar mensagem**: Digite no campo de texto e pressione **Enter** ou clique no botão de envio (avião de papel).
+- **Anexar arquivo**: Clique no botão de **clips**. Imagens (.png, .jpg, .gif, .webp) e documentos (.pdf, .docx, .xlsx, .txt) são processados automaticamente.
+- **Gravar áudio**: Clique no botão de **microfone**. O áudio é transcrito com Whisper e o texto é enviado automaticamente. O ícone fica vermelho durante a gravação.
+- **Leitura em voz alta**: O botão de **volume** ativa/desativa TTS (edge-tts, pt-BR). Respostas da IA são lidas automaticamente quando ativado.
+- **Copiar resposta**: Passe o mouse sobre uma mensagem da IA e clique no ícone de **copiar** que aparece.
+- **Renderização**: Mensagens suportam Markdown completo: código, tabelas, listas, negrito, itálico e cabeçalhos.
+
+### Sidebar
+
+- **Nova conversa**: Botão **"+"** no topo da sidebar.
+- **Buscar**: Digite no campo de busca para filtrar conversas.
+- **Trocar conversa**: Clique em qualquer conversa na lista.
+- **Renomear**: Clique com botão direito → **Renomear**.
+- **Excluir**: Clique com botão direito → **Excluir**.
+- **Memórias**: Botão **"Memórias"** na parte inferior. Adicione, visualize e remova memórias do usuário.
+- **Configurações**: Botão **"Configurações"** (em desenvolvimento).
+
+### Paleta de Comandos (`Ctrl+K`)
+
+Busca rápida de ações. Digite para filtrar, use ↑↓ para navegar, **Enter** para executar:
+
+| Ação | Atalho |
+|---|---|
+| Nova conversa | `Ctrl+N` |
+| Limpar conversa | `Ctrl+Shift+Del` |
+| Alternar sidebar | `Ctrl+B` |
+| Alternar tema | `Ctrl+Shift+L` |
+| Trocar modelo | — |
+| Ver memórias | — |
+| Configurações | `Ctrl+,` |
+
+### Comandos Rápidos (no chat)
+
+Digite frases naturais para ações rápidas:
+
+- `"abra o youtube"` / `"pesquisar no youtube música"` — abre YouTube
+- `"abra o google"` / `"buscar receita no google"` — abre Google
+- `"que horas são"` — retorna a hora atual
+
+### Temas
+
+Dois temas disponíveis: **Claro** (padrão) e **Escuro** (GitHub-dark). Alterne com `Ctrl+Shift+L`.
+
+### Troca de Modelos
+
+Use o **dropdown de modelo** na barra de entrada. Modelos GGUF são baixados automaticamente na primeira seleção. Indicadores mostram status: ✓ (baixado) ou ↓ (pendente).
 
 ## Estrutura do Projeto
 
