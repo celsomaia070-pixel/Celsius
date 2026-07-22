@@ -7,7 +7,6 @@ import core.config as config
 from ai.react import loop_react
 from core.commands import executar_comando
 from core.config import get_settings
-from core.memory import get_memory_service
 
 MAX_HISTORICO_SESSION = get_settings().max_history_session
 
@@ -47,7 +46,6 @@ RESPOSTAS_FUNCOES = (
 
 COMANDOS_RAPIDOS = {
     "quem e voce": "Sou o Celsius, um agente multimodal de IA. Tenho capacidades reais de acao: processar arquivos, executar codigo, navegar na web, indexar documentos e muito mais. O que precisa?",
-    "quem sou eu": "Voce e o Celso, meu criador!",
     "qual seu nome": "Meu nome e Celsius.",
     "seu nome": "Celsius.",
     "me ajuda": "Claro! Me mande um arquivo, pergunte algo, ou peca para pesquisar na web. Tenho varias capacidades como agente.",
@@ -87,7 +85,8 @@ def _responder_rapido(pergunta: str) -> str | None:
         limpo = limpo.replace(char, "")
     limpo = limpo.strip()
 
-    if limpo in HORAS_PADROES or any(h in limpo for h in ["hora", "horario"]):
+    import re
+    if limpo in HORAS_PADROES or re.search(r"\bhoras?\b|\bhorario\b", limpo):
         return f"Hora atual: {datetime.now().strftime('%H:%M')}"
 
     if limpo in COMANDOS_RAPIDOS:
@@ -141,10 +140,9 @@ def gerar_resposta(
     fn_passo: Callable[[object], None] | None = None,
     fn_chunk: Callable[[str], None] | None = None,
 ) -> str:
-    settings = get_settings()
     pergunta_direta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
-    memoriasativas = prompt_dict.get("memorias_ativas", True)
+    nome_doc = prompt_dict.get("nome_documento", "").strip()
 
     if not texto_doc:
         comando = executar_comando(pergunta_direta)
@@ -159,14 +157,6 @@ def gerar_resposta(
                 fn_chunk(resposta_rapida)
             return resposta_rapida
 
-    # Get relevant memories
-    memory_service = get_memory_service()
-    memorias = memory_service.search(pergunta_direta) if pergunta_direta and memoriasativas else []
-
-    # Inject memories into prompt if available
-    if memorias:
-        prompt_dict["_memorias"] = memorias
-
     # Get conversation history for context
     history = _session_context.get_history()
 
@@ -178,7 +168,11 @@ def gerar_resposta(
         history=history,
     )
 
-    _session_context.add_user(pergunta_direta if pergunta_direta else "[Analise de arquivo]")
+    _session_context.add_user(
+        f"{pergunta_direta}\n\n[Documento: {nome_doc}]\n{texto_doc[:3000]}"
+        if texto_doc
+        else (pergunta_direta or "[Analise de arquivo]")
+    )
     _session_context.add_assistant(resposta)
 
     gc.collect()
@@ -227,6 +221,11 @@ def gerar_resposta_com_imagem(
     ]
 
     try:
+        from core.llama_cpp import get_llama_manager
+        mgr = get_llama_manager()
+        if not mgr._chat_handler:
+            return "Erro: O modelo carregado não possui suporte a visão (handler não inicializado). Verifique se o modelo é multimodal (ex: Qwen2.5-VL) e se o arquivo mmproj existe na pasta resources/."
+
         llama = get_llama()
         stream = llama.chat_completion(
             messages=mensagens,
@@ -241,8 +240,13 @@ def gerar_resposta_com_imagem(
             resposta += token
             if fn_chunk:
                 fn_chunk(token)
-        return resposta.strip()
+        resultado = resposta.strip()
+        _session_context.add_user(f"[Imagem: {caminho_imagem}] {pergunta_final}")
+        _session_context.add_assistant(resultado)
+        return resultado
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return f"Erro ao analisar imagem: {e}. Nota: O modelo atual pode nao suportar visao. Use um modelo multimodal (ex: Qwen2.5-VL, LLaVA) com arquivo mmproj para suporte a imagens."
 
 
