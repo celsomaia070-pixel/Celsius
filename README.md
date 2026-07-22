@@ -1,6 +1,6 @@
 # Celsius - Agente Multimodal de IA
 
-Celsius é um agente de IA multimodal avançado com capacidades reais de ação, construído com Python, PySide6 e Ollama.
+Celsius é um agente de IA multimodal avançado com capacidades reais de ação, construído com Python, PySide6 e llama-cpp-python.
 
 ## Funcionalidades
 
@@ -26,7 +26,7 @@ Celsius é um agente de IA multimodal avançado com capacidades reais de ação,
 ## Requisitos
 
 - Python 3.10+
-- Ollama rodando localmente com modelos instalados
+- llama-cpp-python com suporte Vulkan (GPU) ou CPU
 - FFmpeg (para processamento de áudio)
 - Dependências do sistema para Playwright: `playwright install-deps`
 
@@ -47,12 +47,8 @@ pip install -e ".[dev]"
 # Instalar Playwright
 playwright install chromium
 
-# Iniciar Ollama (em outro terminal)
-ollama serve
-
-# Baixar modelos
-ollama pull qwen2.5vl:7b
-ollama pull nomic-embed-text
+# Executar (modelos GGUF serão baixados automaticamente)
+python main.py
 ```
 
 ## Uso
