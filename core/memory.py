@@ -30,12 +30,16 @@ class MemoryService:
                 try:
                     with open(self.settings.memorias_file, encoding="utf-8") as f:
                         self._memories = json.load(f)
-                    for memoria in self._memories:
-                        texto = memoria.get("texto", "") if isinstance(memoria, dict) else memoria
-                        if texto:
-                            self._embeddings_cache[texto] = self._model_instance.encode([texto])[0]
-                except Exception:
+                except Exception as e:
+                    print(f"[MEMORY] Erro ao ler {self.settings.memorias_file}: {e}")
                     self._memories = []
+                for memoria in self._memories:
+                    texto = memoria.get("texto", "") if isinstance(memoria, dict) else memoria
+                    if texto and texto not in self._embeddings_cache:
+                        try:
+                            self._embeddings_cache[texto] = self._model_instance.encode([texto])[0]
+                        except Exception as e:
+                            print(f"[MEMORY] Erro ao gerar embedding para '{texto[:40]}...': {e}")
             else:
                 self._memories = []
 
@@ -51,7 +55,19 @@ class MemoryService:
             self._save()
             return memoria
 
+    def get_all_texts(self) -> list[str]:
+        with self._lock:
+            return [
+                m.get("texto", "") if isinstance(m, dict) else m
+                for m in self._memories
+            ]
+
     def search(self, query: str) -> list[str]:
+        all_texts = self.get_all_texts()
+        if not all_texts:
+            return []
+        if len(all_texts) <= self.settings.inject_all_memories_limit:
+            return all_texts
         with self._lock:
             if not self._embeddings_cache:
                 return []
