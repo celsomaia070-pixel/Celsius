@@ -2,6 +2,7 @@
 InventoryPanel - Painel lateral de estoque com design WMS profissional.
 """
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
