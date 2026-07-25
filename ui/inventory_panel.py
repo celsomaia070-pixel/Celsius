@@ -1,3 +1,6 @@
+"""
+InventoryPanel - Painel lateral de estoque com design WMS profissional.
+"""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -23,78 +26,165 @@ from ui.theme.schemes import get_scheme
 from ui.theme.tokens import SPACING, RADIUS, TYPOGRAPHY
 
 
+def _stock_health_color(item: ItemEstoque) -> tuple[str, str]:
+    """Retorna (bg, fg) para a badge de status."""
+    cores = {
+        ColunaKanban.CRITICO: ("#FFF0F0", "#C62828"),
+        ColunaKanban.A_COMPRAR: ("#FFF8E1", "#E65100"),
+        ColunaKanban.EM_ESTOQUE: ("#E8F5E9", "#1B5E20"),
+        ColunaKanban.EM_USO: ("#E3F2FD", "#1565C0"),
+    }
+    return cores.get(item.coluna, ("#F5F5F5", "#757575"))
+
+
+def _stock_bar_color(item: ItemEstoque) -> str:
+    """Cor da barra de progresso baseada na saude do estoque."""
+    if item.quantidade <= 0:
+        return "#C62828"
+    if item.quantidade <= item.estoque_min:
+        return "#E85D5D"
+    pct = item.quantidade / max(item.estoque_max, 1)
+    if pct < 0.3:
+        return "#F57C00"
+    if pct < 0.7:
+        return "#FBC02D"
+    return "#2E9E5E"
+
+
 class MovimentacaoItem(QWidget):
-    """Item de historico de movimentacao."""
+    """Item de historico de movimentacao com visual profissional."""
 
     def __init__(self, mov: Movimentacao, scheme=None, parent=None):
         super().__init__(parent)
         self._scheme = scheme or get_scheme()
         s = self._scheme
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(SPACING.space_4, SPACING.space_3, SPACING.space_4, SPACING.space_3)
-        layout.setSpacing(SPACING.space_3)
+        layout.setContentsMargins(SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2)
+        layout.setSpacing(SPACING.space_2)
 
         tipo = mov.tipo
         sinal = "+" if tipo == "entrada" else "-"
-        cor = "#155724" if tipo == "entrada" else "#721c24"
-        bg = "#d4edda" if tipo == "entrada" else "#f8d7da"
+        cor = "#1B5E20" if tipo == "entrada" else "#C62828"
+        bg = "#E8F5E9" if tipo == "entrada" else "#FFF0F0"
 
         tag = QLabel(f" {sinal} ")
-        tag.setFixedWidth(24)
+        tag.setFixedSize(22, 22)
         tag.setAlignment(Qt.AlignCenter)
         tag.setStyleSheet(
-            f"background: {bg}; color: {cor}; border-radius: 4px; "
+            f"background: {bg}; color: {cor}; border-radius: 11px; "
             f"font-size: {TYPOGRAPHY.text_xs}px; font-weight: bold; border: none;"
         )
-        layout.addWidget(tag)
+        layout.addWidget(tag, 0, Qt.AlignCenter)
 
-        info = QLabel(f"{mov.item_nome}  {sinal}{mov.quantidade} un")
-        info.setWordWrap(True)
-        info.setStyleSheet(
-            f"color: {s.text_primary}; "
-            f"font-size: {TYPOGRAPHY.text_sm}px; background: transparent; border: none;"
-        )
-        layout.addWidget(info, 1)
+        info_col = QVBoxLayout()
+        info_col.setSpacing(1)
 
-        data = QLabel(mov.timestamp.split(" ")[1] if " " in mov.timestamp else mov.timestamp)
-        data.setStyleSheet(
-            f"color: {s.text_muted}; "
-            f"font-size: {TYPOGRAPHY.text_xs}px; background: transparent; border: none;"
+        item_name = QLabel(mov.item_nome)
+        item_name.setStyleSheet(
+            f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_sm}px; "
+            f"font-weight: {TYPOGRAPHY.weight_semibold}; background: transparent; border: none;"
         )
-        layout.addWidget(data)
+        info_col.addWidget(item_name)
+
+        qty_text = f"{sinal}{mov.quantidade} un"
+        if mov.quantidade_anterior != mov.quantidade_nova:
+            qty_text += f"  ({mov.quantidade_anterior} -> {mov.quantidade_nova})"
+        qty_label = QLabel(qty_text)
+        qty_label.setStyleSheet(
+            f"color: {cor}; font-size: {TYPOGRAPHY.text_xs}px; "
+            f"font-weight: {TYPOGRAPHY.weight_medium}; background: transparent; border: none;"
+        )
+        info_col.addWidget(qty_label)
+
+        layout.addLayout(info_col, 1)
+
+        timestamp = mov.timestamp.split(" ")[1] if " " in mov.timestamp else mov.timestamp
+        date_label = QLabel(timestamp)
+        date_label.setStyleSheet(
+            f"color: {s.text_muted}; font-size: {TYPOGRAPHY.text_xs}px; "
+            f"background: transparent; border: none;"
+        )
+        layout.addWidget(date_label, 0, Qt.AlignRight | Qt.AlignCenter)
 
 
 class CategoryHeader(QWidget):
-    """Header de categoria na tabela."""
+    """Header de categoria com indicator e contagem."""
 
     def __init__(self, categoria: str, count: int, scheme=None, parent=None):
         super().__init__(parent)
         s = scheme or get_scheme()
-        self.setFixedHeight(32)
-        self.setStyleSheet(f"background: {s.bg_secondary}; border: none;")
+        self.setFixedHeight(34)
+        self.setStyleSheet(f"background: {s.bg_secondary}; border: none; border-bottom: 1px solid {s.border_default};")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(SPACING.space_4, 0, SPACING.space_4, 0)
         layout.setSpacing(SPACING.space_2)
 
-        label = QLabel(f"  {categoria}")
+        indicator = QLabel(">")
+        indicator.setFixedSize(14, 14)
+        indicator.setAlignment(Qt.AlignCenter)
+        indicator.setStyleSheet(
+            f"color: {s.accent_primary}; font-size: {TYPOGRAPHY.text_xs}px; "
+            f"font-weight: bold; background: transparent; border: none;"
+        )
+        layout.addWidget(indicator)
+
+        label = QLabel(categoria)
         label.setStyleSheet(
             f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_sm}px; "
             f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
         )
         layout.addWidget(label)
 
-        count_label = QLabel(f"{count} itens")
-        count_label.setStyleSheet(
+        count_badge = QLabel(f" {count} ")
+        count_badge.setStyleSheet(
             f"color: {s.text_muted}; font-size: {TYPOGRAPHY.text_xs}px; "
-            f"background: transparent; border: none;"
+            f"background: {s.bg_primary}; border: 1px solid {s.border_default}; "
+            f"border-radius: 8px; padding: 1px 6px; border: none;"
         )
-        layout.addWidget(count_label)
+        layout.addWidget(count_badge)
         layout.addStretch()
 
 
+class StockHealthBar(QWidget):
+    """Mini barra de saude do estoque."""
+
+    def __init__(self, item: ItemEstoque, width: int = 80, scheme=None, parent=None):
+        super().__init__(parent)
+        self._scheme = scheme or get_scheme()
+        s = self._scheme
+        self.setFixedSize(width, 16)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 3, 0, 3)
+        layout.setSpacing(0)
+
+        bar_w = width - 30
+        pct = min(item.quantidade / max(item.estoque_max, 1), 1.0)
+        fill_w = max(int(bar_w * pct), 2)
+        color = _stock_bar_color(item)
+
+        bg_bar = QLabel()
+        bg_bar.setFixedSize(bar_w, 4)
+        bg_bar.setStyleSheet(f"background: {s.border_default}; border-radius: 2px; border: none;")
+        layout.addWidget(bg_bar)
+
+        fill_bar = QLabel()
+        fill_bar.setFixedSize(fill_w, 4)
+        fill_bar.setStyleSheet(f"background: {color}; border-radius: 2px; border: none;")
+        layout.addWidget(fill_bar)
+
+        layout.addSpacing(4)
+
+        pct_label = QLabel(f"{int(pct * 100)}%")
+        pct_label.setStyleSheet(
+            f"color: {s.text_muted}; font-size: 9px; background: transparent; border: none;"
+        )
+        layout.addWidget(pct_label, 0, Qt.AlignCenter)
+
+
 class InventoryPanel(QWidget):
-    """Painel lateral de gerenciamento de estoque em formato tabela."""
+    """Painel lateral de gerenciamento de estoque com design WMS."""
 
     entrada_solicitada = Signal(str)
     saida_solicitada = Signal(str)
@@ -116,7 +206,7 @@ class InventoryPanel(QWidget):
 
         header = QWidget()
         header.setFixedHeight(48)
-        header.setStyleSheet(f"background: {s.bg_primary};")
+        header.setStyleSheet(f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(SPACING.space_4, 0, SPACING.space_4, 0)
         title = QLabel("Estoque")
@@ -148,7 +238,6 @@ class InventoryPanel(QWidget):
             f"QTabBar::tab:selected {{ color: {s.text_primary}; border-bottom: 2px solid {s.accent_primary}; }}"
         )
 
-        # Tabela de itens
         self.items_table = QTableWidget()
         self.items_table.setColumnCount(6)
         self.items_table.setHorizontalHeaderLabels(["Item", "Qtd", "Min", "Max", "Status", ""])
@@ -167,7 +256,7 @@ class InventoryPanel(QWidget):
         self.items_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.items_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Fixed)
         self.items_table.setColumnWidth(5, 64)
-        self.items_table.verticalHeader().setDefaultSectionSize(36)
+        self.items_table.verticalHeader().setDefaultSectionSize(42)
         self.items_table.setStyleSheet(f"""
             QTableWidget {{
                 background: transparent; border: none; outline: none;
@@ -181,11 +270,11 @@ class InventoryPanel(QWidget):
                 color: {s.text_muted}; font-size: {TYPOGRAPHY.text_xs}px;
                 font-weight: {TYPOGRAPHY.weight_semibold};
                 padding: 6px 8px; text-align: left;
+                border-bottom: 1px solid {s.border_default};
             }}
         """)
         self.tabs.addTab(self.items_table, "Itens")
 
-        # Lista de historico
         self.history_list = QListWidget()
         self.history_list.setFrameShape(QFrame.Shape.NoFrame)
         self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -203,7 +292,7 @@ class InventoryPanel(QWidget):
         layout.addWidget(self._add_form)
 
         self._stats_bar = QWidget()
-        self._stats_bar.setFixedHeight(36)
+        self._stats_bar.setFixedHeight(40)
         stats_layout = QHBoxLayout(self._stats_bar)
         stats_layout.setContentsMargins(SPACING.space_4, 0, SPACING.space_4, 0)
         self._stats_label = QLabel("0 itens")
@@ -246,7 +335,7 @@ class InventoryPanel(QWidget):
         form_layout.addWidget(self._input_nome)
 
         self._input_categoria = QLineEdit()
-        self._input_categoria.setPlaceholderText("Categoria (ex: Alimentos, Limpeza, Escritorio)")
+        self._input_categoria.setPlaceholderText("Categoria (ex: Alimentos, Limpeza)")
         self._input_categoria.setFixedHeight(36)
         self._input_categoria.setStyleSheet(self._input_nome.styleSheet())
         form_layout.addWidget(self._input_categoria)
@@ -352,14 +441,14 @@ class InventoryPanel(QWidget):
             header_row = self.items_table.rowCount()
             self.items_table.insertRow(header_row)
             header_widget = CategoryHeader(cat_name, len(cat_items), scheme=self._scheme)
-            self.items_table.setRowHeight(header_row, 32)
+            self.items_table.setRowHeight(header_row, 34)
             self.items_table.setCellWidget(header_row, 0, header_widget)
             self.items_table.setSpan(header_row, 0, 1, 6)
 
             for item in cat_items:
                 row = self.items_table.rowCount()
                 self.items_table.insertRow(row)
-                self.items_table.setRowHeight(row, 40)
+                self.items_table.setRowHeight(row, 42)
                 self._populate_row(row, item)
 
         movs = self._service.get_movimentacoes()
@@ -376,24 +465,18 @@ class InventoryPanel(QWidget):
 
     def _populate_row(self, row: int, item: ItemEstoque):
         s = self._scheme
+        bg, fg = _stock_health_color(item)
 
-        status_cores = {
-            ColunaKanban.CRITICO: ("#f8d7da", "#721c24"),
-            ColunaKanban.A_COMPRAR: ("#fff3cd", "#856404"),
-            ColunaKanban.EM_ESTOQUE: ("#d4edda", "#155724"),
-            ColunaKanban.EM_USO: ("#d1ecf1", "#0c5460"),
-        }
-        bg, fg = status_cores.get(item.coluna, (s.bg_secondary, s.text_muted))
-
-        # Col 0: Nome
+        # Col 0: Nome com dot de saude
         name_widget = QWidget()
         name_layout = QHBoxLayout(name_widget)
         name_layout.setContentsMargins(8, 0, 4, 0)
         name_layout.setSpacing(6)
 
         dot = QLabel()
+        dot_color = _stock_bar_color(item)
         dot.setFixedSize(8, 8)
-        dot.setStyleSheet(f"background: {bg}; border-radius: 4px; border: none;")
+        dot.setStyleSheet(f"background: {dot_color}; border-radius: 4px; border: none;")
         name_layout.addWidget(dot, 0, Qt.AlignCenter)
 
         nome = QLabel(item.nome)
@@ -409,8 +492,11 @@ class InventoryPanel(QWidget):
         # Col 1: Quantidade
         qtd_item = QTableWidgetItem(str(item.quantidade))
         qtd_item.setTextAlignment(Qt.AlignCenter)
-        qtd_item.setForeground(Qt.NoBrush)
-        qtd_item.setData(Qt.ForegroundRole, s.accent_primary if hasattr(s, 'accent_primary') else Qt.darkGray)
+        color = _stock_bar_color(item)
+        qtd_item.setForeground(QColor(color))
+        font = qtd_item.font()
+        font.setBold(True)
+        qtd_item.setFont(font)
         self.items_table.setItem(row, 1, qtd_item)
 
         # Col 2: Min
@@ -423,20 +509,20 @@ class InventoryPanel(QWidget):
         max_item.setTextAlignment(Qt.AlignCenter)
         self.items_table.setItem(row, 3, max_item)
 
-        # Col 4: Status
+        # Col 4: Status badge
         status_label = QLabel(item.coluna.value.replace("_", " ").title())
         status_label.setAlignment(Qt.AlignCenter)
         status_label.setStyleSheet(
-            f"color: {fg}; background: {bg}; border-radius: 8px; padding: 2px 8px; "
+            f"color: {fg}; background: {bg}; border-radius: 8px; padding: 3px 10px; "
             f"font-size: {TYPOGRAPHY.text_xs}px; font-weight: {TYPOGRAPHY.weight_semibold}; border: none;"
         )
         self.items_table.setCellWidget(row, 4, status_label)
 
-        # Col 5: Botoes
+        # Col 5: Botoes +/- com visual profissional
         btn_widget = QWidget()
         btn_layout = QHBoxLayout(btn_widget)
         btn_layout.setContentsMargins(2, 0, 2, 0)
-        btn_layout.setSpacing(2)
+        btn_layout.setSpacing(3)
 
         btn_in = QPushButton("+")
         btn_in.setFixedSize(26, 22)
@@ -444,10 +530,10 @@ class InventoryPanel(QWidget):
         btn_in.setToolTip("Entrada")
         btn_in.setStyleSheet(f"""
             QPushButton {{
-                background: #d4edda; color: #155724; border: 1px solid #c3e6cb;
+                background: #E8F5E9; color: #1B5E20; border: 1px solid #C8E6C9;
                 border-radius: 4px; font-size: 12px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #b7dfbf; }}
+            QPushButton:hover {{ background: #C8E6C9; }}
         """)
         btn_in.clicked.connect(lambda _, iid=item.id: self._on_entrada(iid))
         btn_layout.addWidget(btn_in)
@@ -458,10 +544,10 @@ class InventoryPanel(QWidget):
         btn_out.setToolTip("Saida")
         btn_out.setStyleSheet(f"""
             QPushButton {{
-                background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;
+                background: #FFF0F0; color: #C62828; border: 1px solid #FFCDD2;
                 border-radius: 4px; font-size: 12px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #f1b0b7; }}
+            QPushButton:hover {{ background: #FFCDD2; }}
         """)
         btn_out.clicked.connect(lambda _, iid=item.id: self._on_saida(iid))
         btn_layout.addWidget(btn_out)
@@ -512,7 +598,7 @@ class InventoryPanel(QWidget):
             self.setStyleSheet(f"background: {s.bg_primary};")
             header = self.findChild(QWidget)
             if header:
-                header.setStyleSheet(f"background: {s.bg_primary};")
+                header.setStyleSheet(f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};")
             if hasattr(self, 'search_input') and hasattr(self.search_input, 'set_scheme'):
                 self.search_input.set_scheme(s)
             self.tabs.setStyleSheet(
@@ -535,6 +621,7 @@ class InventoryPanel(QWidget):
                     color: {s.text_muted}; font-size: {TYPOGRAPHY.text_xs}px;
                     font-weight: {TYPOGRAPHY.weight_semibold};
                     padding: 6px 8px; text-align: left;
+                    border-bottom: 1px solid {s.border_default};
                 }}
             """)
             self.refresh()
