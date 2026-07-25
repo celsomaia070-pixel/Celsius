@@ -26,8 +26,11 @@ htmlcov/
 
 # Dados locais (não commitar dados de usuário)
 chroma_db/
+cache/
+conversations/
 chats.json
 memorias.json
+inventory.json
 *.log
 voices/
 resources/
@@ -35,3 +38,6 @@ resources/
 # OS
 .DS_Store
 Thumbs.db
+
+# Pessoal
+CURRICULO_ATUALIZADO.md

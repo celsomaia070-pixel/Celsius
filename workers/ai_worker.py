@@ -1,4 +1,5 @@
 from collections.abc import Callable
+import gc
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
@@ -42,6 +43,7 @@ class AIWorker(QRunnable):
 
     @Slot()
     def run(self):
+        gc.disable()
         try:
             if self.prompt_dict.get("caminho_imagem"):
                 resposta = gerar_resposta_com_imagem(
@@ -67,6 +69,8 @@ class AIWorker(QRunnable):
                 self.signals.finished.emit(f"Erro: {e}")
             except RuntimeError:
                 pass
+        finally:
+            gc.enable()
 
 
 class WorkerManager:

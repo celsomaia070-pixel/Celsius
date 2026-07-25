@@ -1,14 +1,14 @@
 from pathlib import Path
 
 from core.config import DIRETORIO_BASE
-from processors.audio import ProcessadorAudio
-from processors.base import ProcessadorArquivo
-from processors.docx import ProcessadorDOCX
-from processors.image import ProcessadorImagem
-from processors.odf import ProcessadorODF
-from processors.pdf import ProcessadorPDF
-from processors.report import GeradorRelatorio
-from processors.text import ProcessadorTexto
+from processors.audio import ProcessadorAudio as ProcessadorAudio
+from processors.base import ProcessadorArquivo as ProcessadorArquivo
+from processors.docx import ProcessadorDOCX as ProcessadorDOCX
+from processors.image import ProcessadorImagem as ProcessadorImagem
+from processors.odf import ProcessadorODF as ProcessadorODF
+from processors.pdf import ProcessadorPDF as ProcessadorPDF
+from processors.report import GeradorRelatorio as GeradorRelatorio
+from processors.text import ProcessadorTexto as ProcessadorTexto
 
 PROCESSADORES = {
     ".pdf": ProcessadorPDF,

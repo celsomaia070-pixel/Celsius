@@ -19,6 +19,14 @@ _S = {
         '<line x1="12" y1="17" x2="12" y2="21" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
         '<line x1="8" y1="21" x2="16" y2="21" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
     ),
+    "microphone-off": (
+        '<line x1="1" y1="1" x2="23" y2="23" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<path d="M9 9v3a3 3 0 0 0 5.12 2.88M15 9.34V4a3 3 0 0 0-5.94-.6" '
+        'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M17 16.95A7 7 0 0 1 5 12a7 7 0 0 1 11.84-6" '
+        'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="12" y1="19" x2="12" y2="23" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+    ),
     "volume-up": (
         '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="none" stroke="{c}" stroke-width="1.8" stroke-linejoin="round"/>'
         '<path d="M15.54 8.46a5 5 0 0 1 0 7.07" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
@@ -83,6 +91,17 @@ _S = {
         '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" '
         'fill="none" stroke="{c}" stroke-width="1.8" stroke-linejoin="round"/>'
     ),
+    "sun": (
+        '<circle cx="12" cy="12" r="4" fill="none" stroke="{c}" stroke-width="1.8"/>'
+        '<line x1="12" y1="2" x2="12" y2="5" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="12" y1="19" x2="12" y2="22" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="4.93" y1="4.93" x2="7.05" y2="7.05" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="16.95" y1="16.95" x2="19.07" y2="19.07" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="2" y1="12" x2="5" y2="12" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="19" y1="12" x2="22" y2="12" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="4.93" y1="19.07" x2="7.05" y2="16.95" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+        '<line x1="16.95" y1="7.05" x2="19.07" y2="4.93" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+    ),
     "file-export": (
         '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" '
         'fill="none" stroke="{c}" stroke-width="1.8" stroke-linejoin="round"/>'
@@ -126,6 +145,18 @@ _S = {
         '<line x1="3" y1="6" x2="3.01" y2="6" stroke="{c}" stroke-width="2.4" stroke-linecap="round"/>'
         '<line x1="3" y1="12" x2="3.01" y2="12" stroke="{c}" stroke-width="2.4" stroke-linecap="round"/>'
         '<line x1="3" y1="18" x2="3.01" y2="18" stroke="{c}" stroke-width="2.4" stroke-linecap="round"/>'
+    ),
+    "print": (
+        '<polyline points="6 9 6 2 18 2 18 9" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" '
+        'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<rect x="6" y="14" width="12" height="8" fill="none" stroke="{c}" stroke-width="1.8" stroke-linejoin="round"/>'
+    ),
+    "refresh": (
+        '<polyline points="23 4 23 10 17 10" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<polyline points="1 20 1 14 7 14" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" '
+        'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
 }
 

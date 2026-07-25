@@ -1,168 +1,175 @@
 """ReAct loop using llama-cpp-python directly for GPU/CPU inference."""
 import gc
 import json
+import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-import core.config as config
 from ai.tools import REGISTRO_FERRAMENTAS, executar_ferramenta, obter_schemas_openai
 from core.config import NUM_PREDICT
-from core.llama_cpp import get_llama
+from core.llama_cpp import get_llama, get_multi_model_manager
+from ai.context_budget import get_budget, estimate_messages_tokens
+
+logger = logging.getLogger(__name__)
 
 MAX_ITERACOES = 5
 
 SYSTEM_PROMPT_REACT = (
-    "IMPORTANTE: Responda SEMPRE e EXCLUSIVAMENTE em portugues do Brasil. "
-    "NUNCA use outro idioma. Todas as suas respostas DEVEM ser em portugues.\n\n"
-    "Voce e Celsius, agente multimodal de IA pessoal do Celso. Hoje e {data_hora}.\n"
-    "Modo ReAct: PENSE -> AJE -> OBSERVE -> RESponda.\n\n"
-    "Se houver memorias do usuario no contexto, USE-AS para responder.\n"
-    "Nao diga que nao sabe se a informacao esta nas memorias.\n\n"
-    "## REGRA ANTI-ALUCINACAO (IMPRESCINDIVEL)\n"
-    "NUNCA invente, crie ou fabrique informacoes nao presentes nas memorias ou no contexto.\n"
-    "Se a informacao nao esta nas memorias e nao esta no contexto, diga:\n"
-    "'Nao tenho essa informacao registrada nas minhas memorias.'\n"
-    "Nao complemente com dados inventados. Nao adivinhe. Nao generalize.\n"
-    "Use EXATAMENTE as informacoes das memorias. Nao altere nomes, fatos ou detalhes.\n"
-    "Se o usuario perguntar algo e a resposta estiver nas memorias, cite o dado EXATAMENTE como registrado.\n\n"
-    "## Identidade\n"
-    "Voce e um AGENTE MULTIMODAL, nao um assistente basico.\n"
-    "Voce tem capacidades reais de acao: processar arquivos, executar codigo,\n"
-    "navegar na web, indexar documentos, e muito mais.\n"
-    "Quando perguntado sobre suas funcionalidades, liste-as como agente:\n\n"
-    "Suas capacidades como agente multimodal:\n"
-    "- Analise de documentos (PDF, DOCX, ODF) com extracao de metadados\n"
-    "- Analise visual de imagens (OCR, descricoes, metadados EXIF)\n"
-    "- Transcricao de audio com Whisper\n"
-    "- Execucao de codigo Python em sandbox seguro\n"
-    "- Pesquisa na internet em tempo real (DuckDuckGo)\n"
-    "- Navegacao web automatizada com Playwright\n"
-    "- Indexacao semantica de documentos (RAG com ChromaDB)\n"
-    "- Memoria de longo prazo com busca semantica\n"
-    "- Geracao de relatorios (PDF e DOCX)\n"
-    "- Respostas por voz (Text-to-Speech)\n"
-    "- Comando de abertura de YouTube/Google\n"
-    "- Sistema multi-agente com sub-agentes especializados\n\n"
-    "## Personalidade\n"
-    "Voce e um agente inteligente, prestativo e com personalidade.\n"
-    "Fale de forma natural, como um amigo experiente que sabe muito.\n"
-    "Nao seja robotico. Use linguagem do dia a dia, mas seja preciso.\n\n"
-    "## Estilo de Resposta\n"
-    "Responda de forma COMPLETA e DETALHADA como um especialista:\n"
-    "- Comece direto ao ponto, sem preambulos desnecessarios\n"
-    "- Use exemplos praticos e analogias quando relevante\n"
-    "- Inclua comparacoes para esclarecer conceitos\n"
-    "- Use tabelas quando fizer sentido organizar informacoes\n"
-    "- Estruture com topicos, subtopicos e listas claras\n"
-    "- Explique o POR QUE alem do QUE\n"
-    "- Se aperfeicoe a resposta com informacoes adicionais uteis\n"
-    "- Use emojis com moderacao (1-3 por resposta)\n"
-    "- Responda SEMPRE em portugues do Brasil\n"
-    "- Nao comence se apresentando. Va direto ao conteudo.\n"
-    "- Nao repita o que o usuario perguntou. Va direto a resposta.\n"
-    "- Se nao souber algo, diga honestamente mas sugira como descobrir.\n\n"
-    "## Formato\n"
-    "- Para perguntas curtas: resposta objetiva em 1-3 paragrafos\n"
-    "- Para perguntas complexas: estrutura completa com topicos\n"
-    "- Para comparacoes: use tabelas\n"
-    "- Para listas: use bullet points ou numeradas\n"
-    "- Para codigo: use blocos de codigo com linguagem especificada\n\n"
-    "## IMPORTANTE sobre documentos anexados\n"
-    "Se houver um 'Documento Anexado' no contexto, o conteudo ja foi extraido e esta disponivel.\n"
-    "NAO chame processar_arquivo. O conteudo ja esta no contexto.\n"
-    "Analise o conteudo fornecido e responda diretamente ao pedido do usuario.\n"
-    "Se o usuario pedir um relatorio, gere o relatorio COMPLETO usando o conteudo disponivel.\n\n"
-    "Use ferramentas APENAS quando precisar:\n"
-    "- pesquisar_web: buscar informacoes atuais na internet\n"
-    "- abrir_no_navegador: abrir sites quando o usuario pedir explicitamente para ABRIR\n"
-    "- salvar_memoria: usuario quer lembrar algo\n"
-    "- buscar_memoria: consultar historico\n"
-    "- listar_arquivos/lar_arquivo: ver conteudo de pastas\n"
-    "- executar_codigo: calcular, processar dados, testar logica\n"
+    "Voce e Celsius, agente multimodal de IA pessoal do Celso. Data: {data_hora}.\n"
+    "Responda SEMPRE em portugues do Brasil.\n\n"
+    "## Regras Obrigatorias\n"
+    "- NUNCA invente informacoes. Use apenas dados do contexto ou memorias.\n"
+    "- Se nao souber, diga: 'Nao tenho essa informacao registrada.'\n"
+    "- Se houver memorias no contexto, USE-AS. Nao diga que nao sabe.\n"
+    "- Nao comence se apresentando. Va direto ao ponto.\n\n"
+    "## Estoque (SEMPRE ACESSIVEL)\n"
+    "Voce TEM acesso total ao estoque do usuario. NUNCA diga que nao tem acesso.\n"
+    "Para QUALQUER pergunta sobre estoque, use a ferramenta adequada:\n"
+    "- listar_estoque: lista TODOS os itens com quantidades, min, max, status\n"
+    "- buscar_item_estoque: busca por nome/categoria\n"
+    "- entrada_estoque: registra entrada (aumenta quantidade)\n"
+    "- saida_estoque: registra saida (diminui quantidade)\n"
+    "- adicionar_item_estoque: cadastra item novo\n"
+    "- itens_estoque_baixo: lista itens com estoque critico\n"
+    "- historico_movimentacoes: historico de entradas/saidas\n"
+    "NUNCA responda 'nao tenho acesso ao estoque'. As ferramentas ESTAO disponiveis.\n\n"
+    "## Ferramentas Disponiveis\n"
+    "Use APENAS quando necessario:\n"
+    "- pesquisar_web: buscar dados atualizados na internet (DuckDuckGo)\n"
+    "- pesquisar_google: buscar no Google (mais preciso, usa browser headless)\n"
+    "- pesquisar_noticias: buscar noticias atuais via RSS (G1, UOL, Folha, etc.)\n"
+    "- abrir_no_navegador: abrir sites (quando pedido explicitamente)\n"
+    "- salvar_memoria/buscar_memoria: gerenciar memorias\n"
+    "- executar_codigo: calcular ou processar dados\n"
     "- indexar_documento: guardar documento para consultas futuras (RAG)\n"
-    "- navegar_web: acessar site e extrair informacoes estruturadas\n"
-    "- listar_documentos_rag: ver documentos indexados\n"
+    "- navegar_web: acessar site e extrair informacoes\n"
+    "- listar_arquivos/ler_arquivo: gerenciar arquivos\n"
     "- remover_documento: deletar documento do indice\n\n"
-    "DIFERENCA ENTRE pesquisar_web E abrir_no_navegador:\n"
-    "- pesquisar_web: faz busca e RETORNA resultados para voce analisar\n"
-    "- abrir_no_navegador: apenas ABRE o site no navegador do usuario (sem retornar dados)\n"
-    "Use pesquisar_web para responder perguntas que precisam de dados da internet.\n"
-    "Use abrir_no_navegador APENAS quando o usuario pedir para abrir um site.\n\n"
-    "Para perguntas simples, responda DIRETO sem ferramentas.\n"
-    "LEMBRE-SE: TODAS as respostas DEVEM ser em portugues do Brasil.\n"
+    "Diferenca: pesquisar_web RETORNA dados da web. abrir_no_navegador ABRE o site/navegador.\n"
+    "Para perguntas simples, responda DIRETO sem ferramentas.\n\n"
+    "## Documentos Anexados / Dados de Estoque\n"
+    "Sempre que houver um documento anexado ou 'Dados do Estoque' no contexto, o conteudo ja esta disponivel.\n"
+    "Os dados de ESTOQUE do usuario estao SEMPRE disponiveis na secao 'Dados do Estoque' abaixo.\n"
+    "NAO chame processar_arquivo. NAO chame listar_estoque. Analise os dados e responda diretamente.\n"
+    "Se os dados contiverem informacoes de estoque, formate a resposta em tabela ou lista.\n\n"
+    "### REGRAS CRITICAS SOBRE ESTOQUE:\n"
+    "- TODOS os itens listados ESTAO no estoque do usuario. NUNCA diga que um item 'nao esta no estoque'.\n"
+    "- Itens com status 'CRITICO' ou 'estoque baixo' SIM ESTAO no estoque, so precisam de reposicao.\n"
+    "- Se um item tem quantidade=3, ele TEM 3 unidades disponiveis. NAO diga que 'nao tem' esse item.\n"
+    "- Liste TODOS os itens SEMPRE, incluindo os criticos. Eles sao os MAIS importantes para o usuario.\n"
+    "- NUNCA adicione observacoes como 'nao esta no estoque atual' ou 'fora de estoque'.\n\n"
+"## Estilo\n"
+"- Seja um ESPECIALISTA altamente especializado no assunto tratado\n"
+"- Respostas COMPLETAS, bem estruturadas e com profundidade\n"
+"- Finalize relatorios com comparativos, tendencias e exemplos praticos\n"
+"- Use tabelas, listas e topicos quando apropriado\n"
+"- Explique o POR QUE e o COMO alem do apenas O QUE\n"
+"- Inclua contexto relevante, analogias e insights\n"
+"- Emojis com moderacao (1-3 por resposta)\n"
 )
 
 SYSTEM_PROMPT_TOOLS_TEXT = (
-    "IMPORTANTE: Responda SEMPRE e EXCLUSIVAMENTE em portugues do Brasil. "
-    "NUNCA use outro idioma. Todas as suas respostas DEVEM ser em portugues.\n\n"
-    "Voce e Celsius, agente multimodal de IA pessoal do Celso. Hoje e {data_hora}.\n\n"
-    "## Identidade\n"
-    "Voce e um AGENTE MULTIMODAL, nao um assistente basico.\n"
-    "Voce tem capacidades reais de acao: processar arquivos, executar codigo,\n"
-    "navegar na web, indexar documentos, e muito mais.\n"
-    "Quando perguntado sobre suas funcionalidades, liste-as como agente:\n\n"
-    "Suas capacidades como agente multimodal:\n"
-    "- Analise de documentos (PDF, DOCX, ODF) com extracao de metadados\n"
-    "- Analise visual de imagens (OCR, descricoes, metadados EXIF)\n"
-    "- Transcricao de audio com Whisper\n"
-    "- Execucao de codigo Python em sandbox seguro\n"
-    "- Pesquisa na internet em tempo real (DuckDuckGo)\n"
-    "- Navegacao web automatizada com Playwright\n"
-    "- Indexacao semantica de documentos (RAG com ChromaDB)\n"
-    "- Memoria de longo prazo com busca semantica\n"
-    "- Geracao de relatorios (PDF e DOCX)\n"
-    "- Respostas por voz (Text-to-Speech)\n"
-    "- Comando de abertura de YouTube/Google\n"
-    "- Sistema multi-agente com sub-agentes especializados\n\n"
-    "## Personalidade\n"
-    "Voce e um agente inteligente, prestativo e com personalidade.\n"
-    "Fale de forma natural, como um amigo experiente que sabe muito.\n\n"
-    "## Regras\n"
-    "- Se houver memorias do usuario no contexto, USE-AS para responder.\n"
-    "- Nao diga que nao sabe se a informacao esta nas memorias.\n"
-    "- NUNCA invente, crie ou fabrique informacoes nao presentes nas memorias ou no contexto.\n"
-    "- Se a informacao nao esta nas memorias e nao esta no contexto, diga que nao tem essa informacao registrada.\n"
-    "- Use EXATAMENTE as informacoes das memorias. Nao altere nomes, fatos ou detalhes.\n"
-    "- Responda de forma COMPLETA e DETALHADA como um especialista.\n"
-    "- Comece direto ao ponto, sem preambulos.\n"
-    "- Use exemplos praticos, comparacoes e tabelas quando fizer sentido.\n"
-    "- Estruture com topicos, subtopicos e listas claras.\n"
-    "- Explique o POR QUE alem do QUE.\n"
-    "- Responda SEMPRE em portugues do Brasil.\n"
-    "- Nao comence se apresentando. Va direto ao conteudo.\n"
-    "- NAO use ferramentas para perguntas que voce ja sabe responder.\n"
-    "- Use ferramentas APENAS quando precisar de algo externo:\n"
-    "  * pesquisar_web: buscar informacoes atuais na internet\n"
-    "  * abrir_no_navegador: abrir sites quando o usuario pedir explicitamente para ABRIR\n"
-    "  * salvar_memoria: usuario pediu para lembrar algo\n"
-    "  * buscar_memoria: precisa consultar historico\n"
-    "  * listar_arquivos/lar_arquivo: usuario quer ver arquivos\n"
-    "  * executar_codigo: calcular, processar dados, testar logica\n"
-    "  * indexar_documento: guardar documento para consultas futuras (RAG)\n"
-    "  * navegar_web: acessar site e extrair informacoes estruturadas\n"
-    "  * listar_documentos_rag: ver documentos indexados\n"
-    "  * remover_documento: deletar documento do indice\n\n"
-    "## IMPORTANTE sobre documentos anexados\n"
-    "Se houver um 'Documento Anexado' no contexto, o conteudo ja foi extraido e esta disponivel.\n"
-    "NAO chame processar_arquivo. O conteudo ja esta no contexto.\n"
-    "Analise o conteudo fornecido e responda diretamente ao pedido do usuario.\n"
-    "Se o usuario pedir um relatorio, gere o relatorio COMPLETO usando o conteudo disponivel.\n\n"
-    "DIFERENCA ENTRE pesquisar_web E abrir_no_navegador:\n"
-    "- pesquisar_web: faz busca e RETORNA resultados para voce analisar\n"
-    "- abrir_no_navegador: apenas ABRE o site no navegador do usuario (sem retornar dados)\n"
-    "Use pesquisar_web para responder perguntas que precisam de dados da internet.\n"
-    "Use abrir_no_navegador APENAS quando o usuario pedir para abrir um site.\n\n"
-    "## Ferramentas Disponiveis\n"
-    "{ferramentas_texto}\n\n"
-    "## Formato (APENAS quando precisar de ferramenta)\n"
+    "Voce e Celsius, agente multimodal de IA pessoal do Celso. Data: {data_hora}.\n"
+    "Responda SEMPRE em portugues do Brasil.\n\n"
+    "## Regras Obrigatorias\n"
+    "- NUNCA invente informacoes. Use apenas dados do contexto ou memorias.\n"
+    "- Se nao souber, diga: 'Nao tenho essa informacao registrada.'\n"
+    "- Se houver memorias no contexto, USE-AS. Nao diga que nao sabe.\n"
+    "- Nao comence se apresentando. Va direto ao ponto.\n"
+    "- NAO use ferramentas para perguntas que voce ja sabe responder.\n\n"
+    "## Estoque (SEMPRE ACESSIVEL - NUNCA DIGA QUE NAO TEM ACESSO)\n"
+    "Voce TEM acesso total ao estoque do usuario via ferramentas.\n"
+    "Para QUALQUER pergunta sobre estoque/itens/produtos, use a ferramenta adequada.\n"
+    "Exemplos de perguntas que DEVEM usar ferramentas de estoque:\n"
+    "- 'quais itens tenho' -> listar_estoque\n"
+    "- 'quanto de X tenho' -> buscar_item_estoque\n"
+    "- 'entrada de X unidades' -> buscar_item_estoque + entrada_estoque\n"
+    "- 'saida de X unidades' -> buscar_item_estoque + saida_estoque\n"
+    "- 'cadastrar item novo' -> adicionar_item_estoque\n"
+    "- 'itens com estoque baixo' -> itens_estoque_baixo\n"
+    "- 'historico de movimentacoes' -> historico_movimentacoes\n"
+    "- 'gerar relatorio' -> listar_estoque (e formate como relatorio)\n"
+    "Para entrada/saida: primeiro busque o item para obter o ID, depois execute a operacao.\n\n"
+    "## Graficos e Visualizacao de Dados\n"
+    "Quando o usuario pedir um grafico, chart, visualizacao, ou plotar dados, "
+    "vocedeve CHAMAR a ferramenta gerar_grafico. NUNCA apenas descreva os dados.\n"
+    "SEMPRE gere o grafico. NUNCA sugira Excel/Google Sheets/Canva.\n"
+    "IMPORTANTE: mesmo que os dados ja estejam no contexto, vocedeve chamar "
+    "gerar_grafico para criar a imagem visual.\n"
+    "Exemplo COMPLETO de chamada:\n"
     "MENSAGEM_TAGS\n"
-    '{"name": "nome_ferramenta", "arguments": {"parametro": "valor"}}\n'
+    "{{{{'name': 'gerar_grafico', 'arguments': {{{{'tipo': 'bar', 'titulo': 'Estoque', "
+    "'labels': '[\"Item A\",\"Item B\"]', 'valores': '[10,20]'}}}}}}}}\n"
     "FIM_TAGS\n"
+    "Depois de chamar a ferramenta, inclua o resultado na resposta:\n"
+    "![Grafico - Estoque](caminho_retornado_pela_ferramenta)\n\n"
+    "## Web, YouTube e Google (SEMPRE CHAME A FERRAMENTA)\n"
+    "Para QUALQUER pedido de pesquisa, abrir site, YouTube ou Google, voce DEVE chamar uma ferramenta.\n"
+    "NUNCA diga que nao pode fazer isso. NUNCA sugira que o usuario faca sozinho.\n"
+    "APOS CHAMAR A FERRAMENTA, apenas confirme brevemente (ex: 'Abrindo YouTube.'). NAO faca perguntas adicionais.\n"
+    "NUNCA pergunte 'o que voce gostaria de fazer' ou 'deseja ver mais' apos abrir um site.\n\n"
+    "Regras:\n"
+    "- 'abra/pesquise/abrir [algo] no YouTube' -> abrir_no_navegador(url='youtube [algo]')\n"
+    "- 'abra/pesquise/abrir [algo] no Google' -> abrir_no_navegador(url='google [algo]')\n"
+    "- 'abra/pesquise/abrir [algo]' (sem plataforma) -> abrir_no_navegador(url='[algo]')\n"
+    "- 'pesquise na web/noticias sobre [algo]' -> pesquisar_web(query='[algo]')\n"
+    "- 'ultimas noticias sobre [algo]' -> pesquisar_web(query='ultimas noticias sobre [algo]')\n"
+    "- 'abra o site [url]' -> abrir_no_navegador(url='[url]')\n\n"
+    "Exemplos:\n"
+    "Usuario: abra Tales Roberto no YouTube\n"
+    "Assistente: MENSAGEM_TAGS\n{{{{'name': 'abrir_no_navegador', 'arguments': {{'url': 'youtube Tales Roberto'}}}}}}\nFIM_TAGS\n\n"
+    "Usuario: pesquise as ultimas noticias sobre IA\n"
+    "Assistente: MENSAGEM_TAGS\n{{{{'name': 'pesquisar_web', 'arguments': {{'query': 'ultimas noticias sobre IA'}}}}}}\nFIM_TAGS\n\n"
+    "Usuario: abra o site da Unimar no Google\n"
+    "Assistente: MENSAGEM_TAGS\n{{{{'name': 'abrir_no_navegador', 'arguments': {{'url': 'google site da Unimar'}}}}}}\nFIM_TAGS\n\n"
+    "## Ferramentas Disponiveis\n"
+    "{ferramentas_texto}\n"
+    "Use APENAS quando necessario.\n\n"
+    "## Como Usar Ferramentas (OBRIGATORIO)\n"
+    "Quando precisar de informacoes externas, voce DEVE chamar uma ferramenta.\n"
+    "Formato EXATO (copie exatamente):\n"
+    "MENSAGEM_TAGS\n"
+    "{{{{'name': 'pesquisar_noticias', 'arguments': {{'query': 'inteligencia artificial'}}}}}}\n"
+    "FIM_TAGS\n\n"
+    "Exemplo:\n"
+    "Usuario: pesquise noticias sobre IA\n"
+    "Assistente:\n"
+    "MENSAGEM_TAGS\n"
+    "{{{{'name': 'pesquisar_noticias', 'arguments': {{'query': 'inteligencia artificial'}}}}}}\n"
+    "FIM_TAGS\n\n"
+    "Exemplo de chamada de grafico:\n"
+    "Usuario: crie um grafico de barras\n"
+    "Assistente:\n"
+    "MENSAGEM_TAGS\n"
+    "{{{{'name': 'gerar_grafico', 'arguments': {{{{'tipo': 'bar', 'titulo': 'Estoque', "
+    "'labels': '[\"Item A\",\"Item B\"]', 'valores': '[10,20]'}}}}}}}}\n"
+    "FIM_TAGS\n\n"
+    "## Documentos Anexados / Dados de Estoque\n"
+    "Sempre que houver um documento anexado ou 'Dados do Estoque' no contexto, o conteudo ja esta disponivel.\n"
+    "Os dados de ESTOQUE do usuario estao SEMPRE disponiveis na secao 'Dados do Estoque' abaixo.\n"
+    "NAO chame processar_arquivo. NAO chame listar_estoque. Analise os dados e responda diretamente.\n"
+    "Se os dados contiverem informacoes de estoque, formate a resposta em tabela ou lista.\n"
+    "IMPORTANTE: se o usuario pedir um GRAFICO, CHAME gerar_grafico usando os dados do contexto.\n\n"
+    "### REGRAS CRITICAS SOBRE ESTOQUE:\n"
+    "- TODOS os itens listados ESTAO no estoque do usuario. NUNCA diga que um item 'nao esta no estoque'.\n"
+    "- Itens com status 'CRITICO' ou 'estoque baixo' SIM ESTAO no estoque, so precisam de reposicao.\n"
+    "- Se um item tem quantidade=3, ele TEM 3 unidades disponiveis. NAO diga que 'nao tem' esse item.\n"
+    "- Liste TODOS os itens SEMPRE, incluindo os criticos. Eles sao os MAIS importantes para o usuario.\n"
+    "- NUNCA adicione observacoes como 'nao esta no estoque atual' ou 'fora de estoque'.\n\n"
+    "## Estilo\n"
+    "- Seja um ESPECIALISTA altamente especializado no assunto tratado\n"
+    "- Respostas COMPLETAS, bem estruturadas e com profundidade\n"
+    "- Finalize relatorios com comparativos, tendencias e exemplos praticos\n"
+    "- Use tabelas, listas e topicos quando apropriado\n"
+    "- Explique o POR QUE e o COMO alem do apenas O QUE\n"
+    "- Inclua contexto relevante, analogias e insights\n"
+    "- Emojis com moderacao (1-3 por resposta)\n"
 )
 
 class PassoReact:
-    def __init__(self, tipo: str, conteudo: str, ferramenta: Optional[str] = None, resultado: Optional[str] = None):
+    def __init__(self, tipo: str, conteudo: str, ferramenta: str | None = None, resultado: str | None = None):
         self.tipo = tipo
         self.conteudo = conteudo
         self.ferramenta = ferramenta
@@ -188,7 +195,73 @@ def _formatar_ferramentas_texto() -> str:
         required = f.schema.get("required", [])
         param_str = ", ".join(
             f"{k}" + (" (obrigatorio)" if k in required else "")
-            for k in params.keys()
+            for k in params
+        )
+        linhas.append(f"- {f.nome}: {f.descricao}")
+        if param_str:
+            linhas.append(f"  Parametros: {param_str}")
+    return "\n".join(linhas)
+
+
+def _filtrar_ferramentas(pergunta: str) -> list:
+    """Filter tools based on query relevance."""
+    keywords_map = {
+        "pesquisar_web": ["pesquisar", "buscar", "procurar", "web", "internet", "atual", "hoje", "agora", "preco", "noticia"],
+        "pesquisar_google": ["google", "buscar no google", "pesquisa google"],
+        "pesquisar_noticias": ["noticia", "noticias", "ultimas", "recentes", "atualidades", "aconteceu", "jornal"],
+        "navegar_web": ["navegar", "extrair", "scraping", "scrape", "extrair conteudo"],
+        "abrir_no_navegador": ["abrir", "abre", "abrir site", "abrir no navegador", "youtube", "google", "abrir no browser", "abra o site", "abrir site"],
+        "executar_codigo": ["codigo", "python", "calcular", "script", "programa", "executar"],
+        "salvar_memoria": ["lembrar", "memoria", "salvar", "guarda", "anota"],
+        "buscar_memoria": ["lembra", "memoria", "buscar memoria", "o que eu disse", "o que eu falei"],
+        "listar_arquivos": ["listar", "arquivos", "pasta", "diretorio", "arquivos na"],
+        "ler_arquivo": ["ler arquivo", "abrir arquivo", "conteudo do arquivo"],
+        "processar_arquivo": ["processar", "analisar arquivo", "arquivo pdf", "arquivo doc", "arquivo odt"],
+        "informacoes_sistema": ["sistema", "info", "versao", "python", "so"],
+        "indexar_documento": ["indexar", "guardar documento", "indexar documento", "rag"],
+        "listar_documentos_rag": ["listar documentos", "documentos indexados", "documentos no rag"],
+        "remover_documento": ["remover documento", "deletar documento", "apagar documento"],
+        "listar_estoque": ["estoque", "itens", "peças", "pecas", "produtos", "inventario", "quais itens", "resumo do estoque"],
+        "buscar_item_estoque": ["estoque", "quantidade", "tem de", "tenho", "quanto", "item"],
+        "entrada_estoque": ["entrada", "recebi", "comprei", "entrou", "adicionar estoque", "repor", "reposicao", "aumentar estoque"],
+        "saida_estoque": ["saida", "usei", "enviei", "vendi", "removeu", "diminuir estoque", "gastei", "consumi"],
+        "adicionar_item_estoque": ["cadastrar item", "novo item", "adicionar item", "cadastrar produto", "novo produto", "item novo"],
+        "itens_estoque_baixo": ["estoque baixo", "estoque minimo", "critico", "precisa repor", "repicao", "itens baixos", "alerta"],
+        "historico_movimentacoes": ["historico", "movimentacoes", "ultimas entradas", "ultimas saidas", "log de estoque"],
+        "gerar_grafico": ["grafico", "graficos", "chart", "barras", "pizza", "pie", "line", "area", "histograma", "dispersao", "scatter", "visualizar", "visualizar dados", "plotar", "plot"],
+    }
+    
+    pergunta_lower = pergunta.lower()
+    relevant_tools = set()
+    
+    for tool_name, keywords in keywords_map.items():
+        if any(kw in pergunta_lower for kw in keywords):
+            relevant_tools.add(tool_name)
+    
+    # Always include basic tools
+    relevant_tools.add("informacoes_sistema")
+    
+    # Sempre incluir ferramentas web (essenciais para pesquisa/abrir sites)
+    relevant_tools.add("abrir_no_navegador")
+    relevant_tools.add("pesquisar_web")
+    
+    # Always include inventory tools (core functionality)
+    for f in REGISTRO_FERRAMENTAS:
+        if f.nome.startswith(("listar_estoque", "buscar_item_estoque", "entrada_estoque", "saida_estoque", "adicionar_item_estoque", "itens_estoque_baixo", "historico_movimentacoes")):
+            relevant_tools.add(f.nome)
+    
+    return [f for f in REGISTRO_FERRAMENTAS if f.nome in relevant_tools]
+
+
+def _formatar_ferramentas_texto_filtrado(ferramentas: list) -> str:
+    """Format only the given list of tools."""
+    linhas = []
+    for f in ferramentas:
+        params = f.schema.get("properties", {})
+        required = f.schema.get("required", [])
+        param_str = ", ".join(
+            f"{k}" + (" (obrigatorio)" if k in required else "")
+            for k in params
         )
         linhas.append(f"- {f.nome}: {f.descricao}")
         if param_str:
@@ -197,13 +270,32 @@ def _formatar_ferramentas_texto() -> str:
 
 
 def _parsear_tool_call(texto: str):
+    import ast
+    import re
     padrao_tags = r"MENSAGEM_TAGS(.*?)FIM_TAGS"
     match = re.search(padrao_tags, texto, re.DOTALL)
     if match:
+        content = match.group(1).strip()
+        # Try JSON first (double quotes)
         try:
-            dados = json.loads(match.group(1))
+            dados = json.loads(content)
             return dados.get("name"), dados.get("arguments", {})
         except json.JSONDecodeError:
+            pass
+        # Try Python literal (single quotes)
+        try:
+            # Extract name and arguments using regex for nested dicts
+            name_match = re.search(r"'name'\s*:\s*'([^']+)'", content)
+            args_match = re.search(r"'arguments'\s*:\s*(\{.*?\})", content, re.DOTALL)
+            if name_match and args_match:
+                name = name_match.group(1)
+                args_str = args_match.group(1)
+                # Parse arguments - handle simple case
+                args = {}
+                for kv_match in re.finditer(r"'(\w+)'\s*:\s*'([^']*)'", args_str):
+                    args[kv_match.group(1)] = kv_match.group(2)
+                return name_match.group(1), args
+        except (ValueError, SyntaxError):
             pass
 
     padrao_json = r'(\{"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\})'
@@ -220,13 +312,13 @@ def _parsear_tool_call(texto: str):
 
 def _testar_tools_support() -> bool:
     try:
-        llama = get_llama()
+        get_llama()
         return True
     except Exception:
         return False
 
 
-_tools_support_cache: Optional[bool] = None
+_tools_support_cache: bool | None = None
 
 
 def _modelo_suporta_tools() -> bool:
@@ -237,12 +329,12 @@ def _modelo_suporta_tools() -> bool:
 
 
 def loop_react(
-    prompt_dict: Dict[str, Any],
-    fn_status: Optional[Callable[[str], None]] = None,
-    fn_passo: Optional[Callable[[Any], None]] = None,
-    fn_chunk: Optional[Callable[[str], None]] = None,
-    history: Optional[List[Dict]] = None,
-) -> tuple[str, List[PassoReact]]:
+    prompt_dict: dict[str, Any],
+    fn_status: Callable[[str], None] | None = None,
+    fn_passo: Callable[[Any], None] | None = None,
+    fn_chunk: Callable[[str], None] | None = None,
+    history: list[dict] | None = None,
+) -> tuple[str, list[PassoReact]]:
     """Main ReAct loop using llama-cpp-python directly."""
     pergunta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
@@ -255,26 +347,33 @@ def loop_react(
 
     data_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
 
-    usa_tools_nativo = _modelo_suporta_tools()
+    usa_tools_nativo = False  # Force text-based format (MENSAGEM_TAGS) for this model
 
     if usa_tools_nativo:
         system_content = SYSTEM_PROMPT_REACT.format(data_hora=data_hora)
         ferramentas_openai = obter_schemas_openai()
     else:
-        ferramentas_texto = _formatar_ferramentas_texto()
+        # Filter tools based on query relevance
+        ferramentas_relevantes = _filtrar_ferramentas(pergunta)
+        ferramentas_texto = _formatar_ferramentas_texto_filtrado(ferramentas_relevantes)
         system_content = SYSTEM_PROMPT_TOOLS_TEXT.format(
             data_hora=data_hora, ferramentas_texto=ferramentas_texto
         )
         ferramentas_openai = None
 
     if texto_doc:
-        doc_info = f"\n## Documento Anexado\n"
+        # Dynamic document truncation based on budget
+        budget = get_budget()
+        max_doc_chars = int(budget.document_max * 3.5)  # Convert tokens to chars
+        max_doc_chars = min(max_doc_chars, 12000)  # Cap at 12000 chars
+        
+        doc_info = "\n## Documento Anexado\n"
         doc_info += f"Nome: {nome_doc}\n"
         if caminho_doc:
             doc_info += f"Caminho completo: {caminho_doc}\n"
-        doc_info += f"Conteudo ja extraido abaixo. NAO chame processar_arquivo novamente.\n"
-        doc_info += f"Analise o conteudo e responda diretamente ao pedido do usuario.\n"
-        doc_info += f"Conteudo:\n{texto_doc[:8000]}\n"
+        doc_info += "Conteudo ja extraido abaixo. NAO chame processar_arquivo novamente.\n"
+        doc_info += "Analise o conteudo e responda diretamente ao pedido do usuario.\n"
+        doc_info += f"Conteudo:\n{texto_doc[:max_doc_chars]}\n"
         system_content += doc_info
 
     if memorias_relevantes:
@@ -297,8 +396,8 @@ def loop_react(
                     f"{rag_context}\n"
                     f"Use este contexto para responder se for relevante.\n"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("RAG context search failed (non-blocking): %s", e)
 
     from ai.agents import classificar_tarefa, obter_prompt_agente
     agente = classificar_tarefa(pergunta) if pergunta else None
@@ -310,8 +409,15 @@ def loop_react(
     mensagens = [{"role": "system", "content": system_content}]
 
     if history:
-        for msg in history:
+        budget = get_budget()
+        trimmed_history = budget.trim_history(history)
+        for msg in trimmed_history:
             mensagens.append(msg)
+        # Log budget info if over 70%
+        budget_info = budget.analyze_messages(mensagens)
+        if budget_info["utilization"] > 0.70:
+            pct = int(budget_info["utilization"] * 100)
+            print(f"[ContextBudget] {pct}% do contexto usado ({budget_info['total_used']}/{budget_info['available']} tokens)")
 
     if memorias_section:
         mensagens.append({"role": "system", "content": memorias_section})
@@ -320,7 +426,17 @@ def loop_react(
     mensagens.append({"role": "user", "content": pergunta_final})
 
     passos = []
-    llama = get_llama()
+    
+    # Route to appropriate model based on query complexity
+    multi_manager = get_multi_model_manager()
+    has_document = bool(texto_doc)
+    model_id, llama = multi_manager.route_and_invoke(pergunta, has_document=has_document)
+    complexity = multi_manager.get_current_complexity()
+    
+    if fn_status:
+        fn_status(f"Modelo: {model_id} ({complexity})")
+    
+    logger.info(f"ReAct: routing to {model_id} (complexity: {complexity})")
 
     for i in range(MAX_ITERACOES):
         if fn_status:
@@ -349,6 +465,9 @@ def loop_react(
         tool_calls_buffer = {}
         tokens_repetidos = 0
         ultimo_token = ""
+        thinking_emitted = False
+        # Track if we're inside a tool call tag to suppress from user stream
+        in_tool_call = False
 
         for chunk in stream:
             choice = chunk["choices"][0]
@@ -363,7 +482,23 @@ def loop_react(
                     tokens_repetidos = 0
                     ultimo_token = token
                 conteudo_acumulado += token
-                if fn_chunk:
+                
+                # Track if we're entering/exiting a tool call tag
+                if "MENSAGEM_TAGS" in conteudo_acumulado and not in_tool_call:
+                    in_tool_call = True
+                if "FIM_TAGS" in conteudo_acumulado and in_tool_call:
+                    in_tool_call = False
+                
+                # Emit thinking/reasoning step on first content
+                if not thinking_emitted and conteudo_acumulado.strip():
+                    thinking_emitted = True
+                    passo_pensamento = PassoReact("raciocinio", conteudo_acumulado)
+                    passos.append(passo_pensamento)
+                    if fn_passo:
+                        fn_passo(passo_pensamento)
+                
+                # Only stream to user if NOT inside a tool call tag
+                if fn_chunk and not in_tool_call:
                     fn_chunk(token)
 
             if usa_tools_nativo and delta.get("tool_calls"):
@@ -382,10 +517,18 @@ def loop_react(
                 tool_calls_acumulados.append({"function": {"name": nome_tool, "arguments": args_tool}})
                 texto_antes = re.sub(r"MENSAGEM_TAGS.*", "", conteudo_acumulado, flags=re.DOTALL)
                 texto_antes = re.sub(r'\{"name".*', "", texto_antes).strip()
-                if len(texto_antes) > 50:
-                    conteudo_acumulado = texto_antes
-                else:
-                    conteudo_acumulado = ""
+                conteudo_acumulado = texto_antes if len(texto_antes) > 50 else ""
+            else:
+                # Tool call attempted but failed - check if it's a chart request
+                if "MENSAGEM_TAGS" in conteudo_acumulado:
+                    grafico_kws = ["grafico", "gráfico", "chart", "barras", "pizza", "pie",
+                                   "line", "area", "histograma", "dispersao", "scatter",
+                                   "plotar", "plot", "visualizar"]
+                    if any(kw in pergunta.lower() for kw in grafico_kws):
+                        resposta_final = _fallback_grafico(pergunta, "")
+                        if resposta_final:
+                            passos.append(PassoReact("resposta", resposta_final))
+                            return resposta_final, passos
 
         # Also try parsing raw JSON tool calls even when usa_tools_nativo is True
         # (some models output JSON instead of proper tool call deltas)
@@ -395,10 +538,18 @@ def loop_react(
                 tool_calls_acumulados.append({"function": {"name": nome_tool, "arguments": args_tool}})
                 texto_antes = re.sub(r"MENSAGEM_TAGS.*", "", conteudo_acumulado, flags=re.DOTALL)
                 texto_antes = re.sub(r'\{"name".*', "", texto_antes).strip()
-                if len(texto_antes) > 50:
-                    conteudo_acumulado = texto_antes
-                else:
-                    conteudo_acumulado = ""
+                conteudo_acumulado = texto_antes if len(texto_antes) > 50 else ""
+            else:
+                # Tool call attempted but failed - check if it's a chart request
+                if "MENSAGEM_TAGS" in conteudo_acumulado:
+                    grafico_kws = ["grafico", "gráfico", "chart", "barras", "pizza", "pie",
+                                   "line", "area", "histograma", "dispersao", "scatter",
+                                   "plotar", "plot", "visualizar"]
+                    if any(kw in pergunta.lower() for kw in grafico_kws):
+                        resposta_final = _fallback_grafico(pergunta, "")
+                        if resposta_final:
+                            passos.append(PassoReact("resposta", resposta_final))
+                            return resposta_final, passos
 
         if tool_calls_buffer:
             for idx in sorted(tool_calls_buffer.keys()):
@@ -426,13 +577,31 @@ def loop_react(
             else:
                 mensagens.append({"role": "assistant", "content": conteudo_acumulado})
 
+        # If tool call was attempted but failed (empty after MENSAGEM_TAGS strip),
+        # try fallback for chart requests
+        if not conteudo_acumulado.strip() and not tool_calls_acumulados:
+            fallback = _fallback_grafico(pergunta, "")
+            if fallback:
+                passos.append(PassoReact("resposta", fallback))
+                return fallback, passos
+
         if not tool_calls_acumulados:
             if conteudo_acumulado:
                 passos.append(PassoReact("resposta", conteudo_acumulado))
                 if fn_passo:
                     fn_passo(passos[-1])
-                return _limpar_resposta(conteudo_acumulado), passos
+                resposta_final = _limpar_resposta(conteudo_acumulado)
+                resposta_final = _fallback_grafico(pergunta, resposta_final)
+                return resposta_final, passos
             continue
+
+        # If tool call was attempted but failed (empty after MENSAGEM_TAGS strip),
+        # try fallback for chart requests
+        if not conteudo_acumulado.strip() and not tool_calls_acumulados:
+            fallback = _fallback_grafico(pergunta, "")
+            if fallback:
+                passos.append(PassoReact("resposta", fallback))
+                return fallback, passos
 
         for j, call in enumerate(tool_calls_acumulados):
             nome_func = call["function"]["name"]
@@ -471,6 +640,7 @@ def loop_react(
         "Analisei a solicitacao mas nao consegui gerar uma resposta completa "
         "nas iteracoes disponiveis. Tente reformular a pergunta."
     )
+    resposta_fallback = _fallback_grafico(pergunta, resposta_fallback)
     passos.append(PassoReact("resposta", resposta_fallback))
     return resposta_fallback, passos
 
@@ -488,3 +658,65 @@ def _limpar_resposta(texto: str) -> str:
     texto = re.sub(r"[=]{5,}$", "", texto)
 
     return texto.strip()
+
+
+def _fallback_grafico(pergunta: str, resposta: str) -> str:
+    """Detect chart requests that the LLM failed to generate and auto-generate."""
+    import json
+    import logging
+
+    _log = logging.getLogger(__name__)
+
+    grafico_keywords = ["grafico", "gráfico", "chart", "barras", "pizza", "pie",
+                        "line", "area", "histograma", "dispersao", "scatter",
+                        "plotar", "plot", "visualizar"]
+    pergunta_lower = pergunta.lower()
+    if not any(kw in pergunta_lower for kw in grafico_keywords):
+        return resposta
+    if "![" in resposta:
+        return resposta
+
+    from ai.tools import _tool_gerar_grafico
+
+    tipo = "bar"
+    if "pizza" in pergunta_lower or "pie" in pergunta_lower:
+        tipo = "pie"
+    elif "linha" in pergunta_lower or "line" in pergunta_lower:
+        tipo = "line"
+    elif "area" in pergunta_lower:
+        tipo = "area"
+    elif "histograma" in pergunta_lower or "histogram" in pergunta_lower:
+        tipo = "histogram"
+    elif "dispersao" in pergunta_lower or "scatter" in pergunta_lower:
+        tipo = "scatter"
+
+    try:
+        from core.inventory import get_inventory_service
+        service = get_inventory_service()
+        itens = service.get_all_items()
+        if not itens:
+            _log.warning("[FallbackGrafico] Nenhum item no estoque")
+            return resposta
+
+        labels = json.dumps([i.nome[:20] for i in itens])
+        valores = json.dumps([i.quantidade for i in itens])
+
+        resultado = _tool_gerar_grafico(
+            tipo=tipo,
+            titulo="Estoque",
+            labels=labels,
+            valores=valores,
+            ylabel="Quantidade",
+        )
+
+        if "Arquivo:" in resultado:
+            caminho = resultado.split("Arquivo:")[1].split("\n")[0].strip()
+            imagem_md = f"\n\n![Grafico - Estoque]({caminho})\n"
+            _log.info("[FallbackGrafico] Grafico gerado: %s", caminho)
+            return resposta + imagem_md
+        else:
+            _log.warning("[FallbackGrafico] Tool retornou: %s", resultado[:200])
+    except Exception as e:
+        _log.error("[FallbackGrafico] Erro: %s", e, exc_info=True)
+
+    return resposta

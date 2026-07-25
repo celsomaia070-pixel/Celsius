@@ -152,16 +152,21 @@ class Settings:
     base_dir: Path = field(default_factory=lambda: _get_base_dir())
     memorias_file: Path = field(init=False)
     chats_file: Path = field(init=False)
+    inventory_file: Path = field(init=False)
     audio_temp_file: Path = field(init=False)
     audio_mic_file: Path = field(init=False)
 
+    enabled_modules: tuple[str, ...] = ("conversas", "estoque")
+
     default_llm_model: str = "qwen2.5-vl-7b-q4km"
     llm_model: str = "qwen2.5-vl-7b-q4km"
+    fast_llm_model: str = "llama3.2-3b-q5km"  # Small fast model for simple tasks
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     whisper_model: str = "small"
 
+    max_file_size_mb: int = 50
     doc_text_limit: int = 12000
-    num_ctx: int = 8192
+    num_ctx: int = 16384
     num_predict: int = 2500
     max_history_session: int = 16
     memory_threshold: float = 0.15
@@ -175,8 +180,12 @@ class Settings:
     def __post_init__(self):
         self.memorias_file = self.base_dir / "memorias.json"
         self.chats_file = self.base_dir / "chats.json"
+        self.inventory_file = self.base_dir / "inventory.json"
         self.audio_temp_file = self.base_dir / "temp_kfu_voice.mp3"
         self.audio_mic_file = self.base_dir / "temp_audio.wav"
+
+    def is_module_enabled(self, module: str) -> bool:
+        return module in self.enabled_modules
 
     @property
     def all_extensions(self) -> tuple[str, ...]:
@@ -213,10 +222,6 @@ class Settings:
             return path if path.exists() else None
         return None
 
-    # Backwards compat
-    def get_local_model_path(self) -> Path:
-        return self.get_model_path()
-
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -234,12 +239,9 @@ def get_settings() -> Settings:
 # Backwards compatibility
 DIRETORIO_BASE = settings.base_dir
 ARQUIVO_MEMORIAS = settings.memorias_file
-ARQUIVO_CHATS = settings.chats_file
 ARQUIVO_AUDIO_TEMP = settings.audio_temp_file
 ARQUIVO_AUDIO_MIC = settings.audio_mic_file
-MODELO_LLM_PADRAO = settings.default_llm_model
 MODELO_LLM = settings.llm_model
-MODELO_EMBEDDING = settings.embedding_model
 MODELO_WHISPER = settings.whisper_model
 LIMITE_TEXTO_DOCUMENTO = settings.doc_text_limit
 NUM_CTX = settings.num_ctx
@@ -247,8 +249,4 @@ NUM_PREDICT = settings.num_predict
 MAX_HISTORICO_SESSION = settings.max_history_session
 THRESHOLD_MEMORIA = settings.memory_threshold
 TOP_MEMORIAS = settings.top_memories
-EXTENSOES_DOCUMENTO = list(settings.doc_extensions)
-EXTENSOES_IMAGEM = list(settings.image_extensions)
-EXTENSOES_AUDIO = list(settings.audio_extensions)
-TODAS_EXTENSOES = list(settings.all_extensions)
-FILTRO_ARQUIVOS = settings.file_filter
+MAX_FILE_SIZE_BYTES = settings.max_file_size_mb * 1024 * 1024

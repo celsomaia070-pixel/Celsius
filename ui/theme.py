@@ -1,5 +1,14 @@
+"""
+Theme - Módulo de temas do Celsius.
+Mantém compatibilidade com o sistema existente enquanto integra o novo sistema.
+"""
+
 from dataclasses import dataclass
 from enum import Enum
+
+from ui.theme.schemes import ColorScheme, ThemeMode as SchemeMode, get_scheme, SCHEMES
+from ui.theme.tokens import tokens
+from ui.theme.stylesheet import get_stylesheet as generate_stylesheet
 
 
 class ThemeMode(Enum):
@@ -8,8 +17,12 @@ class ThemeMode(Enum):
     SYSTEM = "system"
 
 
+# ============================================================
+# Cores Legacy (mantidas para compatibilidade)
+# ============================================================
+
 @dataclass
-class ColorScheme:
+class LegacyColorScheme:
     # Backgrounds
     bg_primary: str
     bg_secondary: str
@@ -65,8 +78,70 @@ class ColorScheme:
     shadow_3: str
 
 
-# Ollama-style all-white light theme (DEFAULT)
-LIGHT_SCHEME = ColorScheme(
+def _scheme_to_legacy(scheme: ColorScheme) -> LegacyColorScheme:
+    """Converte um ColorScheme novo para o formato legacy."""
+    return LegacyColorScheme(
+        # Backgrounds
+        bg_primary=scheme.background,
+        bg_secondary=scheme.surface,
+        bg_tertiary=scheme.surfaceVariant,
+        bg_hover=scheme.surfaceHover,
+        bg_active=scheme.surfaceActive,
+
+        # Text
+        text_primary=scheme.onSurface,
+        text_secondary=scheme.onSurfaceVariant,
+        text_muted=scheme.onSurfaceDisabled,
+        text_inverse=scheme.onPrimary,
+
+        # Accent
+        accent_primary=scheme.primary,
+        accent_hover=scheme.primaryHover,
+        accent_pressed=scheme.primaryActive,
+
+        # Borders
+        border_subtle=scheme.borderSubtle,
+        border_default=scheme.border,
+        border_strong=scheme.borderHover,
+
+        # Semantic
+        success=scheme.success,
+        success_bg=scheme.successContainer,
+        warning=scheme.warning,
+        warning_bg=scheme.warningContainer,
+        error=scheme.danger,
+        error_bg=scheme.dangerContainer,
+        info=scheme.info,
+        info_bg=scheme.infoContainer,
+
+        # Bubbles
+        user_bubble_bg=scheme.primary,
+        user_bubble_text=scheme.onPrimary,
+        assistant_bubble_bg=scheme.surfaceVariant,
+        assistant_bubble_text=scheme.onSurface,
+
+        # Code
+        code_bg=scheme.surfaceVariant,
+        code_text=scheme.onSurface,
+        code_border=scheme.border,
+
+        # Scrollbar
+        scrollbar_bg=scheme.background,
+        scrollbar_handle=scheme.borderHover,
+        scrollbar_handle_hover=scheme.onSurfaceDisabled,
+
+        # Shadows
+        shadow_1=f"rgba(0, 0, 0, {0.04 if scheme.is_light else 0.2})",
+        shadow_2=f"rgba(0, 0, 0, {0.08 if scheme.is_light else 0.3})",
+        shadow_3=f"rgba(0, 0, 0, {0.12 if scheme.is_light else 0.4})",
+    )
+
+
+# ============================================================
+# Temas Legacy (mantidos para compatibilidade)
+# ============================================================
+
+LIGHT_SCHEME = LegacyColorScheme(
     bg_primary="#FFFFFF",
     bg_secondary="#FFFFFF",
     bg_tertiary="#F7F7F8",
@@ -113,9 +188,7 @@ LIGHT_SCHEME = ColorScheme(
     shadow_3="rgba(0, 0, 0, 0.12)",
 )
 
-
-# Dark theme (alternative)
-DARK_SCHEME = ColorScheme(
+DARK_SCHEME = LegacyColorScheme(
     bg_primary="#0D1117",
     bg_secondary="#161B22",
     bg_tertiary="#21262D",
@@ -163,7 +236,19 @@ DARK_SCHEME = ColorScheme(
 )
 
 
-def get_stylesheet(scheme: ColorScheme) -> str:
+# ============================================================
+# Funções Legacy (mantidas para compatibilidade)
+# ============================================================
+
+def get_legacy_scheme(mode: ThemeMode = ThemeMode.LIGHT) -> LegacyColorScheme:
+    """Retorna o esquema legacy para o modo especificado."""
+    if mode == ThemeMode.DARK:
+        return DARK_SCHEME
+    return LIGHT_SCHEME
+
+
+def get_stylesheet(scheme: LegacyColorScheme) -> str:
+    """Gera o stylesheet QSS para o esquema legacy."""
     return f"""
 /* ===== BASE ===== */
 QMainWindow, QWidget {{
@@ -424,3 +509,29 @@ QTabBar::tab:selected {{
 }}
 """
 
+
+# ============================================================
+# Funções de conversão
+# ============================================================
+
+def scheme_from_name(name: str) -> ColorScheme:
+    """Retorna um ColorScheme a partir do nome (light/dark)."""
+    try:
+        mode = SchemeMode(name)
+    except ValueError:
+        mode = SchemeMode.LIGHT
+    return get_scheme(mode)
+
+
+def scheme_to_legacy(scheme: ColorScheme) -> LegacyColorScheme:
+    """Converte um ColorScheme novo para o formato legacy."""
+    return _scheme_to_legacy(scheme)
+
+
+def get_current_scheme_name() -> str:
+    """Retorna o nome do tema atual (será atualizado pelo ThemeManager)."""
+    return "light"
+
+
+# Manter referências globais para compatibilidade
+_current_scheme_name = "light"

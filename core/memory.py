@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from datetime import datetime
 
@@ -6,6 +7,8 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryService:
@@ -89,7 +92,8 @@ class MemoryService:
                     for i in top_indices
                     if similarities[i] > self.settings.memory_threshold
                 ]
-            except Exception:
+            except Exception as e:
+                logger.warning("Memory search failed: %s", e)
                 return []
 
     def _save(self) -> None:

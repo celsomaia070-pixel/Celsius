@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.icons import icon
+from ui.theme.schemes import ColorScheme, get_scheme
 
 
 class CommandPalette(QDialog):
@@ -28,77 +29,128 @@ class CommandPalette(QDialog):
         self.setModal(True)
         self.resize(600, 400)
 
+        self._scheme = get_scheme()
         self._actions = []
         self._filtered_actions = []
         self._setup_ui()
         self._register_default_actions()
 
+    def set_scheme(self, scheme: ColorScheme):
+        self._scheme = scheme
+        self._apply_theme()
+
+    def _apply_theme(self):
+        s = self._scheme
+        self.container.setStyleSheet(f"""
+            #container {{
+                background: {s.bg_secondary};
+                border: 1px solid {s.border_default};
+                border-radius: 12px;
+            }}
+        """)
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {s.bg_primary};
+                border: none;
+                border-bottom: 1px solid {s.border_default};
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                color: {s.text_primary};
+                padding: 16px 20px;
+                font-size: 15px;
+            }}
+            QLineEdit:focus {{
+                outline: none;
+            }}
+        """)
+        self.results_list.setStyleSheet(f"""
+            QListWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            QListWidget::item {{
+                background: transparent;
+                border: none;
+                padding: 12px 20px;
+                color: {s.text_primary};
+                font-size: 13px;
+            }}
+            QListWidget::item:selected {{
+                background: {s.accent_subtle};
+                color: {s.accent_primary};
+            }}
+            QListWidget::item:hover {{
+                background: {s.bg_hover};
+            }}
+        """)
+        self._refresh_items()
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Container with rounded corners
-        container = QWidget()
-        container.setObjectName("container")
-        container.setStyleSheet("""
-            #container {
-                background: #161B22;
-                border: 1px solid #30363D;
+        s = self._scheme
+
+        self.container = QWidget()
+        self.container.setObjectName("container")
+        self.container.setStyleSheet(f"""
+            #container {{
+                background: {s.bg_secondary};
+                border: 1px solid {s.border_default};
                 border-radius: 12px;
-            }
+            }}
         """)
-        container_layout = QVBoxLayout(container)
+        container_layout = QVBoxLayout(self.container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
-        # Search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Digite um comando ou pesquise...  (Esc para fechar)")
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                background: #0D1117;
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {s.bg_primary};
                 border: none;
-                border-bottom: 1px solid #30363D;
+                border-bottom: 1px solid {s.border_default};
                 border-top-left-radius: 12px;
                 border-top-right-radius: 12px;
-                color: #E6EDF3;
+                color: {s.text_primary};
                 padding: 16px 20px;
                 font-size: 15px;
-            }
-            QLineEdit:focus {
+            }}
+            QLineEdit:focus {{
                 outline: none;
-            }
+            }}
         """)
         self.search_input.textChanged.connect(self._filter_actions)
         container_layout.addWidget(self.search_input)
 
-        # Results list
         self.results_list = QListWidget()
-        self.results_list.setStyleSheet("""
-            QListWidget {
+        self.results_list.setStyleSheet(f"""
+            QListWidget {{
                 background: transparent;
                 border: none;
                 outline: none;
-            }
-            QListWidget::item {
+            }}
+            QListWidget::item {{
                 background: transparent;
                 border: none;
                 padding: 12px 20px;
-                color: #E6EDF3;
+                color: {s.text_primary};
                 font-size: 13px;
-            }
-            QListWidget::item:selected {
-                background: #1F6FEB30;
-                color: #58A6FF;
-            }
-            QListWidget::item:hover {
-                background: #1F6FEB20;
-            }
+            }}
+            QListWidget::item:selected {{
+                background: {s.accent_subtle};
+                color: {s.accent_primary};
+            }}
+            QListWidget::item:hover {{
+                background: {s.bg_hover};
+            }}
         """)
         self.results_list.itemActivated.connect(self._on_item_activated)
         container_layout.addWidget(self.results_list)
 
-        layout.addWidget(container)
+        layout.addWidget(self.container)
 
     def _register_default_actions(self):
         actions = [
@@ -149,35 +201,34 @@ class CommandPalette(QDialog):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, action["id"])
 
-            # Create custom widget for item
             widget = QWidget()
-            layout = QHBoxLayout(widget)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(12)
+            w_layout = QHBoxLayout(widget)
+            w_layout.setContentsMargins(0, 0, 0, 0)
+            w_layout.setSpacing(12)
 
             icon_label = QLabel()
             icon_label.setPixmap(
-                icon(action["icon"], "#8B949E").pixmap(20, 20)
+                icon(action["icon"], self._scheme.text_secondary).pixmap(20, 20)
             )
-            layout.addWidget(icon_label)
+            w_layout.addWidget(icon_label)
 
             name_label = QLabel(action["name"])
-            name_label.setStyleSheet("color: #E6EDF3; font-size: 13px;")
-            layout.addWidget(name_label)
+            name_label.setStyleSheet(f"color: {self._scheme.text_primary}; font-size: 13px;")
+            w_layout.addWidget(name_label)
 
-            layout.addStretch()
+            w_layout.addStretch()
 
             if action.get("shortcut"):
                 shortcut_label = QLabel(action["shortcut"])
-                shortcut_label.setStyleSheet("""
-                    color: #484F58;
+                shortcut_label.setStyleSheet(f"""
+                    color: {self._scheme.text_muted};
                     font-size: 11px;
                     font-family: monospace;
-                    background: #161B22;
+                    background: {self._scheme.bg_tertiary};
                     padding: 2px 8px;
                     border-radius: 4px;
                 """)
-                layout.addWidget(shortcut_label)
+                w_layout.addWidget(shortcut_label)
 
             item.setSizeHint(widget.sizeHint())
             self.results_list.addItem(item)
@@ -185,6 +236,11 @@ class CommandPalette(QDialog):
 
         if self._filtered_actions:
             self.results_list.setCurrentRow(0)
+
+    def _refresh_items(self):
+        """Re-render current filtered items with updated theme."""
+        current_text = self.search_input.text()
+        self._filter_actions(current_text)
 
     def _on_item_activated(self, item: QListWidgetItem):
         action_id = item.data(Qt.UserRole)
@@ -211,7 +267,6 @@ class CommandPalette(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Center on parent
         if self.parent():
             parent_rect = self.parent().geometry()
             self.move(
@@ -235,10 +290,12 @@ class CommandPaletteManager:
         self.palette = CommandPalette(window)
         self.palette.action_triggered.connect(self._execute_action)
 
-        # Register shortcut
         from PySide6.QtGui import QKeySequence, QShortcut
         self.shortcut = QShortcut(QKeySequence("Ctrl+K"), window)
         self.shortcut.activated.connect(self._show_palette)
+
+    def set_scheme(self, scheme: ColorScheme):
+        self.palette.set_scheme(scheme)
 
     def _show_palette(self):
         self.palette.show()

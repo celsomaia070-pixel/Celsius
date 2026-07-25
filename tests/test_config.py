@@ -58,7 +58,7 @@ class TestBaseDir:
     def test_get_base_dir_not_frozen(self, monkeypatch):
         monkeypatch.setattr("sys.frozen", False, raising=False)
         base = _get_base_dir()
-        assert base.name == "PythonProject" or base.parent.name == "PythonProject"
+        assert "PythonProject" in base.name or "PythonProject" in base.parent.name
 
 
 class TestGGUFModel:

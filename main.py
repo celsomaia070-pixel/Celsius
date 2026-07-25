@@ -1,15 +1,82 @@
-import sys
-import traceback
+import contextlib
 import faulthandler
+import os
+import signal
+import subprocess
+import sys
+import threading
+import traceback
+
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from core.config import get_settings, get_model_by_id
-from core.model_downloader import is_model_downloaded, download_model, download_mmproj
+from core.config import get_model_by_id, get_settings
+from core.llama_cpp import get_llama_manager, stop_llama_server
+from core.model_downloader import download_mmproj, download_model, is_model_downloaded
 from ui.window import ModernChatWindow
+
+
+def _start_health_check(app: QApplication, model_id: str) -> QTimer:
+    """Start periodic health check for the LLM model."""
+    manager = get_llama_manager()
+
+    def check_health():
+        if not manager.is_healthy():
+            print("[HealthCheck] Model unhealthy, attempting recovery...")
+            try:
+                manager.stop()
+                if not manager.start(model_id=model_id, n_gpu_layers=-1, n_ctx=16384, n_batch=1024):
+                    print("[HealthCheck] Failed to recover model")
+            except Exception as e:
+                print(f"[HealthCheck] Recovery failed: {e}")
+
+    timer = QTimer()
+    timer.timeout.connect(check_health)
+    timer.start(300000)  # Check every 5 minutes
+    return timer
 
 
 def main():
     faulthandler.enable()
+
+    try:
+        import edge_tts
+    except ImportError:
+        pass
+
+    try:
+        import sentence_transformers
+    except ImportError:
+        pass
+
+    try:
+        import transformers
+    except ImportError:
+        pass
+
+    # Pre-load embedding model on main thread (avoids GC crash in worker threads on Python 3.14)
+    try:
+        from ai.agents import preload_embedding_model
+        preload_embedding_model()
+    except Exception:
+        pass
+
+    # Pre-load Whisper model in background (evita delay na primeira uso)
+    _whisper_preloader = None
+    try:
+        from PySide6.QtCore import QThread
+        class WhisperPreloader(QThread):
+            def run(self):
+                try:
+                    from workers.mic_worker import preload_whisper_model
+                    preload_whisper_model()
+                except Exception:
+                    pass
+        _whisper_preloader = WhisperPreloader()
+        _whisper_preloader.start()
+    except Exception:
+        pass
+
     settings = get_settings()
     model = get_model_by_id(settings.llm_model)
 
@@ -59,10 +126,10 @@ def main():
             return 0
 
     # Start embedded Llama with GPU acceleration
-    from core.llama_cpp import start_llama_server, stop_llama_server
+    from core.llama_cpp import start_llama_server
 
     try:
-        if not start_llama_server(n_gpu_layers=-1, n_ctx=8192, n_batch=1024):
+        if not start_llama_server(n_gpu_layers=-1, n_ctx=16384, n_batch=1024):
             QMessageBox.critical(
                 None,
                 "Erro ao iniciar LLM local",
@@ -77,22 +144,41 @@ def main():
             str(e),
         )
         return 1
+
     window = ModernChatWindow()
     window.show()
 
     # Ensure model stops on app exit
-    app.aboutToQuit.connect(stop_llama_server)
+    def _safe_shutdown():
+        with contextlib.suppress(Exception):
+            stop_llama_server()
 
-    return app.exec()
+    app.aboutToQuit.connect(_safe_shutdown)
+
+    # Start periodic health check
+    _start_health_check(app, settings.llm_model)
+
+    # Override default ctrl+c to avoid crash from interrupted threads
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+
+    result = app.exec()
+
+    # Force cleanup of remaining threads
+    for thread in threading.enumerate():
+        if thread is not threading.main_thread() and thread.is_alive():
+            thread.join(timeout=1.0)
+
+    return result
 
 
 def _on_download_done(app, msg, ok, error):
     msg.close()
     if ok:
         app.quit()
-        # Restart
-        import subprocess
-        subprocess.Popen([sys.executable] + sys.argv)
+        # Restart with guard to avoid infinite restart loops
+        env = os.environ.copy()
+        env["CELSIUS_RESTARTED"] = "1"
+        subprocess.Popen([sys.executable] + sys.argv, env=env)
     else:
         QMessageBox.critical(None, "Erro", f"Falha ao baixar modelo: {error}")
         app.quit()
@@ -101,6 +187,10 @@ def _on_download_done(app, msg, ok, error):
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:
+    except SystemExit:
+        pass
+    except Exception:
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        os._exit(0)

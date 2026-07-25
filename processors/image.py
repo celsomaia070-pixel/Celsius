@@ -1,6 +1,9 @@
+import logging
 from pathlib import Path
 
 from processors.base import ProcessadorArquivo
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessadorImagem(ProcessadorArquivo):
@@ -37,8 +40,8 @@ class ProcessadorImagem(ProcessadorArquivo):
                         partes_exif.append(f"{nome}: {exif[tag_id]}")
                 if partes_exif:
                     info_parts.append("EXIF: " + " | ".join(partes_exif))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to read EXIF metadata: %s", e)
 
         if img.mode in ("RGB", "RGBA"):
             try:
@@ -50,8 +53,8 @@ class ProcessadorImagem(ProcessadorArquivo):
                     g_avg = sum(p[1] for p in pixels) // len(pixels)
                     b_avg = sum(p[2] for p in pixels) // len(pixels)
                     info_parts.append(f"Cor media: rgb({r_avg},{g_avg},{b_avg})")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to compute average color: %s", e)
 
         informacoes = " | ".join(info_parts)
 

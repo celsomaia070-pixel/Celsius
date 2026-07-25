@@ -1,23 +1,35 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from ui.theme.schemes import ColorScheme, get_scheme
+from core.memory import get_memory_service
+
 
 class CaixaMemoriaDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, memory_service=None, parent=None, scheme: ColorScheme | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Adicionar Memoria")
+        self.memory_service = memory_service or get_memory_service()
+        self._scheme = scheme or get_scheme()
+        self.setWindowTitle("Adicionar Memória")
         self.setFixedSize(450, 160)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self._apply_theme()
 
-        self.setStyleSheet("""
-            QDialog { background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; }
-            QLabel { color: #e6edf3; font-size: 14px; font-weight: 500; }
-            QLineEdit { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 8px; font-size: 14px; }
-            QLineEdit:focus { border-color: #58a6ff; }
-            QPushButton { background-color: #21262d; color: #e6edf3; border: none; border-radius: 6px; font-weight: bold; min-width: 80px; padding: 6px 14px; }
-            QPushButton:hover { background-color: #30363d; }
-            QPushButton#btn_salvar { background-color: #238636; color: #ffffff; }
-            QPushButton#btn_salvar:hover { background-color: #2ea043; }
+    def set_scheme(self, scheme: ColorScheme):
+        self._scheme = scheme
+        self._apply_theme()
+
+    def _apply_theme(self):
+        s = self._scheme
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {s.bg_secondary}; border: 1px solid {s.border_default}; border-radius: 8px; }}
+            QLabel {{ color: {s.text_primary}; font-size: 14px; font-weight: 500; }}
+            QLineEdit {{ background-color: {s.bg_primary}; border: 1px solid {s.border_default}; border-radius: 6px; color: {s.text_primary}; padding: 8px; font-size: 14px; }}
+            QLineEdit:focus {{ border-color: {s.accent_primary}; }}
+            QPushButton {{ background-color: {s.bg_tertiary}; color: {s.text_primary}; border: none; border-radius: 6px; font-weight: bold; min-width: 80px; padding: 6px 14px; }}
+            QPushButton:hover {{ background-color: {s.bg_hover}; }}
+            QPushButton#btn_salvar {{ background-color: {s.success}; color: {s.text_on_accent}; }}
+            QPushButton#btn_salvar:hover {{ background-color: {s.success_text}; }}
         """)
 
         layout = QVBoxLayout(self)
@@ -40,30 +52,44 @@ class CaixaMemoriaDialog(QDialog):
         layout.addWidget(self.input_texto)
         layout.addLayout(layout_botoes)
 
-        self.btn_salvar.clicked.connect(self.accept)
+        self.btn_salvar.clicked.connect(self._salvar)
         self.btn_cancelar.clicked.connect(self.reject)
+
+    def _salvar(self):
+        texto = self.input_texto.text().strip()
+        if texto:
+            self.memory_service.add(texto)
+        self.accept()
 
     def obter_texto(self):
         return self.input_texto.text().strip()
 
 
 class FormatoRelatorioDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, scheme: ColorScheme | None = None):
         super().__init__(parent)
+        self._scheme = scheme or get_scheme()
         self.setWindowTitle("Formato do Relatorio")
         self.setFixedSize(300, 120)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self._formato = "pdf"
+        self._apply_theme()
 
-        self.setStyleSheet("""
-            QDialog { background-color: #0d1117; border: 1px solid #30363d; border-radius: 8px; }
-            QLabel { color: #e6edf3; font-size: 14px; font-weight: 500; }
-            QPushButton { background-color: #21262d; color: #e6edf3; border: none; border-radius: 6px; font-weight: bold; min-width: 100px; padding: 8px 16px; }
-            QPushButton:hover { background-color: #30363d; }
-            QPushButton#btn_pdf { background-color: #da3633; color: #ffffff; }
-            QPushButton#btn_pdf:hover { background-color: #f85149; }
-            QPushButton#btn_docx { background-color: #1f6feb; color: #ffffff; }
-            QPushButton#btn_docx:hover { background-color: #388bfd; }
+    def set_scheme(self, scheme: ColorScheme):
+        self._scheme = scheme
+        self._apply_theme()
+
+    def _apply_theme(self):
+        s = self._scheme
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {s.bg_secondary}; border: 1px solid {s.border_default}; border-radius: 8px; }}
+            QLabel {{ color: {s.text_primary}; font-size: 14px; font-weight: 500; }}
+            QPushButton {{ background-color: {s.bg_tertiary}; color: {s.text_primary}; border: none; border-radius: 6px; font-weight: bold; min-width: 100px; padding: 8px 16px; }}
+            QPushButton:hover {{ background-color: {s.bg_hover}; }}
+            QPushButton#btn_pdf {{ background-color: {s.error}; color: {s.text_on_accent}; }}
+            QPushButton#btn_pdf:hover {{ background-color: {s.error_text}; }}
+            QPushButton#btn_docx {{ background-color: {s.info}; color: {s.text_on_accent}; }}
+            QPushButton#btn_docx:hover {{ background-color: {s.info_text}; }}
         """)
 
         layout = QVBoxLayout(self)

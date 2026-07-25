@@ -1,4 +1,13 @@
 import asyncio
+import logging
+
+from core.circuit_breaker import CircuitBreakerOpenError, get_circuit_breaker
+
+logger = logging.getLogger(__name__)
+
+# Circuit breakers for browser operations
+_browser_navigate_cb = get_circuit_breaker("browser:navigate", failure_threshold=3, recovery_timeout=120)
+_browser_content_cb = get_circuit_breaker("browser:content", failure_threshold=5, recovery_timeout=60)
 
 
 class BrowserAgent:
@@ -78,6 +87,13 @@ class BrowserAgent:
 
 
 def navegar_web(url, timeout=30):
+    # Check circuit breaker before attempting
+    if not _browser_navigate_cb.allow_request():
+        raise CircuitBreakerOpenError(
+            "Navegacao web indisponivel (circuit breaker aberto). "
+            "Tente novamente em 120s."
+        )
+
     agent = BrowserAgent()
     loop = asyncio.new_event_loop()
 
@@ -91,9 +107,14 @@ def navegar_web(url, timeout=30):
 
     try:
         resultado = loop.run_until_complete(asyncio.wait_for(_run(), timeout=timeout))
+        _browser_navigate_cb.record_success()
     except asyncio.TimeoutExpired:
+        _browser_navigate_cb.record_failure()
         resultado = f"Timeout ao acessar {url}"
+    except CircuitBreakerOpenError:
+        raise
     except Exception as e:
+        _browser_navigate_cb.record_failure()
         resultado = f"Erro ao navegar: {e}"
     finally:
         loop.close()

@@ -3,7 +3,6 @@ import random
 from collections.abc import Callable
 from datetime import datetime
 
-import core.config as config
 from ai.react import loop_react
 from core.commands import executar_comando
 from core.config import get_settings
@@ -40,7 +39,12 @@ RESPOSTAS_FUNCOES = (
     "- Memoria de longo prazo\n"
     "- Geracao de relatorios (PDF/DOCX)\n"
     "- Respostas por voz\n"
-    "- Sistema multi-agente\n\n"
+    "- Sistema multi-agente\n"
+    "- Gerenciamento de estoque com Kanban\n"
+    "  - Consultar itens, quantidades, status\n"
+    "  - Registrar entradas e saidas\n"
+    "  - Cadastrar novos itens\n"
+    "  - Alertas de estoque minimo\n\n"
     "O que precisa?"
 )
 
@@ -64,19 +68,18 @@ HORAS_PADROES = [
     "que hora e", "hora atual", "horario", "qual o horario",
 ]
 
+DATA_PADROES = [
+    "que dia e hoje", "qual a data", "que data", "dia atual", "data atual",
+]
 
-def _eh_pergunta_simples(texto: str) -> bool:
-    limpo = texto.lower().strip()
-    for char in "?!.,":
-        limpo = limpo.replace(char, "")
-    limpo = limpo.strip()
-    return (
-        limpo in COMANDOS_RAPIDOS
-        or limpo in {"ola", "oi", "bom dia", "boa tarde", "boa noite"}
-        or limpo in {"obrigado", "obrigada", "valeu", "thanks"}
-        or limpo in {"tudo bem", "como vai", "como esta", "como voce esta"}
-        or limpo in HORAS_PADROES
-    )
+
+def _formatar_data_atual() -> str:
+    now = datetime.now()
+    dias_semana = {
+        0: "segunda-feira", 1: "terca-feira", 2: "quarta-feira",
+        3: "quinta-feira", 4: "sexta-feira", 5: "sabado", 6: "domingo",
+    }
+    return f"Data atual: {now.strftime('%d/%m/%Y')} ({dias_semana[now.weekday()]})"
 
 
 def _responder_rapido(pergunta: str) -> str | None:
@@ -88,6 +91,9 @@ def _responder_rapido(pergunta: str) -> str | None:
     import re
     if limpo in HORAS_PADROES or re.search(r"\bhoras?\b|\bhorario\b", limpo):
         return f"Hora atual: {datetime.now().strftime('%H:%M')}"
+
+    if limpo in DATA_PADROES or re.search(r"\bdata\b", limpo):
+        return _formatar_data_atual()
 
     if limpo in COMANDOS_RAPIDOS:
         return COMANDOS_RAPIDOS[limpo]
@@ -105,7 +111,7 @@ def _responder_rapido(pergunta: str) -> str | None:
 
 
 class ConversationContext:
-    """Manages conversation history for a session."""
+    """Manages conversation history for a session with smart summarization."""
 
     def __init__(self, max_history: int = MAX_HISTORICO_SESSION):
         self.max_history = max_history
@@ -130,8 +136,181 @@ class ConversationContext:
         self.history.clear()
 
 
-# Global session context (could be per-window in future)
-_session_context = ConversationContext()
+def _detectar_intencao_estoque(pergunta: str) -> str | None:
+    """Detecta se a intencao e entrada, saida ou adicionar item novo."""
+    t = pergunta.lower()
+    # Saida: rebaixa, baixa, diminui, saida, remove, usa, gasta, envia, vende
+    saida_kw = [
+        "dê baixa", "baixa", "diminui", " dê saida", "saida", "remove", "removeu",
+        "usei", "usou", "gastei", "consumi", "enviei", "enviou",
+        "vendi", "vendeu", "tirar", "tirou", "menos",
+    ]
+    if any(kw in t for kw in saida_kw):
+        return "saida"
+    # Entrada: entrada, adicione, adiciona, recebi, comprou, entrou, repor, mais, aumenta
+    entrada_kw = [
+        "entrada", "adicione", "adiciona", "recebi", "comprei",
+        "comprou", "entrou", "repor", "reposicao", "aumenta",
+        "mais", "plus",
+    ]
+    if any(kw in t for kw in entrada_kw):
+        return "entrada"
+    return None
+
+
+def _extrair_quantidade(pergunta: str) -> int | None:
+    """Extrai quantidade numerica da pergunta."""
+    import re
+    # Padroes: "5 unidades", "5 esticadores", "em 5", "5 pecas"
+    m = re.search(r'(\d+)\s*(unidade|unidades|un|peça|pecas|estoque)?', pergunta)
+    if m:
+        return int(m.group(1))
+    # Por extenso
+    extenso = {
+        "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3,
+        "quatro": 4, "cinco": 5, "seis": 6, "sete": 7, "oito": 8,
+        "nove": 9, "dez": 10, "vinte": 20, "trinta": 30, "cinquenta": 50,
+    }
+    for palavra, num in extenso.items():
+        if re.search(rf'\b{palavra}\b', t := pergunta.lower()):
+            return num
+    return None
+
+
+def _processar_operacao_estoque(pergunta: str) -> str | None:
+    """Detecta e executa operacoes de entrada/saida no estoque. Retorna resultado ou None."""
+    import re
+    from core.inventory import get_inventory_service
+
+    intencao = _detectar_intencao_estoque(pergunta)
+    if not intencao:
+        return None
+
+    quantidade = _extrair_quantidade(pergunta)
+    if not quantidade or quantidade <= 0:
+        return None
+
+    service = get_inventory_service()
+    itens = service.get_all_items()
+    if not itens:
+        return None
+
+    # Buscar item por nome na pergunta
+    pergunta_lower = pergunta.lower()
+    item_encontrado = None
+    for item in itens:
+        palavras_nome = item.nome.lower().split()
+        for p in palavras_nome:
+            if len(p) > 2 and p in pergunta_lower:
+                item_encontrado = item
+                break
+        if item_encontrado:
+            break
+
+    if not item_encontrado:
+        return None  # Nao conseguiu identificar o item, deixa o LLM tentar
+
+    if intencao == "entrada":
+        mov = service.entrada(item_encontrado.id, quantidade)
+        if mov:
+            return (
+                f"Entrada registrada com sucesso!\n"
+                f"Item: {mov.item_nome}\n"
+                f"Quantidade adicionada: +{mov.quantidade} un.\n"
+                f"Estoque anterior: {mov.quantidade_anterior} | Estoque atual: {mov.quantidade_nova}"
+            )
+    elif intencao == "saida":
+        if quantidade > item_encontrado.quantidade:
+            return (
+                f"OPERACAO NEGADA: Saida de {quantidade} un. de '{item_encontrado.nome}' impossivel.\n"
+                f"Estoque disponivel: {item_encontrado.quantidade} un."
+            )
+        mov = service.saida(item_encontrado.id, quantidade)
+        if mov:
+            alerta = ""
+            if item_encontrado.precisa_repor:
+                alerta = f"\n**ALERTA: Estoque do item '{item_encontrado.nome}' esta no minimo ({item_encontrado.estoque_min})!**"
+            return (
+                f"Saida registrada com sucesso!\n"
+                f"Item: {mov.item_nome}\n"
+                f"Quantidade removida: -{mov.quantidade} un.\n"
+                f"Estoque anterior: {mov.quantidade_anterior} | Estoque atual: {mov.quantidade_nova}{alerta}"
+            )
+
+    return None
+
+
+def _obter_contexto_estoque(pergunta: str) -> str:
+    """Obtem dados relevantes do estoque para injetar no contexto."""
+    from core.inventory import get_inventory_service, ColunaKanban
+    service = get_inventory_service()
+    pergunta_lower = pergunta.lower()
+
+    itens = service.get_all_items()
+    if not itens:
+        return "Estoque: Nenhum item cadastrado."
+
+    # Palavras genericas que NAO indicam busca especifica
+    palavras_genericas = {
+        "quais", "nome", "nomes", "itens", "item", "estoque", "tenho",
+        "listar", "lista", "mostrar", "mostra", "ver", "todos", "todas",
+        "completo", "completa", "total", "resumo", "produto", "produtos",
+        "sao", "são", "dos", "das", "meu", "minha", "aqui",
+    }
+
+    # Busca especifica por nome (ex: "martelo", "arame")
+    termos_busca = []
+    termos_genericos = []
+    for item in itens:
+        palavras = item.nome.lower().split()
+        matched = False
+        for p in palavras:
+            if len(p) > 2 and p in pergunta_lower:
+                if p not in palavras_genericas:
+                    termos_busca.append(item)
+                    matched = True
+                    break
+        if not matched and item.categoria.lower() in pergunta_lower:
+            termos_busca.append(item)
+            matched = True
+        if not matched:
+            termos_genericos.append(item)
+
+    # Se achou match ESPECIFICO (nome de item real), retorna so esses
+    if termos_busca:
+        linhas = []
+        for item in termos_busca:
+            status = "CRITICO" if item.precisa_repor else "OK"
+            linhas.append(
+                f"- {item.nome} (ID:{item.id}) | {item.categoria} | "
+                f"{item.quantidade} un. | min:{item.estoque_min} max:{item.estoque_max} | {status}"
+            )
+        return "Dados do estoque (itens encontrados):\n" + "\n".join(linhas)
+
+    # Caso geral: lista COMPLETA (nenhum nome especifico detectado)
+    by_coluna = {}
+    for item in itens:
+        by_coluna.setdefault(item.localizacao, []).append(item)
+
+    linhas = []
+    for col in ColunaKanban:
+        group = by_coluna.get(col.value, [])
+        if group:
+            linhas.append(f"\n[{col.label}]")
+            for item in group:
+                status = "CRITICO" if item.precisa_repor else "OK"
+                linhas.append(
+                    f"  - {item.nome} (ID:{item.id}) | {item.categoria} | "
+                    f"{item.quantidade} un. | min:{item.estoque_min} max:{item.estoque_max} | {status}"
+                )
+
+    total = len(itens)
+    criticos = sum(1 for i in itens if i.precisa_repor)
+    return (
+        f"Dados do estoque do usuario ({total} itens, {criticos} em estoque critico).\n"
+        f"IMPORTANTE: Listar TODOS os itens, incluindo os em estoque critico/abaixo do minimo.\n"
+        + "\n".join(linhas)
+    )
 
 
 def gerar_resposta(
@@ -144,36 +323,50 @@ def gerar_resposta(
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()
 
-    if not texto_doc:
-        comando = executar_comando(pergunta_direta)
-        if comando:
-            if fn_chunk:
-                fn_chunk(comando)
-            return comando
+    # Comandos diretos sempre rodam (independente do historico)
+    comando = executar_comando(pergunta_direta)
+    if comando:
+        if fn_chunk:
+            fn_chunk(comando)
+        return comando
 
+    if not texto_doc:
         resposta_rapida = _responder_rapido(pergunta_direta)
         if resposta_rapida:
             if fn_chunk:
                 fn_chunk(resposta_rapida)
             return resposta_rapida
 
-    # Get conversation history for context
-    history = _session_context.get_history()
+    # Processar operacoes de estoque (entrada/saida) direto
+    if pergunta_direta:
+        resultado_estoque = _processar_operacao_estoque(pergunta_direta)
+        if resultado_estoque:
+            if fn_chunk:
+                fn_chunk(resultado_estoque)
+            return resultado_estoque
 
-    resposta, passos = loop_react(
+    # Sempre injetar dados do estoque no contexto para que o Celsius
+    # tenha acesso total ao inventário em qualquer pergunta
+    try:
+        contexto_estoque = _obter_contexto_estoque(pergunta_direta or "")
+        if contexto_estoque:
+            prompt_dict = dict(prompt_dict)
+            doc_existente = prompt_dict.get("documento", "")
+            prompt_dict["documento"] = (doc_existente + "\n\n### Dados do Estoque (SEMPRE DISPONIVEL)\n" + contexto_estoque).strip()
+            if not nome_doc:
+                prompt_dict["nome_documento"] = "Dados do Estoque"
+    except Exception:
+        pass
+
+    history = []
+
+    resposta, _ = loop_react(
         prompt_dict,
         fn_status=fn_status,
         fn_passo=fn_passo,
         fn_chunk=fn_chunk,
         history=history,
     )
-
-    _session_context.add_user(
-        f"{pergunta_direta}\n\n[Documento: {nome_doc}]\n{texto_doc[:3000]}"
-        if texto_doc
-        else (pergunta_direta or "[Analise de arquivo]")
-    )
-    _session_context.add_assistant(resposta)
 
     gc.collect()
     return resposta
@@ -241,18 +434,8 @@ def gerar_resposta_com_imagem(
             if fn_chunk:
                 fn_chunk(token)
         resultado = resposta.strip()
-        _session_context.add_user(f"[Imagem: {caminho_imagem}] {pergunta_final}")
-        _session_context.add_assistant(resultado)
         return resultado
     except Exception as e:
         import traceback
         traceback.print_exc()
         return f"Erro ao analisar imagem: {e}. Nota: O modelo atual pode nao suportar visao. Use um modelo multimodal (ex: Qwen2.5-VL, LLaVA) com arquivo mmproj para suporte a imagens."
-
-
-def get_session_context() -> ConversationContext:
-    return _session_context
-
-
-def clear_session_context() -> None:
-    _session_context.clear()

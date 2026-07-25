@@ -1,17 +1,22 @@
 """Llama.cpp Python bindings for embedded local LLM inference with Vulkan/GPU support."""
 import atexit
-import base64
 import gc
 import io
+import logging
+import re
 import sys
-import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler, Qwen25VLChatHandler
 
-from core.config import get_settings, get_model_by_id, GGUFModel
+from core.config import get_model_by_id, get_settings
+from core.metrics import MetricNames, get_metrics
+
+logger = logging.getLogger(__name__)
 
 try:
     from PIL import Image
@@ -36,8 +41,8 @@ class Qwen25VLChatHandlerWithPIL(Qwen25VLChatHandler):
                     out = io.BytesIO()
                     img.save(out, format="JPEG", quality=90)
                     return out.getvalue()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("PIL image conversion failed (Qwen): %s", e)
             return image_bytes
         else:
             import urllib.request
@@ -66,8 +71,8 @@ class Llava15ChatHandlerWithPIL(Llava15ChatHandler):
                     out = io.BytesIO()
                     img.save(out, format="JPEG", quality=90)
                     return out.getvalue()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("PIL image conversion failed (LLaVA): %s", e)
             return image_bytes
         else:
             import urllib.request
@@ -84,14 +89,14 @@ class LlamaManager:
     """Manages embedded Llama model using llama-cpp-python with Vulkan support."""
 
     def __init__(self):
-        self._llm: Optional[Llama] = None
-        self._chat_handler: Optional[Llava15ChatHandler] = None
+        self._llm: Llama | None = None
+        self._chat_handler: Llava15ChatHandler | None = None
         self._started = False
-        self._current_model_id: Optional[str] = None
-        self._on_model_changed: Optional[Callable[[str], None]] = None
+        self._current_model_id: str | None = None
+        self._on_model_changed: Callable[[str], None] | None = None
 
     @property
-    def current_model_id(self) -> Optional[str]:
+    def current_model_id(self) -> str | None:
         return self._current_model_id
 
     def set_model_changed_callback(self, callback: Callable[[str], None]) -> None:
@@ -110,14 +115,14 @@ class LlamaManager:
         settings = get_settings()
         return settings.get_model_path(model_id)
 
-    def _get_mmproj_path(self, model_id: str | None = None) -> Optional[Path]:
+    def _get_mmproj_path(self, model_id: str | None = None) -> Path | None:
         """Get path to mmproj file for vision support (optional)."""
         settings = get_settings()
         return settings.get_mmproj_path(model_id)
 
     def start(
         self,
-        model_id: Optional[str] = None,
+        model_id: str | None = None,
         n_gpu_layers: int = -1,
         n_ctx: int = 8192,
         n_batch: int = 1024,
@@ -173,29 +178,46 @@ class LlamaManager:
             chat_handler = None
             # Set chat_format for non-vision Qwen models
             if model_obj and "qwen" in model_obj.name.lower():
-                if "vl" in model_obj.name.lower():
-                    chat_format = "qwen2-vl"
-                else:
-                    chat_format = "qwen2"
+                chat_format = "qwen2-vl" if "vl" in model_obj.name.lower() else "qwen2"
             if model_obj and model_obj.has_mmproj:
                 print(f"[LLAMA] WARNING: mmproj file not found for {model_id} at {mmproj_path}")
 
-        # Initialize Llama with Vulkan (GPU) support
-        self._llm = Llama(
-            model_path=str(model_path),
-            n_gpu_layers=n_gpu_layers,
-            n_ctx=n_ctx,
-            n_batch=n_batch,
-            n_threads=n_threads,
-            use_mmap=use_mmap,
-            use_mlock=use_mlock,
-            verbose=verbose,
-            chat_handler=chat_handler,
-            chat_format=chat_format,
-            offload_kqv=True,
-            flash_attn=True,
-            tensor_split=None,
-        )
+        # Initialize Llama - try GPU first, fall back to CPU on crash
+        try:
+            self._llm = Llama(
+                model_path=str(model_path),
+                n_gpu_layers=n_gpu_layers,
+                n_ctx=n_ctx,
+                n_batch=n_batch,
+                n_threads=n_threads,
+                use_mmap=use_mmap,
+                use_mlock=use_mlock,
+                verbose=verbose,
+                chat_handler=chat_handler,
+                chat_format=chat_format,
+                offload_kqv=True,
+                flash_attn=True,
+                tensor_split=None,
+            )
+            print(f"[LLAMA] Modelo carregado com n_gpu_layers={n_gpu_layers}")
+        except Exception as gpu_err:
+            print(f"[LLAMA] GPU falhou ({gpu_err}), tentando CPU...")
+            self._llm = Llama(
+                model_path=str(model_path),
+                n_gpu_layers=0,
+                n_ctx=n_ctx,
+                n_batch=n_batch,
+                n_threads=n_threads,
+                use_mmap=use_mmap,
+                use_mlock=use_mlock,
+                verbose=verbose,
+                chat_handler=chat_handler,
+                chat_format=chat_format,
+                offload_kqv=False,
+                flash_attn=False,
+                tensor_split=None,
+            )
+            print("[LLAMA] Modelo carregado em CPU (sem GPU)")
 
         self._current_model_id = model_id
         atexit.register(self.stop)
@@ -204,8 +226,8 @@ class LlamaManager:
         # Warm up
         try:
             self._llm("Warm up", max_tokens=1, temperature=0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Model warmup failed (non-critical): %s", e)
 
         if self._on_model_changed:
             self._on_model_changed(model_id)
@@ -229,20 +251,33 @@ class LlamaManager:
         self._current_model_id = None
 
     def is_healthy(self) -> bool:
-        """Check if model is loaded."""
-        return self._llm is not None
+        """Check if model is loaded and responsive."""
+        metrics = get_metrics()
+        if self._llm is None:
+            return False
+        try:
+            # Quick health check with minimal inference
+            with metrics.timer(MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"):
+                self._llm("test", max_tokens=1, temperature=0)
+            metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status="ok")
+            return True
+        except Exception as e:
+            metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status="fail")
+            logger.warning("Health check failed: %s", e)
+            return False
 
     def create_chat_completion(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.7,
         max_tokens: int = 2048,
         stream: bool = False,
-        tools: Optional[List[Dict]] = None,
-        tool_choice: Optional[str] = None,
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
         **kwargs,
     ) -> Any:
         """Create chat completion (OpenAI-compatible API)."""
+        metrics = get_metrics()
         if not self._llm:
             raise RuntimeError("Model not initialized. Call start() first.")
 
@@ -258,7 +293,21 @@ class LlamaManager:
         if tool_choice is not None:
             call_kwargs["tool_choice"] = tool_choice
 
-        return self._llm.create_chat_completion(**call_kwargs)
+        metrics.inc(MetricNames.LLM_REQUESTS_TOTAL, model=self._current_model_id or "unknown")
+
+        with metrics.timer(MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"):
+            result = self._llm.create_chat_completion(**call_kwargs)
+
+        # Extract token usage if available
+        if isinstance(result, dict) and "usage" in result:
+            usage = result["usage"]
+            if "total_tokens" in usage:
+                metrics.inc(
+                    MetricNames.LLM_TOKENS_TOTAL,
+                    model=self._current_model_id or "unknown",
+                )
+
+        return result
 
     def chat_completion(self, **kwargs) -> Any:
         """Alias for create_chat_completion."""
@@ -284,7 +333,7 @@ class LlamaManager:
             **kwargs,
         )
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get model metadata."""
         if not self._llm:
             return {}
@@ -297,7 +346,7 @@ class LlamaManager:
         }
 
 
-_manager: Optional[LlamaManager] = None
+_manager: LlamaManager | None = None
 
 
 def get_llama_manager() -> LlamaManager:
@@ -309,7 +358,7 @@ def get_llama_manager() -> LlamaManager:
 
 
 def start_llama(
-    model_id: Optional[str] = None,
+    model_id: str | None = None,
     n_gpu_layers: int = -1,
     n_ctx: int = 8192,
     n_batch: int = 1024,
@@ -337,7 +386,7 @@ def switch_llama_model(model_id: str, **kwargs) -> bool:
     return get_llama_manager().switch_model(model_id=model_id, **kwargs)
 
 
-def get_llama_client_config() -> Dict[str, str]:
+def get_llama_client_config() -> dict[str, str]:
     """Get client config (compatibility with old API)."""
     return {"base_url": "local://llama", "api_key": "dummy"}
 
@@ -345,6 +394,132 @@ def get_llama_client_config() -> Dict[str, str]:
 # Backwards compatibility aliases
 start_llama_server = start_llama
 stop_llama_server = stop_llama
+
+
+# ── Multi-Model Router ─────────────────────────────────────────────────
+
+@dataclass
+class ModelRouter:
+    """Routes queries to appropriate model based on complexity.
+
+    Uses a small/fast model for simple queries and large model for complex tasks.
+    """
+
+    # Thresholds for routing
+    SIMPLE_MAX_TOKENS: int = 200       # Queries shorter than this → fast model
+    COMPLEX_MIN_TOKENS: int = 100      # Queries longer than this → main model
+
+    # Patterns that indicate complex tasks
+    COMPLEX_PATTERNS: list[str] = None
+
+    def __post_init__(self):
+        if self.COMPLEX_PATTERNS is None:
+            self.COMPLEX_PATTERNS = [
+                # Reasoning/analysis tasks
+                r"\b(analis[ae]|explic[ae]|compar[ae]|resum[ae]|relat[oó]rio)\b",
+                # Code tasks
+                r"\b(c[oó]digo|programa|script|fun[çc][aã]o|classe|algoritmo|python)\b",
+                # Tool-using tasks
+                r"\b(pesquisar|buscar|navegar|indexar|extrair|ler|listar)\b",
+                # Document/file tasks
+                r"\b(documento|pdf|arquivo|imagem|audio|anexo)\b",
+                # Complex requests
+                r"\b(passo a passo|detalhadamente|completo)\b",
+                # Report generation
+                r"\b(fazer|criar|gerar)\s+(um\s+)?relat[oó]rio\b",
+                # Understanding requests
+                r"\b(entender|compreender)\s+(como|o\s+que|por\s+que)\b",
+                # Web search intent
+                r"\b(preco|noticia|noticias|atual|hoje|agora|ultim[ao])\b",
+            ]
+
+    def classify_complexity(self, query: str, has_document: bool = False) -> str:
+        """Classify query complexity: 'simple', 'medium', 'complex'."""
+        query_lower = query.lower()
+        token_estimate = len(query) / 3.5  # Rough token estimate
+
+        # Document context always needs main model
+        if has_document:
+            return "complex"
+
+        # Check for complex patterns FIRST (before simple check)
+        complex_score = sum(
+            1 for pattern in self.COMPLEX_PATTERNS
+            if re.search(pattern, query_lower)
+        )
+
+        # Very short queries without tool/code patterns → simple
+        if token_estimate < self.SIMPLE_MAX_TOKENS / 2 and complex_score == 0:
+            return "simple"
+
+        if complex_score >= 2 or token_estimate > self.COMPLEX_MIN_TOKENS:
+            return "complex"
+        elif complex_score >= 1:
+            return "medium"
+
+        return "simple"
+
+    def get_model_for_query(self, query: str, has_document: bool = False) -> str:
+        """Return model ID for the given query."""
+        complexity = self.classify_complexity(query, has_document)
+        settings = get_settings()
+
+        if complexity == "simple":
+            # Fast model for simple queries
+            return getattr(settings, 'fast_llm_model', 'llama3.2-3b-q5km')
+        else:
+            # Main model for complex tasks
+            return settings.llm_model
+
+
+class MultiModelManager:
+    """Manages multiple models with lazy loading."""
+
+    def __init__(self):
+        # Use the global main manager (already started)
+        self.main_manager = get_llama_manager()
+        # Create separate fast manager for lazy loading
+        self.fast_manager = LlamaManager()
+        self.router = ModelRouter()
+        self._current_complexity: str | None = None
+
+    def get_manager(self, model_id: str) -> LlamaManager:
+        """Get the appropriate manager for a model ID."""
+        settings = get_settings()
+        if model_id == getattr(settings, 'fast_llm_model', None):
+            # Check if fast model is loaded, if not fall back to main
+            if self.fast_manager._started:
+                return self.fast_manager
+            return self.main_manager
+        return self.main_manager
+
+    def route_and_invoke(
+        self,
+        query: str,
+        has_document: bool = False,
+        **kwargs
+    ) -> tuple[str, LlamaManager]:
+        """Route query to appropriate model and return (model_id, manager)."""
+        model_id = self.router.get_model_for_query(query, has_document)
+        manager = self.get_manager(model_id)
+        self._current_complexity = self.router.classify_complexity(query, has_document)
+        return model_id, manager
+
+    def get_current_complexity(self) -> str | None:
+        """Get the last classification result."""
+        return self._current_complexity
+
+
+# Global instance
+_multi_manager: MultiModelManager | None = None
+
+
+def get_multi_model_manager() -> MultiModelManager:
+    """Get singleton multi-model manager."""
+    global _multi_manager
+    if _multi_manager is None:
+        _multi_manager = MultiModelManager()
+    return _multi_manager
 
 
 def get_llama() -> LlamaManager:
