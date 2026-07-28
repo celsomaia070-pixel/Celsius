@@ -36,7 +36,7 @@ class MemoryService:
                     with open(self.settings.memorias_file, encoding="utf-8") as f:
                         self._memories = json.load(f)
                 except Exception as e:
-                    print(f"[MEMORY] Erro ao ler {self.settings.memorias_file}: {e}")
+                    logger.warning("Erro ao ler memorias em %s: %s", self.settings.memorias_file, e)
                     self._memories = []
                 for memoria in self._memories:
                     texto = memoria.get("texto", "") if isinstance(memoria, dict) else memoria
@@ -44,7 +44,11 @@ class MemoryService:
                         try:
                             self._embeddings_cache[texto] = self._model_instance.encode([texto])[0]
                         except Exception as e:
-                            print(f"[MEMORY] Erro ao gerar embedding para '{texto[:40]}...': {e}")
+                            logger.warning(
+                                "Erro ao gerar embedding para memoria '%s...': %s",
+                                texto[:40],
+                                e,
+                            )
             else:
                 self._memories = []
 
@@ -109,7 +113,7 @@ class MemoryService:
                 json.dump(self._memories, f, ensure_ascii=False, indent=2)
             os.replace(tmp_name, path)
         except Exception as e:
-            print(f"Erro ao salvar memorias: {e}")
+            logger.warning("Erro ao salvar memorias: %s", e)
 
     def clear(self) -> None:
         with self._lock:
@@ -142,7 +146,14 @@ def salvar_memorias(memorias: list[dict]) -> None:
         for memoria in memorias:
             texto = memoria.get("texto", "") if isinstance(memoria, dict) else memoria
             if texto:
-                service._embeddings_cache[texto] = service._model_instance.encode([texto])[0]
+                try:
+                    service._embeddings_cache[texto] = service._model_instance.encode([texto])[0]
+                except Exception as e:
+                    logger.warning(
+                        "Erro ao gerar embedding para memoria importada '%s...': %s",
+                        texto[:40],
+                        e,
+                    )
         service._save()
 
 

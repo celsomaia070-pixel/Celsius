@@ -375,8 +375,11 @@ def loop_react(
         budget_info = budget.analyze_messages(mensagens)
         if budget_info["utilization"] > 0.70:
             pct = int(budget_info["utilization"] * 100)
-            print(
-                f"[ContextBudget] {pct}% do contexto usado ({budget_info['total_used']}/{budget_info['available']} tokens)"
+            logger.info(
+                "Context budget usage: %s%% (%s/%s tokens)",
+                pct,
+                budget_info["total_used"],
+                budget_info["available"],
             )
 
     if memorias_section:
