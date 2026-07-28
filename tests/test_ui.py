@@ -161,6 +161,37 @@ class TestModernInputArea:
         assert area._attachments[0] == "test.png"
 
 
+class TestJarvisVoiceVisualizer:
+    def test_jarvis_creation_with_custom_identity(self, qapp):
+        from ui.jarvis_visualizer import JarvisVoiceVisualizer
+
+        jarvis = JarvisVoiceVisualizer(
+            assistant_name="EmpresaBot",
+            particle_count=300,
+            fps=20,
+            use_internal_audio=False,
+        )
+        assert jarvis.windowTitle() == "EmpresaBot Voice"
+        assert jarvis._particle_count == 300
+        jarvis.close()
+
+    def test_jarvis_state_transitions(self, qapp):
+        from ui.jarvis_visualizer import JarvisVoiceVisualizer
+
+        jarvis = JarvisVoiceVisualizer(particle_count=250, use_internal_audio=False)
+        jarvis.start_listening()
+        assert jarvis._isListening is True
+        jarvis.set_mic_level(0.7)
+        assert jarvis._target_mic_energy == 0.7
+        jarvis.stop_listening()
+        assert jarvis._isListening is False
+        jarvis.start_speaking()
+        assert jarvis._is_speaking is True
+        jarvis.stop_speaking()
+        assert jarvis._is_speaking is False
+        jarvis.close()
+
+
 class TestModernChatWindow:
     @pytest.mark.skip(reason="Requires full inventory/kanban stack (mocked in test env)")
     def test_window_creation(self, qapp):

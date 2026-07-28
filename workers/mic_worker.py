@@ -8,7 +8,7 @@ import numpy as np
 import sounddevice as sd
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from core.config import get_settings
+from core.settings import get_settings
 
 # Singleton for faster-whisper model
 _whisper_model = None
@@ -23,6 +23,7 @@ class MicWorkerSignals(QObject):
     recognized = Signal(str)
     error = Signal(str)
     started = Signal()
+    audio_level = Signal(float)
 
 
 class MicWorker(QRunnable):
@@ -39,6 +40,7 @@ class MicWorker(QRunnable):
         self._lock_stream = None
         self.signals = MicWorkerSignals()
         self._start_time = None
+        self._last_level_emit = 0.0
 
     def _get_model(self):
         global _whisper_model
@@ -58,6 +60,12 @@ class MicWorker(QRunnable):
     def callback_audio(self, indata, frames, time_info, status):
         if self.rodando:
             self.dados_audio.put(indata.copy())
+            now = time.time()
+            if now - self._last_level_emit >= 0.05:
+                audio = indata.astype(np.float32) / 32768.0
+                level = float(np.sqrt(np.mean(audio * audio)))
+                self.signals.audio_level.emit(min(1.0, level * 8.0))
+                self._last_level_emit = now
 
     @Slot()
     def run(self):
@@ -170,7 +178,10 @@ class MicWorker(QRunnable):
                     "min_silence_duration_ms": 300,
                     "speech_pad_ms": 200,
                 },
-                initial_prompt="Português do Brasil. Celsius, assistente pessoal.",
+                initial_prompt=(
+                    f"Portugues do Brasil. {self.settings.assistant.name}, "
+                    f"{self.settings.assistant.profile}."
+                ),
                 word_timestamps=False,
             )
             texto = " ".join(seg.text.strip() for seg in segments)

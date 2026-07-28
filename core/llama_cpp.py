@@ -14,8 +14,9 @@ from typing import Any
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler, Qwen25VLChatHandler
 
-from core.config import get_model_by_id, get_settings
+from core.config import get_model_by_id
 from core.metrics import MetricNames, get_metrics
+from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

@@ -22,6 +22,7 @@ class WorkerController(QObject):
     model_list_loaded = Signal(list)
     mic_ready = Signal()
     mic_error = Signal(str)
+    mic_level = Signal(float)
     voice_text_ready = Signal(str)
     voice_error = Signal(str)
     voice_finished = Signal()
@@ -96,6 +97,7 @@ class WorkerController(QObject):
         self._mic_worker.signals.recognized.connect(self.voice_text_ready.emit)
         self._mic_worker.signals.error.connect(self.mic_error.emit)
         self._mic_worker.signals.started.connect(self.mic_ready.emit)
+        self._mic_worker.signals.audio_level.connect(self.mic_level.emit)
         QThreadPool.globalInstance().start(self._mic_worker)
 
     def stop_mic(self) -> str:

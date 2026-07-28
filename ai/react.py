@@ -10,8 +10,8 @@ from typing import Any
 
 from ai.context_budget import get_budget
 from ai.tools import REGISTRO_FERRAMENTAS, executar_ferramenta
-from core.config import get_settings
 from core.llama_cpp import get_multi_model_manager
+from core.settings import get_settings
 from core.telemetry import trace_span
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 MAX_ITERACOES = 5
 
 SYSTEM_PROMPT_REACT = (
-    "Voce e Celsius, agente multimodal de IA pessoal do Celso. Data: {data_hora}.\n"
+    "Voce e {assistant_name}, {assistant_profile}. {owner_clause}Data: {data_hora}.\n"
     "Responda SEMPRE em portugues do Brasil.\n\n"
     "## Regras Obrigatorias\n"
     "- NUNCA invente informacoes. Use apenas dados do contexto ou memorias.\n"
@@ -315,10 +315,21 @@ def loop_react(
     memorias_relevantes = buscar_memorias(pergunta) if pergunta and memorias_ativas else []
 
     data_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
+    settings = get_settings()
+    owner_clause = (
+        f"Usuario/empresa principal: {settings.assistant.owner_name}. "
+        if settings.assistant.owner_name
+        else ""
+    )
 
     ferramentas_relevantes = _filtrar_ferramentas(pergunta)
     ferramentas_openai = [f.para_openai() for f in ferramentas_relevantes]
-    system_content = SYSTEM_PROMPT_REACT.format(data_hora=data_hora)
+    system_content = SYSTEM_PROMPT_REACT.format(
+        assistant_name=settings.assistant.name,
+        assistant_profile=settings.assistant.profile,
+        owner_clause=owner_clause,
+        data_hora=data_hora,
+    )
 
     if texto_doc:
         budget = get_budget()
@@ -409,7 +420,7 @@ def loop_react(
                 kwargs = {
                     "messages": mensagens,
                     "temperature": 0.3,
-                    "max_tokens": min(get_settings().num_predict, 4096),
+                    "max_tokens": min(settings.num_predict, 4096),
                     "stream": True,
                     "repeat_penalty": 1.05 if memorias_relevantes else 1.2,
                     "frequency_penalty": 0.1 if memorias_relevantes else 0.3,

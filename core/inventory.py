@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
 
-from core.config import get_settings
+from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

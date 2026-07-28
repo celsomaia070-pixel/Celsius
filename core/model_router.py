@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from core.config import get_settings
 from core.metrics import MetricNames, get_metrics
+from core.settings import get_settings
 from core.telemetry import trace_span
 
 logger = __import__("logging").getLogger(__name__)

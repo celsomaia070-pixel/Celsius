@@ -117,7 +117,7 @@ def _get_embedding_model():
         try:
             from sentence_transformers import SentenceTransformer
 
-            from core.config import get_settings
+            from core.settings import get_settings
 
             settings = get_settings()
             _embedding_model = SentenceTransformer(settings.embedding_model)

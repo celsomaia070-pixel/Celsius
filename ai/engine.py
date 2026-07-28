@@ -1,11 +1,14 @@
 import gc
+import logging
 import random
 from collections.abc import Callable
 from datetime import datetime
 
 from ai.react import loop_react
 from core.commands import executar_comando
-from core.config import get_settings
+from core.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 RESPOSTAS_OLA = [
     "Ola! Em que posso ajudar?",
@@ -46,10 +49,17 @@ RESPOSTAS_FUNCOES = (
     "O que precisa?"
 )
 
+
+def _assistant_name() -> str:
+    return get_settings().assistant.name
+
+
 COMANDOS_RAPIDOS = {
-    "quem e voce": "Sou o Celsius, um agente multimodal de IA. Tenho capacidades reais de acao: processar arquivos, executar codigo, navegar na web, indexar documentos e muito mais. O que precisa?",
-    "qual seu nome": "Meu nome e Celsius.",
-    "seu nome": "Celsius.",
+    "quem e voce": lambda: (
+        f"Sou o {_assistant_name()}, um agente multimodal de IA. Tenho capacidades reais de acao: processar arquivos, executar codigo, navegar na web, indexar documentos e muito mais. O que precisa?"
+    ),
+    "qual seu nome": lambda: f"Meu nome e {_assistant_name()}.",
+    "seu nome": lambda: _assistant_name(),
     "me ajuda": "Claro! Me mande um arquivo, pergunte algo, ou peca para pesquisar na web. Tenho varias capacidades como agente.",
     "ajuda": "Me mande um arquivo, pergunte algo, ou peca para pesquisar na web.",
     "help": "Me mande um arquivo, pergunte algo, ou peca para pesquisar na web.",
@@ -57,7 +67,9 @@ COMANDOS_RAPIDOS = {
     "o que voce sabe fazer": RESPOSTAS_FUNCOES,
     "suas funcoes": RESPOSTAS_FUNCOES,
     "quais suas funcionalidades": RESPOSTAS_FUNCOES,
-    "o que voce e": "Sou o Celsius, um agente multimodal de IA. Nao sou um assistente basico — tenho capacidades reais de acao como processar documentos, executar codigo, navegar na web e muito mais.",
+    "o que voce e": lambda: (
+        f"Sou o {_assistant_name()}, um agente multimodal de IA. Nao sou um assistente basico - tenho capacidades reais de acao como processar documentos, executar codigo, navegar na web e muito mais."
+    ),
     "voce e um assistente": "Nao sou um mero assistente. Sou um agente multimodal de IA com capacidades reais de acao. Posso processar documentos, executar codigo, navegar na web, indexar informacoes e muito mais.",
 }
 
@@ -110,7 +122,8 @@ def _responder_rapido(pergunta: str) -> str | None:
         return _formatar_data_atual()
 
     if limpo in COMANDOS_RAPIDOS:
-        return COMANDOS_RAPIDOS[limpo]
+        resposta = COMANDOS_RAPIDOS[limpo]
+        return resposta() if callable(resposta) else resposta
 
     if limpo in {"ola", "oi", "bom dia", "boa tarde", "boa noite"}:
         return random.choice(RESPOSTAS_OLA)
@@ -419,7 +432,7 @@ def gerar_resposta(
                 fn_chunk(resultado_estoque)
             return resultado_estoque
 
-    # Sempre injetar dados do estoque no contexto para que o Celsius
+    # Sempre injetar dados do estoque no contexto para que o assistente
     # tenha acesso total ao inventário em qualquer pergunta
     try:
         contexto_estoque = _obter_contexto_estoque(pergunta_direta or "")
@@ -431,8 +444,8 @@ def gerar_resposta(
             ).strip()
             if not nome_doc:
                 prompt_dict["nome_documento"] = "Dados do Estoque"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Falha ao injetar contexto de estoque: %s", e)
 
     history = []
 
@@ -469,6 +482,7 @@ def gerar_resposta_com_imagem(
     )
 
     data_e_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
+    settings = get_settings()
 
     mensagens = [
         {
@@ -477,7 +491,7 @@ def gerar_resposta_com_imagem(
                 f"Hoje e dia/horario {data_e_hora}.\n"
                 "IMPORTANTE: Responda SEMPRE e EXCLUSIVAMENTE em portugues do Brasil.\n"
                 "NUNCA use outro idioma. Todas as suas respostas DEVEM ser em portugues.\n\n"
-                "Voce e Celsius, um agente de IA especialista.\n"
+                f"Voce e {settings.assistant.name}, {settings.assistant.profile}.\n"
                 "Analise a imagem enviada e responda a pergunta do usuario.\n"
                 "Se houver texto na imagem, transcreva-o.\n"
                 "Nao comence se apresentando. Va direto ao assunto."

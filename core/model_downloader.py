@@ -3,7 +3,8 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from core.config import GGUFModel, get_settings
+from core.config import GGUFModel
+from core.settings import get_settings
 
 
 def get_downloaded_models() -> set[str]:

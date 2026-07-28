@@ -30,6 +30,16 @@ class Environment(str, Enum):
     TEST = "test"
 
 
+class AssistantSettings(BaseSettings):
+    """Assistant identity and behavior settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_ASSISTANT_")
+
+    name: str = "Celsius"
+    owner_name: str = ""
+    profile: str = "agente multimodal de IA local"
+
+
 class HardwareSettings(BaseSettings):
     """Hardware detection and performance mode settings."""
 
@@ -172,6 +182,7 @@ class SecuritySettings(BaseSettings):
         "compile",
     )
     path_traversal_protection: bool = True
+    allowed_file_roots: tuple[str, ...] = ()
 
 
 class TelemetrySettings(BaseSettings):
@@ -201,6 +212,9 @@ class UiSettings(BaseSettings):
     show_sidebar: bool = True
     animation_enabled: bool = True
     command_palette_enabled: bool = True
+    jarvis_enabled: bool = True
+    jarvis_particle_count: int = 800
+    jarvis_fps: int = 30
 
 
 class FeatureFlags(BaseSettings):
@@ -240,6 +254,7 @@ class Settings(BaseSettings):
     resources_dir: Path = Field(default_factory=lambda: _get_base_dir() / "resources")
     logs_dir: Path = Field(default_factory=lambda: _get_base_dir() / "logs")
 
+    assistant: AssistantSettings = Field(default_factory=AssistantSettings)
     model: ModelSettings = Field(default_factory=ModelSettings)
     hardware: HardwareSettings = Field(default_factory=HardwareSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
@@ -340,6 +355,14 @@ class Settings(BaseSettings):
     @property
     def file_filter(self) -> str:
         return " ".join(f"*{ext}" for ext in self.all_extensions)
+
+    @property
+    def assistant_name(self) -> str:
+        return self.assistant.name
+
+    @property
+    def assistant_profile(self) -> str:
+        return self.assistant.profile
 
     def is_module_enabled(self, module: str) -> bool:
         return bool(getattr(self.features, module, False))

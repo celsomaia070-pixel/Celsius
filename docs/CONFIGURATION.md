@@ -24,6 +24,17 @@ CELSIUS_MODEL_NUM_CTX=16384
 CELSIUS_TELEMETRY_ENABLED=false
 ```
 
+## Identidade do Assistente
+
+```env
+CELSIUS_ASSISTANT_NAME=Celsius
+CELSIUS_ASSISTANT_OWNER_NAME=
+CELSIUS_ASSISTANT_PROFILE=agente multimodal de IA local
+```
+
+Use `CELSIUS_ASSISTANT_OWNER_NAME` apenas quando quiser personalizar a instancia
+para uma pessoa ou empresa especifica.
+
 ## Modelos
 
 Configuracoes principais:
@@ -85,7 +96,12 @@ CELSIUS_FILE_DOC_TEXT_LIMIT=12000
 CELSIUS_SECURITY_SANDBOX_ENABLED=true
 CELSIUS_SECURITY_SANDBOX_MAX_MEMORY_MB=256
 CELSIUS_SECURITY_SANDBOX_MAX_CPU_SECONDS=30
+CELSIUS_SECURITY_ALLOWED_FILE_ROOTS=["E:/PythonProjectCELSIUS","E:/Empresa/Documentos"]
 ```
+
+Quando `CELSIUS_SECURITY_ALLOWED_FILE_ROOTS` fica vazio, as ferramentas de
+arquivo podem acessar apenas a pasta base do aplicativo. Use uma lista JSON para
+autorizar outras pastas da empresa.
 
 ## Telemetria
 
@@ -104,6 +120,9 @@ CELSIUS_TELEMETRY_METRICS_PORT=9090
 CELSIUS_UI_THEME=system
 CELSIUS_UI_LANGUAGE=pt-BR
 CELSIUS_UI_SHOW_SIDEBAR=true
+CELSIUS_UI_JARVIS_ENABLED=true
+CELSIUS_UI_JARVIS_PARTICLE_COUNT=800
+CELSIUS_UI_JARVIS_FPS=30
 ```
 
 ## Feature Flags

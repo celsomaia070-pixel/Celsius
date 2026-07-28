@@ -20,7 +20,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from core.circuit_breaker import get_circuit_breaker
-from core.config import get_settings
+from core.settings import get_settings
 
 try:
     from core.logging_config import get_logger

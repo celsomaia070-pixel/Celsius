@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.settings import (
+    AssistantSettings,
     Environment,
     FeatureFlags,
     FileSettings,
@@ -79,6 +80,19 @@ class TestModelSettingsDefaults:
         assert s.use_mlock is True
         assert s.offload_kqv is True
         assert s.flash_attn is True
+
+
+class TestAssistantSettingsDefaults:
+    def test_identity_defaults(self):
+        s = AssistantSettings()
+        assert s.name == "Celsius"
+        assert s.owner_name == ""
+        assert "IA local" in s.profile
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("CELSIUS_ASSISTANT_NAME", "EmpresaBot")
+        s = AssistantSettings()
+        assert s.name == "EmpresaBot"
 
 
 class TestFeatureFlagsDefaults:
@@ -276,6 +290,12 @@ class TestUiSettingsDefaults:
     def test_show_sidebar(self):
         s = UiSettings()
         assert s.show_sidebar is True
+
+    def test_jarvis_defaults(self):
+        s = UiSettings()
+        assert s.jarvis_enabled is True
+        assert s.jarvis_particle_count == 800
+        assert s.jarvis_fps == 30
 
 
 class TestEnums:

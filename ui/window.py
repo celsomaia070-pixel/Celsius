@@ -14,9 +14,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.config import get_settings
 from core.inventory import get_inventory_service
 from core.memory import get_memory_service
+from core.settings import get_settings
 from ui.chat import ModernChatView, ModernInputArea
 from ui.command_palette import CommandPaletteManager
 from ui.controllers.conversation_manager import ConversationManager
@@ -60,8 +60,15 @@ class ModernChatWindow(QMainWindow):
         self._pending_file_path = ""
         self._memories_enabled = True
         self._voice_enabled = False
-        self._jarvis = JarvisVoiceVisualizer()
-        self._jarvis.VISUALIZATION_STOPPED.connect(self._on_jarvis_stopped)
+        self._jarvis = None
+        if self.settings.ui.jarvis_enabled:
+            self._jarvis = JarvisVoiceVisualizer(
+                assistant_name=self.settings.assistant.name,
+                particle_count=self.settings.ui.jarvis_particle_count,
+                fps=self.settings.ui.jarvis_fps,
+                use_internal_audio=False,
+            )
+            self._jarvis.VISUALIZATION_STOPPED.connect(self._on_jarvis_stopped)
 
         self.setWindowTitle("Celsius")
         self.resize(1100, 700)
@@ -69,8 +76,9 @@ class ModernChatWindow(QMainWindow):
         self._apply_theme()
         self._load_conversations()
 
-        self._jarvis.position_at_topbar(self)
-        self._jarvis.show()
+        if self._jarvis:
+            self._jarvis.position_at_topbar(self)
+            self._jarvis.show()
 
         # Connect controllers
         self._connect_controllers()
@@ -195,6 +203,7 @@ class ModernChatWindow(QMainWindow):
         self.worker_controller.model_list_loaded.connect(self._on_model_list_loaded)
         self.worker_controller.mic_ready.connect(self._on_mic_ready)
         self.worker_controller.mic_error.connect(self._on_mic_error)
+        self.worker_controller.mic_level.connect(self._on_mic_level)
         self.worker_controller.voice_text_ready.connect(self._on_voice_text_ready)
         self.worker_controller.voice_error.connect(self._on_voice_error)
         self.worker_controller.voice_finished.connect(self._on_voice_finished)
@@ -296,7 +305,8 @@ class ModernChatWindow(QMainWindow):
         if self._current_conv_id:
             self.conversation_manager.add_message(self._current_conv_id, "assistant", full_text)
         if self._voice_enabled and full_text.strip():
-            self._jarvis.start_speaking()
+            if self._jarvis:
+                self._jarvis.start_speaking()
             self.worker_controller.start_voice(full_text)
 
     def _on_ai_response_error(self, error: str):
@@ -371,11 +381,13 @@ class ModernChatWindow(QMainWindow):
         if self._mic_worker:
             self.worker_controller.stop_mic()
             self._mic_worker = None
-            self._jarvis.stop_listening()
+            if self._jarvis:
+                self._jarvis.stop_listening()
             self.input_area.set_mic_active(False)
         else:
             self.worker_controller.start_mic()
-            self._jarvis.start_listening()
+            if self._jarvis:
+                self._jarvis.start_listening()
             self.input_area.set_mic_active(True)
 
     def _on_mic_ready(self):
@@ -383,30 +395,39 @@ class ModernChatWindow(QMainWindow):
 
     def _on_mic_error(self, error: str):
         self._mic_worker = None
-        self._jarvis.stop_listening()
+        if self._jarvis:
+            self._jarvis.stop_listening()
         self.input_area.set_mic_active(False)
         QMessageBox.warning(self, "Erro no microfone", error)
+
+    def _on_mic_level(self, level: float):
+        if self._jarvis:
+            self._jarvis.set_mic_level(level)
 
     # Voice handlers
     def _toggle_voice(self):
         self._voice_enabled = self.input_area.btn_voice.isChecked()
         if not self._voice_enabled:
-            self._jarvis.stop_speaking()
+            if self._jarvis:
+                self._jarvis.stop_speaking()
             self.worker_controller.stop_voice()
 
     def _on_voice_text_ready(self, text: str):
-        self._jarvis.stop_listening()
+        if self._jarvis:
+            self._jarvis.stop_listening()
         self._mic_worker = None
         self.input_area.set_mic_active(False)
         self.input_area.input.setText(text)
         self._on_user_message(text)
 
     def _on_voice_error(self, error: str):
-        self._jarvis.stop_speaking()
+        if self._jarvis:
+            self._jarvis.stop_speaking()
         QMessageBox.warning(self, "Erro na voz", error)
 
     def _on_voice_finished(self):
-        self._jarvis.stop_speaking()
+        if self._jarvis:
+            self._jarvis.stop_speaking()
 
     def _on_jarvis_stopped(self):
         pass
@@ -444,7 +465,9 @@ class ModernChatWindow(QMainWindow):
         from datetime import date
 
         today = date.today().strftime("%d/%m/%Y")
-        return f"Voce e o Celsius, um assistente de IA util e conciso. Hoje e {today}."
+        assistant = self.settings.assistant
+        owner_clause = f" Voce ajuda {assistant.owner_name}." if assistant.owner_name else ""
+        return f"Voce e {assistant.name}, {assistant.profile}.{owner_clause} Hoje e {today}."
 
     # File attachment
     def _on_attach_file(self):
@@ -555,6 +578,9 @@ class ModernChatWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self._show_settings)
 
     def closeEvent(self, event):
+        if self._jarvis:
+            self._jarvis.close()
+            self._jarvis = None
         self.worker_controller.cleanup()
         super().closeEvent(event)
 

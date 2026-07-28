@@ -13,6 +13,7 @@ from core.circuit_breaker import (
     get_circuit_breaker,
 )
 from core.metrics import MetricNames, get_metrics
+from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,33 @@ class Ferramenta:
         }
 
 
+def _allowed_file_roots() -> tuple[Path, ...]:
+    settings = get_settings()
+    configured_roots = settings.security.allowed_file_roots
+    roots = [Path(root) for root in configured_roots] if configured_roots else [settings.base_dir]
+    return tuple(root.expanduser().resolve() for root in roots)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _validate_path(path: str) -> Path:
-    """Validate path exists and is accessible."""
-    path = Path(path).resolve()
+    """Validate path exists and stays inside an authorized file root."""
+    raw_path = Path(path).expanduser()
+    if not raw_path.is_absolute():
+        raw_path = get_settings().base_dir / raw_path
+    path = raw_path.resolve()
     if not path.exists():
         raise FileNotFoundError(f"Arquivo nao encontrado: {path}")
+    allowed_roots = _allowed_file_roots()
+    if not any(_is_relative_to(path, root) for root in allowed_roots):
+        roots = ", ".join(str(root) for root in allowed_roots)
+        raise PermissionError(f"Acesso negado: '{path}' esta fora das pastas autorizadas ({roots})")
     return path
 
 

@@ -3,6 +3,7 @@ JarvisVoiceVisualizer - Globo de particulas animado reagindo a voz.
 Janela flutuante movel que inicia na area do top bar.
 """
 
+import logging
 import math
 import random
 import threading
@@ -19,6 +20,8 @@ try:
     _HAS_AUDIO = True
 except ImportError:
     _HAS_AUDIO = False
+
+logger = logging.getLogger(__name__)
 
 
 class AudioLevelMonitor:
@@ -47,8 +50,8 @@ class AudioLevelMonitor:
             try:
                 self._stream.stop()
                 self._stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Falha ao fechar stream de audio do Jarvis: %s", e)
             self._stream = None
 
     def _capture(self):
@@ -70,14 +73,15 @@ class AudioLevelMonitor:
             self._stream.start()
             while self._running:
                 time.sleep(0.05)
-        except Exception:
+        except Exception as e:
+            logger.warning("Monitor de audio do Jarvis falhou: %s", e)
             self._level = 0.0
 
     def reset(self):
         self._level = 0.0
 
 
-_PARTICLE_COUNT = 1200
+_DEFAULT_PARTICLE_COUNT = 800
 _LISTENING_LABELS = ["ouvindo", "ouvindo .", "ouvindo ..", "ouvindo ..."]
 
 
@@ -86,20 +90,33 @@ class JarvisVoiceVisualizer(QWidget):
 
     VISUALIZATION_STOPPED = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(
+        self,
+        parent=None,
+        assistant_name: str = "Celsius",
+        particle_count: int = _DEFAULT_PARTICLE_COUNT,
+        fps: int = 30,
+        use_internal_audio: bool = False,
+    ):
         super().__init__(parent)
-        self.setWindowTitle("Celsius Voice")
+        self._assistant_name = assistant_name
+        self._particle_count = max(200, min(1600, particle_count))
+        self._active_interval_ms = max(16, int(1000 / max(1, fps)))
+        self._idle_interval_ms = max(80, self._active_interval_ms * 3)
+        self._use_internal_audio = use_internal_audio
+
+        self.setWindowTitle(f"{self._assistant_name} Voice")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(220, 260)
 
-        self._px = [0.0] * _PARTICLE_COUNT
-        self._py = [0.0] * _PARTICLE_COUNT
-        self._pz = [0.0] * _PARTICLE_COUNT
-        self._base_sizes = [0.0] * _PARTICLE_COUNT
-        self._disp_x = [0.0] * _PARTICLE_COUNT
-        self._disp_y = [0.0] * _PARTICLE_COUNT
-        self._disp_z = [0.0] * _PARTICLE_COUNT
+        self._px = [0.0] * self._particle_count
+        self._py = [0.0] * self._particle_count
+        self._pz = [0.0] * self._particle_count
+        self._base_sizes = [0.0] * self._particle_count
+        self._disp_x = [0.0] * self._particle_count
+        self._disp_y = [0.0] * self._particle_count
+        self._disp_z = [0.0] * self._particle_count
 
         self._rotation_y = 0.0
         self._rotation_x = 0.0
@@ -107,6 +124,7 @@ class JarvisVoiceVisualizer(QWidget):
         self._energy = 0.0
         self._target_energy = 0.0
         self._mic_energy = 0.0
+        self._target_mic_energy = 0.0
         self._idle_energy = 0.45
         self._is_speaking = False
         self._isListening = False
@@ -123,13 +141,13 @@ class JarvisVoiceVisualizer(QWidget):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._animate)
-        self._timer.setInterval(16)
+        self._timer.setInterval(self._idle_interval_ms)
         self._timer.start()
 
     def _init_particles(self):
         golden_angle = math.pi * (3.0 - math.sqrt(5.0))
-        for i in range(_PARTICLE_COUNT):
-            t = i / (_PARTICLE_COUNT - 1)
+        for i in range(self._particle_count):
+            t = i / (self._particle_count - 1)
             y = 1.0 - t * 2.0
             r = math.sqrt(max(0.0, 1.0 - y * y))
             theta = golden_angle * i
@@ -153,7 +171,7 @@ class JarvisVoiceVisualizer(QWidget):
         self._is_speaking = True
         self._target_energy = 1.0
         if not self._timer.isActive():
-            self._timer.start()
+            self._timer.start(self._active_interval_ms)
         self.show()
         self.raise_()
 
@@ -168,15 +186,17 @@ class JarvisVoiceVisualizer(QWidget):
         self._isListening = True
         self._listening_label_idx = 0
         self._listening_tick = 0
-        self._mic_monitor.start()
+        if self._use_internal_audio:
+            self._mic_monitor.start()
         if not self._timer.isActive():
-            self._timer.start()
+            self._timer.start(self._active_interval_ms)
         self.show()
 
     def stop_listening(self):
         self._isListening = False
         self._mic_monitor.stop()
         self._mic_monitor.reset()
+        self._target_mic_energy = 0.0
         self._mic_energy = 0.0
         if not self._is_speaking:
             self._isIdle = True
@@ -184,9 +204,16 @@ class JarvisVoiceVisualizer(QWidget):
     def set_energy(self, level: float):
         self._target_energy = max(0.0, min(1.0, level))
 
+    def set_mic_level(self, level: float):
+        self._target_mic_energy = max(0.0, min(1.0, level))
+
     def _animate(self):
         if not self._alive:
             return
+
+        desired_interval = self._idle_interval_ms if self._isIdle else self._active_interval_ms
+        if self._timer.interval() != desired_interval:
+            self._timer.setInterval(desired_interval)
 
         if self._is_speaking:
             self._energy += (self._target_energy - self._energy) * 0.18
@@ -194,8 +221,11 @@ class JarvisVoiceVisualizer(QWidget):
             self._energy *= 0.93
 
         if self._isListening:
-            raw_mic = self._mic_monitor.level
+            raw_mic = (
+                self._mic_monitor.level if self._use_internal_audio else self._target_mic_energy
+            )
             self._mic_energy += (raw_mic - self._mic_energy) * 0.25
+            self._target_mic_energy *= 0.92
             self._listening_tick += 1
             if self._listening_tick % 12 == 0:
                 self._listening_label_idx = (self._listening_label_idx + 1) % len(_LISTENING_LABELS)
@@ -213,7 +243,7 @@ class JarvisVoiceVisualizer(QWidget):
         self._rotation_z += 0.002 + total_energy * 0.010
         self._pulse_phase += 0.08
 
-        for i in range(_PARTICLE_COUNT):
+        for i in range(self._particle_count):
             strength = total_energy * 0.8
 
             if self._mic_energy > 0.05:
@@ -356,13 +386,14 @@ class JarvisVoiceVisualizer(QWidget):
                 p.drawRect(0, self.height() - 60, self.width(), 60)
 
             p.end()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Falha ao desenhar Jarvis: %s", e)
 
     def closeEvent(self, event):
         self._alive = False
         self._timer.stop()
         self._mic_monitor.stop()
+        self.VISUALIZATION_STOPPED.emit()
         super().closeEvent(event)
 
     def mousePressEvent(self, event):

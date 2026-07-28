@@ -8,7 +8,7 @@ from datetime import datetime
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from core.config import get_settings
+from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

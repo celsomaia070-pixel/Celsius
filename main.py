@@ -131,8 +131,8 @@ def main():
             from ai.agents import preload_embedding_model
 
             preload_embedding_model()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Falha ao pre-carregar modelo de embeddings: %s", e)
 
     # Pre-load Whisper model in background
     _whisper_preloader = None
@@ -146,13 +146,13 @@ def main():
                         from workers.mic_worker import preload_whisper_model
 
                         preload_whisper_model()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Falha ao pre-carregar Whisper em background: %s", e)
 
             _whisper_preloader = WhisperPreloader()
             _whisper_preloader.start()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Falha ao iniciar preloader do Whisper: %s", e)
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

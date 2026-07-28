@@ -4,7 +4,7 @@ Estimates token usage and manages context to prevent overflow.
 Uses character-based estimation (1 token ~ 4 chars for English, ~2 chars for CJK).
 """
 
-from core.config import get_settings
+from core.settings import get_settings
 
 # Approximate chars per token (varies by language and tokenizer)
 CHARS_PER_TOKEN = 3.5

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.config import get_settings
+from core.settings import get_settings
 from ui.components.base import SearchInput
 from ui.icons import icon
 from ui.theme.schemes import get_scheme
