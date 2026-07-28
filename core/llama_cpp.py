@@ -180,8 +180,10 @@ class LlamaManager:
                     verbose=verbose,
                 )
             chat_handler = self._chat_handler
-            print(
-                f"[LLAMA] Vision handler created: {type(self._chat_handler).__name__} for {model_id}"
+            logger.info(
+                "Vision handler created: %s for %s",
+                type(self._chat_handler).__name__,
+                model_id,
             )
         else:
             chat_handler = None
@@ -189,7 +191,7 @@ class LlamaManager:
             if model_obj and "qwen" in model_obj.name.lower():
                 chat_format = "qwen2-vl" if "vl" in model_obj.name.lower() else "qwen2"
             if model_obj and model_obj.has_mmproj:
-                print(f"[LLAMA] WARNING: mmproj file not found for {model_id} at {mmproj_path}")
+                logger.warning("mmproj file not found for %s at %s", model_id, mmproj_path)
 
         # Initialize Llama - try GPU first, fall back to CPU on crash
         try:
@@ -208,9 +210,9 @@ class LlamaManager:
                 flash_attn=True,
                 tensor_split=None,
             )
-            print(f"[LLAMA] Modelo carregado com n_gpu_layers={n_gpu_layers}")
+            logger.info("Modelo carregado com n_gpu_layers=%s", n_gpu_layers)
         except Exception as gpu_err:
-            print(f"[LLAMA] GPU falhou ({gpu_err}), tentando CPU...")
+            logger.warning("GPU falhou (%s), tentando CPU", gpu_err)
             self._llm = Llama(
                 model_path=str(model_path),
                 n_gpu_layers=0,
@@ -226,7 +228,7 @@ class LlamaManager:
                 flash_attn=False,
                 tensor_split=None,
             )
-            print("[LLAMA] Modelo carregado em CPU (sem GPU)")
+            logger.info("Modelo carregado em CPU (sem GPU)")
 
         self._current_model_id = model_id
         atexit.register(self.stop)

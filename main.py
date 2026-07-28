@@ -1,5 +1,6 @@
 import contextlib
 import faulthandler
+import logging
 import signal
 import sys
 import threading
@@ -10,11 +11,13 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.container import get_container, reset_container
 from core.llama_cpp import get_llama_manager, stop_llama_server
+from core.logging_config import setup_logging
 from core.settings import get_feature_flags, get_settings
 from core.telemetry import init_telemetry, shutdown_telemetry
 from ui.window import ModernChatWindow
 
 VERSION = "1.0.0"
+logger = logging.getLogger(__name__)
 
 BANNER = r"""
    _____ _                            _
@@ -37,7 +40,7 @@ def _start_health_check(app: QApplication, model_id: str, settings) -> QTimer:
 
     def check_health():
         if not manager.is_healthy():
-            print("[HealthCheck] Model unhealthy, attempting recovery...")
+            logger.warning("Model unhealthy, attempting recovery")
             try:
                 manager.stop()
                 if not manager.start(
@@ -47,9 +50,9 @@ def _start_health_check(app: QApplication, model_id: str, settings) -> QTimer:
                     n_batch=settings.model.n_batch,
                     n_threads=settings.model.n_threads,
                 ):
-                    print("[HealthCheck] Failed to recover model")
+                    logger.error("Failed to recover model")
             except Exception as e:
-                print(f"[HealthCheck] Recovery failed: {e}")
+                logger.exception("Model recovery failed: %s", e)
 
     timer = QTimer(app)
     timer.timeout.connect(check_health)
@@ -70,16 +73,16 @@ def _ensure_model_available(settings) -> None:
     if model_path.exists():
         return
 
-    print(f"[Model] Modelo ausente: {model_path.name}. Tentando download sob demanda...")
+    logger.info("Modelo ausente: %s. Tentando download sob demanda", model_path.name)
     from core.model_downloader import download_mmproj, download_model
 
-    downloaded = download_model(model_id, fn_status=lambda msg: print(f"[Model] {msg}"))
+    downloaded = download_model(model_id, fn_status=lambda msg: logger.info("[Model] %s", msg))
     if downloaded is None:
         raise FileNotFoundError(
             f"Modelo '{model_id}' nao encontrado e download automatico falhou.\n"
             f"Coloque o arquivo GGUF em {settings.resources_dir} ou escolha outro modelo."
         )
-    download_mmproj(model_id, fn_status=lambda msg: print(f"[Model] {msg}"))
+    download_mmproj(model_id, fn_status=lambda msg: logger.info("[Model] %s", msg))
 
 
 def main():
@@ -91,6 +94,10 @@ def main():
     _import_optional("transformers")
 
     settings = get_settings()
+    setup_logging(
+        level=settings.telemetry.log_level.value,
+        log_file=str(settings.logs_dir / "celsius.log"),
+    )
     telemetry_settings = settings.telemetry
     if telemetry_settings.enabled:
         init_telemetry(
@@ -112,11 +119,11 @@ def main():
 
             profile = detect_hardware()
             recommendation = select_optimal_model(profile)
-            print(f"[Hardware] {recommendation.profile.summary}")
-            print(f"[Hardware] Modelo recomendado: {recommendation.main_model_id}")
-            print(f"[Hardware] Modelo ativo: {settings.model.llm_model}")
+            logger.info("Hardware detected: %s", recommendation.profile.summary)
+            logger.info("Modelo recomendado: %s", recommendation.main_model_id)
+            logger.info("Modelo ativo: %s", settings.model.llm_model)
         except Exception as e:
-            print(f"[Hardware] Deteccao falhou: {e}")
+            logger.warning("Deteccao de hardware falhou: %s", e)
 
     # Pre-load embedding model on main thread (avoids GC crash in worker threads on Python 3.14)
     if features.multi_agent:
@@ -205,5 +212,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:
+        logger.exception("Fatal application error")
         traceback.print_exc()
         sys.exit(1)

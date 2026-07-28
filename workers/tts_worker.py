@@ -1,10 +1,10 @@
 import asyncio
 import contextlib
 import gc
+import logging
 import os
 import re
 import tempfile
-import traceback
 
 try:
     import edge_tts
@@ -13,6 +13,8 @@ except ImportError:
 
 import pygame
 from PySide6.QtCore import QThread, Signal
+
+logger = logging.getLogger(__name__)
 
 
 class VozWorker(QThread):
@@ -38,7 +40,7 @@ class VozWorker(QThread):
                 return
 
             try:
-                print(f"[TTS DEBUG] Starting TTS for: {self.texto[:50]}")
+                logger.debug("Starting TTS for: %s", self.texto[:50])
 
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
                     self._arquivo_voz = temp.name
@@ -52,13 +54,12 @@ class VozWorker(QThread):
 
                 loop.run_until_complete(_gerar())
                 loop.close()
-                print(f"[TTS DEBUG] Audio saved to: {self._arquivo_voz}")
+                logger.debug("Audio TTS salvo em: %s", self._arquivo_voz)
 
                 if not self._should_stop:
                     self._reproduzir()
             except Exception as e:
-                print(f"[TTS] ERRO: {e}")
-                traceback.print_exc()
+                logger.exception("Erro ao gerar TTS: %s", e)
                 self._cleanup()
                 if not self._should_stop:
                     self.erro_tts.emit(str(e))
@@ -82,11 +83,11 @@ class VozWorker(QThread):
                 self.msleep(200)
                 elapsed += 200
                 if elapsed > self._max_playback_ms:
-                    print("[TTS] Playback timeout, stopping")
+                    logger.warning("Playback TTS excedeu o limite e sera interrompido")
                     break
             pygame.mixer.music.unload()
         except Exception as e:
-            print(f"[TTS] ERRO ao reproduzir: {e}")
+            logger.exception("Erro ao reproduzir TTS: %s", e)
             if not self._should_stop:
                 self.erro_tts.emit(str(e))
         finally:

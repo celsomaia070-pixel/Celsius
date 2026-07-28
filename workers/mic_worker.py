@@ -1,8 +1,8 @@
 import gc
+import logging
 import os
 import queue
 import time
-import traceback
 
 import numpy as np
 import sounddevice as sd
@@ -12,6 +12,7 @@ from core.config import get_settings
 
 # Singleton for faster-whisper model
 _whisper_model = None
+logger = logging.getLogger(__name__)
 
 # Otimizar threads CPU
 os.environ["CT2_INTER_THREADS"] = "4"
@@ -43,7 +44,7 @@ class MicWorker(QRunnable):
         global _whisper_model
         if _whisper_model is None:
             model_name = self.settings.whisper_model
-            print(f"[MIC] Carregando faster-whisper: {model_name}")
+            logger.info("Carregando faster-whisper: %s", model_name)
             from faster_whisper import WhisperModel
 
             _whisper_model = WhisperModel(
@@ -51,7 +52,7 @@ class MicWorker(QRunnable):
                 device="cpu",
                 compute_type="int8",
             )
-            print("[MIC] Modelo faster-whisper carregado com sucesso")
+            logger.info("Modelo faster-whisper carregado com sucesso")
         return _whisper_model
 
     def callback_audio(self, indata, frames, time_info, status):
@@ -65,7 +66,7 @@ class MicWorker(QRunnable):
         try:
             device = sd.default.device[0]
             info = sd.query_devices(device)
-            print(f"[MIC] Usando dispositivo: {info['name']}")
+            logger.info("Usando dispositivo de microfone: %s", info["name"])
 
             self._lock_stream = sd.InputStream(
                 device=device,
@@ -83,7 +84,9 @@ class MicWorker(QRunnable):
                     self._start_time
                     and (time.time() - self._start_time) > self.MAX_DURATION_SECONDS
                 ):
-                    print(f"[MIC] Tempo máximo atingido ({self.MAX_DURATION_SECONDS}s)")
+                    logger.info(
+                        "Tempo maximo de microfone atingido: %ss", self.MAX_DURATION_SECONDS
+                    )
                     break
 
                 try:
@@ -93,8 +96,7 @@ class MicWorker(QRunnable):
                     continue
 
         except Exception as e:
-            print(f"[MIC] ERRO: {e}")
-            traceback.print_exc()
+            logger.exception("Erro ao acessar microfone: %s", e)
             self.signals.error.emit(f"Erro ao acessar microfone: {e}")
             gc.enable()
             return
@@ -108,13 +110,13 @@ class MicWorker(QRunnable):
                 self._lock_stream = None
 
         if not lista_frames:
-            print("[MIC] Nenhum audio capturado")
+            logger.info("Nenhum audio capturado")
             self.signals.error.emit("Nenhum audio capturado.")
             gc.enable()
             return
 
         gravacao_total = np.concatenate(lista_frames, axis=0)
-        print(f"[MIC] Audio capturado, shape: {gravacao_total.shape}")
+        logger.debug("Audio capturado, shape=%s", gravacao_total.shape)
 
         min_samples = int(self.fs * 1.0)
         if len(gravacao_total) < min_samples:
@@ -157,7 +159,7 @@ class MicWorker(QRunnable):
 
             model = self._get_model()
 
-            print("[MIC] Iniciando transcrição faster-whisper...")
+            logger.info("Iniciando transcricao faster-whisper")
             t0 = time.time()
             segments, info = model.transcribe(
                 audio_float32,
@@ -173,7 +175,8 @@ class MicWorker(QRunnable):
             )
             texto = " ".join(seg.text.strip() for seg in segments)
             elapsed = time.time() - t0
-            print(f"[MIC] Transcrição ({elapsed:.2f}s): '{texto}'")
+            logger.info("Transcricao concluida em %.2fs", elapsed)
+            logger.debug("Texto transcrito: %s", texto)
 
             if texto and len(texto) > 1:
                 self.signals.recognized.emit(texto)
@@ -181,8 +184,7 @@ class MicWorker(QRunnable):
                 self.signals.error.emit("Não entendi o áudio. Tente falar mais alto e claro.")
 
         except Exception as e:
-            print(f"[MIC] ERRO reconhecimento: {e}")
-            traceback.print_exc()
+            logger.exception("Erro ao reconhecer audio: %s", e)
             self.signals.error.emit(f"Erro ao reconhecer áudio: {e}")
         finally:
             gc.enable()
@@ -204,7 +206,7 @@ def preload_whisper_model():
     if _whisper_model is None:
         settings = get_settings()
         model_name = settings.whisper_model
-        print(f"[MIC] Pre-carregando faster-whisper: {model_name}")
+        logger.info("Pre-carregando faster-whisper: %s", model_name)
         from faster_whisper import WhisperModel
 
         _whisper_model = WhisperModel(
@@ -212,4 +214,4 @@ def preload_whisper_model():
             device="cpu",
             compute_type="int8",
         )
-        print("[MIC] Modelo faster-whisper pre-carregado com sucesso")
+        logger.info("Modelo faster-whisper pre-carregado com sucesso")

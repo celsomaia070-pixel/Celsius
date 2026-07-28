@@ -1,11 +1,17 @@
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import structlog
 
 
-def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
+def setup_logging(
+    level: str = "INFO",
+    log_file: str | None = None,
+    max_bytes: int = 2_000_000,
+    backup_count: int = 3,
+) -> None:
     """Configure structured logging with structlog."""
 
     # Configure standard library logging
@@ -14,12 +20,20 @@ def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+        handlers.append(
+            RotatingFileHandler(
+                log_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+        )
 
     logging.basicConfig(
         format="%(message)s",
         level=getattr(logging, level.upper()),
         handlers=handlers,
+        force=True,
     )
 
     # Configure structlog
