@@ -3,8 +3,8 @@ Base Components - Componentes base para o sistema de UI do Celsius.
 Componentes atômicos reutilizáveis com suporte a temas.
 """
 
-from PySide6.QtCore import Qt, QTimer, Signal, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -12,14 +12,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from ui.theme.schemes import ColorScheme, get_scheme
-from ui.theme.tokens import tokens, SPACING, RADIUS, TYPOGRAPHY
 from ui.theme.icons import icon as create_icon
+from ui.theme.schemes import ColorScheme, get_scheme
+from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY, tokens
 
 
 class ThemedWidget(QWidget):
@@ -180,9 +179,17 @@ class TextButton(QPushButton):
 
     def _apply_theme(self):
         variants = {
-            "primary": (self._scheme.text_on_accent, self._scheme.accent_primary, self._scheme.accent_hover),
+            "primary": (
+                self._scheme.text_on_accent,
+                self._scheme.accent_primary,
+                self._scheme.accent_hover,
+            ),
             "danger": (self._scheme.error_text, self._scheme.error, self._scheme.error),
-            "default": (self._scheme.text_primary, self._scheme.bg_secondary, self._scheme.bg_hover),
+            "default": (
+                self._scheme.text_primary,
+                self._scheme.bg_secondary,
+                self._scheme.bg_hover,
+            ),
         }
         fg, bg, hover = variants.get(self._variant, variants["default"])
         self.setStyleSheet(f"""
@@ -299,9 +306,7 @@ class EmptyState(ThemedWidget):
         layout.addWidget(self._message_label)
 
     def _apply_theme(self):
-        self._icon_label.setPixmap(
-            create_icon("inbox", self._scheme.text_muted, 48).pixmap(48, 48)
-        )
+        self._icon_label.setPixmap(create_icon("inbox", self._scheme.text_muted, 48).pixmap(48, 48))
         self._title_label.setStyleSheet(f"""
             font-size: {TYPOGRAPHY.text_lg}px;
             font-weight: {TYPOGRAPHY.weight_semibold};
@@ -344,6 +349,8 @@ class SearchInput(QLineEdit):
                 border-color: {s.accent_primary};
             }}
         """)
+        for action in self.actions():
+            self.removeAction(action)
         self.addAction(
             create_icon(self._icon_name, self._scheme.text_muted),
             QLineEdit.LeadingPosition,
@@ -370,7 +377,9 @@ class Avatar(QLabel):
     def _apply_theme(self):
         s = self._scheme
         if self._icon_name:
-            pixmap = create_icon(self._icon_name, s.text_on_accent, self._size - 8).pixmap(self._size - 8, self._size - 8)
+            pixmap = create_icon(self._icon_name, s.text_on_accent, self._size - 8).pixmap(
+                self._size - 8, self._size - 8
+            )
             self.setPixmap(pixmap)
         else:
             initials = self._text[:2].upper() if self._text else "?"
@@ -445,7 +454,9 @@ class Toast(ThemedWidget):
 
     def _setup_ui(self, text: str):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(SPACING.space_4, SPACING.space_3, SPACING.space_4, SPACING.space_3)
+        layout.setContentsMargins(
+            SPACING.space_4, SPACING.space_3, SPACING.space_4, SPACING.space_3
+        )
         layout.setSpacing(SPACING.space_3)
 
         self._icon_label = QLabel()
@@ -489,7 +500,9 @@ class Toast(ThemedWidget):
                 border-radius: {RADIUS.radius_md}px;
             }}
         """)
-        self._text_label.setStyleSheet(f"color: {text_color}; font-size: {TYPOGRAPHY.text_sm}px; background: transparent; border: none;")
+        self._text_label.setStyleSheet(
+            f"color: {text_color}; font-size: {TYPOGRAPHY.text_sm}px; background: transparent; border: none;"
+        )
         self._icon_label.setPixmap(create_icon(icon_name, text_color, 20).pixmap(20, 20))
         self._close_btn.setIcon(create_icon("x", text_color, 16))
 

@@ -2,18 +2,20 @@
 JarvisVoiceVisualizer - Globo de particulas animado reagindo a voz.
 Janela flutuante movel que inicia na area do top bar.
 """
+
 import math
 import random
-import time
 import threading
+import time
 
-from PySide6.QtCore import Qt, QTimer, Signal, QPointF
-from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontMetrics
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 try:
     import numpy as np
     import sounddevice as sd
+
     _HAS_AUDIO = True
 except ImportError:
     _HAS_AUDIO = False
@@ -51,6 +53,7 @@ class AudioLevelMonitor:
 
     def _capture(self):
         try:
+
             def callback(indata, frames, time_info, status):
                 if not self._running:
                     return
@@ -86,11 +89,7 @@ class JarvisVoiceVisualizer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Celsius Voice")
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.Tool
-        )
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(220, 260)
 
@@ -218,15 +217,11 @@ class JarvisVoiceVisualizer(QWidget):
             strength = total_energy * 0.8
 
             if self._mic_energy > 0.05:
-                noise = math.sin(
-                    self._pulse_phase * 3.0 + self._px[i] * 8.0 + self._py[i] * 6.0
-                )
+                noise = math.sin(self._pulse_phase * 3.0 + self._px[i] * 8.0 + self._py[i] * 6.0)
                 strength += self._mic_energy * 0.8 * max(0.0, noise)
 
             if self._energy > 0.1:
-                wave = math.sin(
-                    self._pulse_phase * 2.0 + self._pz[i] * 7.0
-                )
+                wave = math.sin(self._pulse_phase * 2.0 + self._pz[i] * 7.0)
                 strength += self._energy * 0.6 * max(0.0, wave)
 
             self._disp_x[i] += (random.random() - 0.5) * strength * 0.06

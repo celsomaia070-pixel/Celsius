@@ -1,4 +1,5 @@
 """Modulo de icones SVG para o Celsius."""
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 
@@ -169,13 +170,14 @@ def icon(name: str, color: str = "#FFFFFF") -> QIcon:
         raise ValueError(f"Icone desconhecido: {name}")
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
-        f'{svg_template.format(c=color)}</svg>'
+        f"{svg_template.format(c=color)}</svg>"
     )
     pixmap = QPixmap(QSize(24, 24))
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
     from PySide6.QtSvg import QSvgRenderer
+
     renderer = QSvgRenderer(bytearray(svg.encode()))
     renderer.render(painter)
     painter.end()

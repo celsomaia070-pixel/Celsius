@@ -1,8 +1,9 @@
 """
 ModernInputArea - Área de entrada moderna com anexos, microfone, modelo.
 """
+
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from ui.icons import icon
 from ui.theme import LIGHT_SCHEME
-from ui.theme.tokens import SPACING, RADIUS, TYPOGRAPHY
+from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY
 
 
 class ModernInputArea(QWidget):
@@ -46,7 +47,9 @@ class ModernInputArea(QWidget):
         self.container = QWidget()
         self.container.setObjectName("inputContainer")
         container_layout = QVBoxLayout(self.container)
-        container_layout.setContentsMargins(SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2)
+        container_layout.setContentsMargins(
+            SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2
+        )
         container_layout.setSpacing(SPACING.space_2)
 
         # Attachments row (hidden when empty)
@@ -206,6 +209,7 @@ class ModernInputArea(QWidget):
 
     def add_attachment(self, file_path: str, file_name: str = None):
         from pathlib import Path
+
         name = file_name or Path(file_path).name
         chip = QLabel(f"arquivo: {name}")
         chip.setStyleSheet(f"""

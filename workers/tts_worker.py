@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import gc
 import os
 import re
@@ -39,9 +40,8 @@ class VozWorker(QThread):
             try:
                 print(f"[TTS DEBUG] Starting TTS for: {self.texto[:50]}")
 
-                temp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                self._arquivo_voz = temp.name
-                temp.close()
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
+                    self._arquivo_voz = temp.name
 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -95,10 +95,8 @@ class VozWorker(QThread):
 
     def _cleanup(self):
         if self._arquivo_voz and os.path.exists(self._arquivo_voz):
-            try:
+            with contextlib.suppress(Exception):
                 os.remove(self._arquivo_voz)
-            except Exception:
-                pass
         self._arquivo_voz = None
 
     def stop(self):

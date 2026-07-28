@@ -1,7 +1,8 @@
 """Tests for configuration module."""
+
 from pathlib import Path
 
-from core.config import GGUFModel, GGUF_MODELS, Settings, _get_base_dir, get_model_by_id
+from core.config import GGUF_MODELS, GGUFModel, Settings, _get_base_dir, get_model_by_id
 
 
 class TestConfig:

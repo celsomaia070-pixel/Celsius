@@ -45,6 +45,7 @@ class MicWorker(QRunnable):
             model_name = self.settings.whisper_model
             print(f"[MIC] Carregando faster-whisper: {model_name}")
             from faster_whisper import WhisperModel
+
             _whisper_model = WhisperModel(
                 model_name,
                 device="cpu",
@@ -68,15 +69,20 @@ class MicWorker(QRunnable):
 
             self._lock_stream = sd.InputStream(
                 device=device,
-                samplerate=self.fs, channels=1, dtype="int16",
-                callback=self.callback_audio
+                samplerate=self.fs,
+                channels=1,
+                dtype="int16",
+                callback=self.callback_audio,
             )
             self._lock_stream.start()
             self._start_time = time.time()
             self.signals.started.emit()
 
             while self.rodando:
-                if self._start_time and (time.time() - self._start_time) > self.MAX_DURATION_SECONDS:
+                if (
+                    self._start_time
+                    and (time.time() - self._start_time) > self.MAX_DURATION_SECONDS
+                ):
                     print(f"[MIC] Tempo máximo atingido ({self.MAX_DURATION_SECONDS}s)")
                     break
 
@@ -123,9 +129,9 @@ class MicWorker(QRunnable):
             # Gate de ruído: zera apenas frames MUITO silenciosos
             frame_size = int(self.fs * 0.02)
             for i in range(0, len(audio_float32), frame_size):
-                frame = audio_float32[i:i + frame_size]
+                frame = audio_float32[i : i + frame_size]
                 if len(frame) > 0 and np.max(np.abs(frame)) < 0.001:
-                    audio_float32[i:i + frame_size] = 0.0
+                    audio_float32[i : i + frame_size] = 0.0
 
             # Remover silêncio do início e fim
             threshold = 0.005
@@ -158,10 +164,10 @@ class MicWorker(QRunnable):
                 language="pt",
                 beam_size=3,
                 vad_filter=True,
-                vad_parameters=dict(
-                    min_silence_duration_ms=300,
-                    speech_pad_ms=200,
-                ),
+                vad_parameters={
+                    "min_silence_duration_ms": 300,
+                    "speech_pad_ms": 200,
+                },
                 initial_prompt="Português do Brasil. Celsius, assistente pessoal.",
                 word_timestamps=False,
             )
@@ -200,6 +206,7 @@ def preload_whisper_model():
         model_name = settings.whisper_model
         print(f"[MIC] Pre-carregando faster-whisper: {model_name}")
         from faster_whisper import WhisperModel
+
         _whisper_model = WhisperModel(
             model_name,
             device="cpu",

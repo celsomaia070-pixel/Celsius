@@ -1,8 +1,5 @@
 import os
 import tempfile
-from pathlib import Path
-
-import pytest
 
 from processors.report import GeradorRelatorio
 

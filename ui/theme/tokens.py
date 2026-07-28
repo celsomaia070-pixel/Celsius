@@ -225,6 +225,7 @@ def rem(value: int, base: int = 16) -> str:
 @dataclass(frozen=True)
 class Tokens:
     """Container unificado para todos os design tokens."""
+
     colors: Final = COLORS
     spacing: Final = SPACING
     borderRadius: Final = RADIUS

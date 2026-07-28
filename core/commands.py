@@ -11,9 +11,7 @@ def pesquisar_web(texto):
     try:
         ddgs = DDGS()
         for item in ddgs.text(texto, max_results=5):
-            resultados.append(
-                f"- {item.get('title', '')}\n{item.get('body', '')}"
-            )
+            resultados.append(f"- {item.get('title', '')}\n{item.get('body', '')}")
     except Exception as e:
         return f"Erro na pesquisa: {e}"
     return "\n".join(resultados)
@@ -93,9 +91,7 @@ def executar_comando(texto):
         if match_gg:
             termo = match_gg.group(1).strip().rstrip("?")
             if termo:
-                webbrowser.open(
-                    f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}"
-                )
+                webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}")
                 return f"Pesquisando **{termo}** no Google."
 
         # "abra google e pesquise X"
@@ -106,9 +102,7 @@ def executar_comando(texto):
         if match_gg2:
             termo = match_gg2.group(1).strip().rstrip("?")
             if termo:
-                webbrowser.open(
-                    f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}"
-                )
+                webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}")
                 return f"Pesquisando **{termo}** no Google."
 
         # "pesquise no google X" / "pesquise X no google"
@@ -120,9 +114,7 @@ def executar_comando(texto):
         if match_gg3:
             termo = (match_gg3.group(1) or match_gg3.group(2) or "").strip().rstrip("?")
             if termo:
-                webbrowser.open(
-                    f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}"
-                )
+                webbrowser.open(f"https://www.google.com/search?q={urllib.parse.quote_plus(termo)}")
                 return f"Pesquisando **{termo}** no Google."
 
         # "abra google" / "abrir google" / "google" (somente)
@@ -150,7 +142,9 @@ def executar_comando(texto):
         r"dia atual",
     ]
     if any(re.search(p, texto_lower) for p in padroes_data):
-        return f"Data atual: {datetime.now().strftime('%d/%m/%Y')} ({datetime.now().strftime('%A')})"
+        return (
+            f"Data atual: {datetime.now().strftime('%d/%m/%Y')} ({datetime.now().strftime('%A')})"
+        )
 
     # ── Pesquisa web (DuckDuckGo) ────────────────────────────
     # Com "na web"/"na internet" (original)

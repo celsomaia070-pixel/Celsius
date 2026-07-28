@@ -1,9 +1,9 @@
 """Theme - Sistema de temas e tokens do Celsius."""
 
-from ui.theme.schemes import ColorScheme, ThemeMode, get_scheme, SCHEMES, LIGHT_SCHEME, DARK_SCHEME
-from ui.theme.tokens import tokens, Tokens
+from ui.theme.icons import create_icon, icon, list_icons
+from ui.theme.schemes import DARK_SCHEME, LIGHT_SCHEME, SCHEMES, ColorScheme, ThemeMode, get_scheme
 from ui.theme.stylesheet import get_stylesheet
-from ui.theme.icons import icon, create_icon, list_icons
+from ui.theme.tokens import Tokens, tokens
 
 
 def scheme_from_name(name: str) -> ColorScheme:

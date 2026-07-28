@@ -10,6 +10,7 @@ Usage:
     def call_external_service():
         ...
 """
+
 import functools
 import logging
 import threading
@@ -29,6 +30,7 @@ class CircuitState(Enum):
 @dataclass
 class CircuitBreaker:
     """Thread-safe circuit breaker for protecting external calls."""
+
     name: str
     failure_threshold: int = 5
     recovery_timeout: int = 60
@@ -44,8 +46,11 @@ class CircuitBreaker:
     @property
     def state(self) -> CircuitState:
         with self._lock:
-            if self._state == CircuitState.OPEN and time.time() - self._last_failure_time >= self.recovery_timeout:
-                    self._transition_to(CircuitState.HALF_OPEN)
+            if (
+                self._state == CircuitState.OPEN
+                and time.time() - self._last_failure_time >= self.recovery_timeout
+            ):
+                self._transition_to(CircuitState.HALF_OPEN)
             return self._state
 
     def _transition_to(self, new_state: CircuitState) -> None:
@@ -54,7 +59,10 @@ class CircuitBreaker:
         self._last_state_change = time.time()
         logger.info(
             "[CircuitBreaker:%s] %s -> %s (failures=%d)",
-            self.name, old.value, new_state.value, self._failure_count,
+            self.name,
+            old.value,
+            new_state.value,
+            self._failure_count,
         )
 
     def record_success(self) -> None:
@@ -69,7 +77,10 @@ class CircuitBreaker:
             self._failure_count += 1
             self._last_failure_time = time.time()
 
-            if self._state == CircuitState.HALF_OPEN or self._failure_count >= self.failure_threshold:
+            if (
+                self._state == CircuitState.HALF_OPEN
+                or self._failure_count >= self.failure_threshold
+            ):
                 self._transition_to(CircuitState.OPEN)
 
     def allow_request(self) -> bool:
@@ -127,6 +138,7 @@ def circuit_breaker(
     recovery_timeout: int = 60,
 ):
     """Decorator that wraps a function with circuit breaker protection."""
+
     def decorator(func):
         cb_name = name or f"{func.__module__}.{func.__qualname__}"
         cb = get_circuit_breaker(cb_name, failure_threshold, recovery_timeout)
@@ -148,11 +160,13 @@ def circuit_breaker(
 
         wrapper.circuit_breaker = cb
         return wrapper
+
     return decorator
 
 
 class CircuitBreakerOpenError(Exception):
     """Raised when a circuit breaker is in OPEN state."""
+
     pass
 
 

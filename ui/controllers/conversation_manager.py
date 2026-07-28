@@ -1,12 +1,13 @@
 """
 ConversationManager - Gerencia conversas, histórico e persistência.
 """
-import json
+
 import os
-from datetime import datetime
-from uuid import uuid4
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
+
+from core.conversations import get_conversation_manager
 
 
 class ConversationManager(QObject):
@@ -23,6 +24,9 @@ class ConversationManager(QObject):
         self.memory_service = memory_service
         self._conversations = {}
         self._current_conv_id = None
+        self._core_manager = get_conversation_manager(
+            Path(self.settings.base_dir) / "conversations"
+        )
         self._load_conversations()
 
     def _get_conversations_dir(self):
@@ -31,37 +35,26 @@ class ConversationManager(QObject):
         return dir_path
 
     def _load_conversations(self):
-        dir_path = self._get_conversations_dir()
-        for fname in sorted(os.listdir(dir_path)):
-            if fname.endswith(".json"):
-                try:
-                    with open(os.path.join(dir_path, fname), "r", encoding="utf-8") as f:
-                        conv = json.load(f)
-                    self._conversations[conv["id"]] = conv
-                except Exception:
-                    pass
+        self._conversations.clear()
+        for summary in self._core_manager.list():
+            conv_id = summary.get("id")
+            if not conv_id:
+                continue
+            conv = self._core_manager.load(conv_id)
+            if conv:
+                self._conversations[conv["id"]] = conv
 
     def _save_conversation(self, conv_id):
         conv = self._conversations.get(conv_id)
         if not conv:
             return
-        dir_path = self._get_conversations_dir()
-        path = os.path.join(dir_path, f"{conv_id}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(conv, f, ensure_ascii=False, indent=2)
+        saved = self._core_manager.save(conv)
+        self._conversations[conv_id] = saved
 
     def create_conversation(self, title: str = "Nova conversa") -> str:
-        conv_id = str(uuid4())[:8]
-        now = datetime.now().isoformat()
-        conv = {
-            "id": conv_id,
-            "title": title,
-            "created_at": now,
-            "updated_at": now,
-            "messages": [],
-        }
+        conv = self._core_manager.create(title=title)
+        conv_id = conv["id"]
         self._conversations[conv_id] = conv
-        self._save_conversation(conv_id)
         self.conversation_list_changed.emit()
         return conv_id
 
@@ -80,30 +73,30 @@ class ConversationManager(QObject):
         conv = self._conversations.get(conv_id)
         if not conv:
             return []
-        return conv.get("messages", [])
+        messages = []
+        for msg in conv.get("messages", []):
+            item = dict(msg)
+            metadata = item.get("metadata") or {}
+            item["attachments"] = item.get("attachments") or metadata.get("attachments", [])
+            messages.append(item)
+        return messages
 
     def get_all_conversations(self):
-        return sorted(
-            self._conversations.values(),
-            key=lambda c: c["updated_at"],
-            reverse=True
-        )
+        return sorted(self._conversations.values(), key=lambda c: c["updated_at"], reverse=True)
 
     def add_message(self, conv_id: str, role: str, content: str, attachments: list = None):
         conv = self._conversations.get(conv_id)
         if not conv:
             return
-        conv["messages"].append({
-            "role": role,
-            "content": content,
-            "attachments": attachments or [],
-            "timestamp": datetime.now().isoformat(),
-        })
-        conv["updated_at"] = datetime.now().isoformat()
-        if len(conv["messages"]) == 1:
-            # First message, use as title
-            conv["title"] = content[:50] + ("..." if len(content) > 50 else "")
-        self._save_conversation(conv_id)
+        self._core_manager.add_message(
+            conv_id,
+            role,
+            content,
+            metadata={"attachments": attachments or []},
+        )
+        refreshed = self._core_manager.load(conv_id)
+        if refreshed:
+            self._conversations[conv_id] = refreshed
         self.conversation_list_changed.emit()
 
     def get_history_for_ai(self, conv_id: str, max_turns: int = 20) -> list:
@@ -122,7 +115,6 @@ class ConversationManager(QObject):
         if not conv:
             return
         conv["title"] = new_title
-        conv["updated_at"] = datetime.now().isoformat()
         self._save_conversation(conv_id)
         self.conversation_renamed.emit(conv_id, new_title)
         self.conversation_list_changed.emit()
@@ -131,10 +123,7 @@ class ConversationManager(QObject):
         if conv_id not in self._conversations:
             return
         del self._conversations[conv_id]
-        dir_path = self._get_conversations_dir()
-        path = os.path.join(dir_path, f"{conv_id}.json")
-        if os.path.exists(path):
-            os.remove(path)
+        self._core_manager.delete(conv_id)
         if self._current_conv_id == conv_id:
             self._current_conv_id = None
             self.conversation_changed.emit("")
@@ -146,7 +135,6 @@ class ConversationManager(QObject):
             conv = self._conversations.get(self._current_conv_id)
             if conv:
                 conv["messages"] = []
-                conv["updated_at"] = datetime.now().isoformat()
                 self._save_conversation(self._current_conv_id)
                 self.conversation_list_changed.emit()
 

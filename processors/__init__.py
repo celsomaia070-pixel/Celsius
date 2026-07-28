@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.config import DIRETORIO_BASE
+from core.settings import get_settings
 from processors.audio import ProcessadorAudio as ProcessadorAudio
 from processors.base import ProcessadorArquivo as ProcessadorArquivo
 from processors.docx import ProcessadorDOCX as ProcessadorDOCX
@@ -44,11 +44,12 @@ PROCESSADORES = {
     ".log": ProcessadorTexto,
 }
 
-BASE_DIR = Path(DIRETORIO_BASE).resolve()
+BASE_DIR = Path(get_settings().base_dir).resolve()
 
 
 def processar_arquivo(caminho: str, base_dir: Path | None = None) -> str:
     import os
+
     extensao = os.path.splitext(caminho)[1].lower()
     classe = PROCESSADORES.get(extensao)
     if not classe:

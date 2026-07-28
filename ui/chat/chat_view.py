@@ -1,7 +1,8 @@
 """
 ModernChatView - Área de chat com bolhas de mensagem e streaming.
 """
-from PySide6.QtCore import Qt, QTimer, Signal
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QScrollArea,
     QVBoxLayout,
@@ -107,9 +108,12 @@ class ModernChatView(QWidget):
                 self._streaming_content = ""
 
     def _scroll_to_bottom(self):
-        QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(
-            self.scroll_area.verticalScrollBar().maximum()
-        ))
+        QTimer.singleShot(
+            0,
+            lambda: self.scroll_area.verticalScrollBar().setValue(
+                self.scroll_area.verticalScrollBar().maximum()
+            ),
+        )
 
     def clear(self):
         for i in reversed(range(self.content_layout.count() - 1)):
@@ -128,11 +132,13 @@ class ModernChatView(QWidget):
         self._scroll_to_bottom()
 
     def update_thinking(self, text: str):
-        if hasattr(self, '_thinking_widget') and isinstance(self._thinking_widget, ThinkingIndicator):
+        if hasattr(self, "_thinking_widget") and isinstance(
+            self._thinking_widget, ThinkingIndicator
+        ):
             self._thinking_widget.set_text(text)
 
     def hide_thinking(self):
-        if hasattr(self, '_thinking_widget') and self._thinking_widget:
+        if hasattr(self, "_thinking_widget") and self._thinking_widget:
             for i in range(self.content_layout.count() - 1, -1, -1):
                 item = self.content_layout.itemAt(i)
                 if item and item.widget() == self._thinking_widget:
@@ -148,13 +154,13 @@ class ModernChatView(QWidget):
                         if before and before.spacerItem():
                             self.content_layout.takeAt(i - 1)
                     break
-            if hasattr(self, '_saved_stretch') and self._saved_stretch:
+            if hasattr(self, "_saved_stretch") and self._saved_stretch:
                 self.content_layout.addItem(self._saved_stretch)
                 self._saved_stretch = None
 
     def set_scheme(self, scheme):
         self._scheme = scheme
-        if hasattr(self, '_thinking_widget') and hasattr(self._thinking_widget, 'set_scheme'):
+        if hasattr(self, "_thinking_widget") and hasattr(self._thinking_widget, "set_scheme"):
             self._thinking_widget.set_scheme(scheme)
         for i in range(self.content_layout.count()):
             item = self.content_layout.itemAt(i)

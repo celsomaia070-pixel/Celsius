@@ -2,7 +2,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import time
 import urllib.parse
 from datetime import datetime
@@ -56,12 +55,14 @@ def _validate_path(path: str) -> Path:
 
 def _tool_processar_arquivo(caminho: str) -> str:
     from processors import processar_arquivo
+
     path = _validate_path(caminho)
     return processar_arquivo(str(path), base_dir=path.parent)
 
 
 def _tool_pesquisar_web(query: str) -> str:
     from core.commands import pesquisar_web
+
     return pesquisar_web(query)
 
 
@@ -73,12 +74,14 @@ def _tool_pesquisar_google(query: str) -> str:
     resultado = navegar_web(url)
 
     # Extrai resultados da árvore de acessibilidade
-    linhas = resultado.split('\n')
+    linhas = resultado.split("\n")
     resultados = []
     for linha in linhas:
-        if any(kw in linha.lower() for kw in ['link:', 'heading:', 'text:']):
-            if len(linha.strip()) > 20:
-                resultados.append(linha.strip())
+        if (
+            any(kw in linha.lower() for kw in ["link:", "heading:", "text:"])
+            and len(linha.strip()) > 20
+        ):
+            resultados.append(linha.strip())
 
     if resultados:
         return "Resultados do Google:\n" + "\n".join(resultados[:10])
@@ -112,35 +115,37 @@ def _tool_pesquisar_noticias(query: str) -> str:
             feed = feedparser.parse(url_feed)
             # Busca mais entradas por feed
             for entry in feed.entries[:20]:
-                titulo = entry.get('title', '')
-                resumo = entry.get('summary', entry.get('description', ''))
-                link = entry.get('link', '')
+                titulo = entry.get("title", "")
+                resumo = entry.get("summary", entry.get("description", ""))
+                link = entry.get("link", "")
 
                 # Filtro mais flexível
                 if not palavras_query or any(
                     palavra in titulo.lower() or palavra in resumo.lower()
                     for palavra in palavras_query
                 ):
-                    todas_noticias.append({
-                        'fonte': fonte,
-                        'titulo': titulo,
-                        'resumo': resumo[:300],
-                        'link': link
-                    })
+                    todas_noticias.append(
+                        {"fonte": fonte, "titulo": titulo, "resumo": resumo[:300], "link": link}
+                    )
         except Exception:
             continue
 
     if not todas_noticias:
-        return f"Nenhuma notícia encontrada para '{query}'. Últimas notícias gerais:\n\n" + _get_ultimas_noticias_gerais()
+        return (
+            f"Nenhuma notícia encontrada para '{query}'. Últimas notícias gerais:\n\n"
+            + _get_ultimas_noticias_gerais()
+        )
 
     # Ordena por relevância
     for n in todas_noticias:
-        n['score'] = sum(1 for p in palavras_query if p in n['titulo'].lower())
-    todas_noticias.sort(key=lambda x: x['score'], reverse=True)
+        n["score"] = sum(1 for p in palavras_query if p in n["titulo"].lower())
+    todas_noticias.sort(key=lambda x: x["score"], reverse=True)
 
     resultado = f"Notícias sobre '{query}' ({len(todas_noticias)} encontradas):\n\n"
     for n in todas_noticias[:15]:
-        resultado += f"[NOTICIA] [{n['fonte']}] {n['titulo']}\n   {n['resumo']}\n   Link: {n['link']}\n\n"
+        resultado += (
+            f"[NOTICIA] [{n['fonte']}] {n['titulo']}\n   {n['resumo']}\n   Link: {n['link']}\n\n"
+        )
 
     return resultado
 
@@ -148,6 +153,7 @@ def _tool_pesquisar_noticias(query: str) -> str:
 def _get_ultimas_noticias_gerais() -> str:
     """Retorna últimas notícias gerais como fallback."""
     import feedparser
+
     feeds = {
         "G1": "https://g1.globo.com/rss/g1/",
         "UOL": "https://rss.uol.com.br/feed/noticias.xml",
@@ -158,8 +164,8 @@ def _get_ultimas_noticias_gerais() -> str:
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries[:3]:
-                titulo = entry.get('title', '')
-                link = entry.get('link', '')
+                titulo = entry.get("title", "")
+                link = entry.get("link", "")
                 noticias.append(f"[NOTICIA] [{fonte}] {titulo}\n   Link: {link}")
         except Exception:
             continue
@@ -168,6 +174,7 @@ def _get_ultimas_noticias_gerais() -> str:
 
 def _tool_salvar_memoria(texto: str) -> str:
     from core.memory import get_memory_service
+
     service = get_memory_service()
     service.add(texto)
     return f"Memoria salva: '{texto}'"
@@ -175,6 +182,7 @@ def _tool_salvar_memoria(texto: str) -> str:
 
 def _tool_buscar_memoria(query: str) -> str:
     from core.memory import get_memory_service
+
     service = get_memory_service()
     resultados = service.search(query)
     if not resultados:
@@ -205,22 +213,28 @@ def _tool_ler_arquivo(caminho: str) -> str:
             conteudo += "\n... [arquivo truncado] ..."
         return conteudo
     from processors import processar_arquivo
+
     return processar_arquivo(str(path), base_dir=path.parent)
 
 
 def _tool_informacoes_sistema() -> str:
     import platform
-    return json.dumps({
-        "sistema": platform.system(),
-        "versao": platform.version(),
-        "python": platform.python_version(),
-        "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        "diretorio": os.getcwd(),
-    }, indent=2)
+
+    return json.dumps(
+        {
+            "sistema": platform.system(),
+            "versao": platform.version(),
+            "python": platform.python_version(),
+            "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "diretorio": os.getcwd(),
+        },
+        indent=2,
+    )
 
 
 def _tool_executar_codigo(codigo: str) -> str:
     from workers.code_worker import executar_codigo
+
     resultado = executar_codigo(codigo, timeout=30)
     if resultado.timed_out:
         return f"Timeout apos 30s.\nSaida: {resultado.stderr}"
@@ -232,6 +246,7 @@ def _tool_executar_codigo(codigo: str) -> str:
 def _tool_indexar_documento(caminho: str) -> str:
     from ai.rag import get_rag_service
     from processors import processar_arquivo
+
     path = _validate_path(caminho)
     texto = processar_arquivo(str(path), base_dir=path.parent)
     nome = path.name
@@ -242,26 +257,26 @@ def _tool_indexar_documento(caminho: str) -> str:
 
 def _tool_navegar_web(url: str) -> str:
     from ai.browser import navegar_web
+
     return navegar_web(url)
 
 
 def _tool_listar_documentos_rag() -> str:
     from ai.rag import get_rag_service
+
     service = get_rag_service()
     return service.list_documents()
 
 
 def _tool_remover_documento(nome_doc: str) -> str:
     from ai.rag import get_rag_service
+
     service = get_rag_service()
     return service.remove_document(nome_doc)
 
 
 def _tool_abrir_no_navegador(url: str) -> str:
-    import os
     import re
-    import subprocess
-    import sys
 
     # If it's not a full URL, try to convert site name to URL
     url_lower = url.lower().strip()
@@ -271,7 +286,9 @@ def _tool_abrir_no_navegador(url: str) -> str:
     if yt_match:
         termo = yt_match.group(1).strip()
         if termo:
-            target_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(termo)}"
+            target_url = (
+                f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(termo)}"
+            )
             return _abrir_url(target_url)
 
     # Google search: "google X" → search X on Google
@@ -309,9 +326,11 @@ def _tool_abrir_no_navegador(url: str) -> str:
             break
 
     # If it looks like a domain, add https://
-    if target_url is None:
-        if re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', url_lower) or url_lower.startswith(('http://', 'https://')):
-            target_url = url if url.startswith(('http://', 'https://')) else f'https://{url}'
+    if target_url is None and (
+        re.match(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", url_lower)
+        or url_lower.startswith(("http://", "https://"))
+    ):
+        target_url = url if url.startswith(("http://", "https://")) else f"https://{url}"
 
     # Otherwise, search for it first
     if target_url is None:
@@ -329,10 +348,10 @@ def _abrir_url(target_url: str) -> str:
     try:
         if sys.platform == "win32":
             browsers = [
-                r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-                r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-                r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-                r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
             ]
 
             opened = False
@@ -343,7 +362,7 @@ def _abrir_url(target_url: str) -> str:
                     break
 
             if not opened:
-                subprocess.Popen(f'start "" "{target_url}"', shell=True)
+                os.startfile(target_url)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", target_url])
         else:
@@ -358,6 +377,7 @@ def _abrir_url(target_url: str) -> str:
 
 def _tool_listar_estoque() -> str:
     from core.inventory import ColunaKanban, get_inventory_service
+
     service = get_inventory_service()
     items = service.get_all_items()
     if not items:
@@ -384,6 +404,7 @@ def _tool_listar_estoque() -> str:
 
 def _tool_buscar_item_estoque(query: str) -> str:
     from core.inventory import get_inventory_service
+
     service = get_inventory_service()
     itens = service.buscar(query)
     if not itens:
@@ -400,6 +421,7 @@ def _tool_buscar_item_estoque(query: str) -> str:
 
 def _tool_entrada_estoque(item_id: str, quantidade: int) -> str:
     from core.inventory import get_inventory_service
+
     service = get_inventory_service()
     mov = service.entrada(item_id, quantidade)
     if not mov:
@@ -415,6 +437,7 @@ def _tool_entrada_estoque(item_id: str, quantidade: int) -> str:
 
 def _tool_saida_estoque(item_id: str, quantidade: int) -> str:
     from core.inventory import get_inventory_service
+
     service = get_inventory_service()
     item = service.get_item(item_id)
     if not item:
@@ -440,6 +463,7 @@ def _tool_adicionar_item_estoque(
     nome: str, categoria: str, quantidade: int, estoque_minimo: int, estoque_maximo: int
 ) -> str:
     from core.inventory import get_inventory_service
+
     service = get_inventory_service()
     item = service.adicionar_item(
         nome=nome,
@@ -461,6 +485,7 @@ def _tool_adicionar_item_estoque(
 
 def _tool_itens_estoque_baixo() -> str:
     from core.inventory import get_inventory_service
+
     service = get_inventory_service()
     itens = service.itens_estoque_baixo()
     if not itens:
@@ -476,10 +501,15 @@ def _tool_itens_estoque_baixo() -> str:
 
 def _tool_historico_movimentacoes(item_id: str = None) -> str:
     from core.inventory import get_inventory_service
+
     service = get_inventory_service()
     movs = service.get_movimentacoes(item_id)
     if not movs:
-        return "Nenhuma movimentacao registrada." if not item_id else f"Nenhuma movimentacao para o item '{item_id}'."
+        return (
+            "Nenhuma movimentacao registrada."
+            if not item_id
+            else f"Nenhuma movimentacao para o item '{item_id}'."
+        )
     resultado = f"Historico de movimentacoes ({len(movs)} registros):\n\n"
     for mov in reversed(movs[-30:]):
         sinal = "+" if mov.tipo == "entrada" else "-"
@@ -507,6 +537,7 @@ def _tool_gerar_grafico(
     from pathlib import Path
 
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -526,7 +557,9 @@ def _tool_gerar_grafico(
     filepath = chart_dir / f"{filename}.png"
 
     # Estilo moderno e limpo
-    plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
+    plt.style.use(
+        "seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default"
+    )
 
     fig, ax = plt.subplots(figsize=(9, 5.5))
     fig.patch.set_facecolor("#FAFAFA")
@@ -534,21 +567,29 @@ def _tool_gerar_grafico(
 
     # Paleta de cores moderna (inspirada em Tailwind/Design Systems)
     default_colors = [
-        "#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#8B5CF6",
-        "#06B6D4", "#F97316", "#EC4899", "#14B8A6", "#84CC16"
+        "#3B82F6",
+        "#EF4444",
+        "#22C55E",
+        "#F59E0B",
+        "#8B5CF6",
+        "#06B6D4",
+        "#F97316",
+        "#EC4899",
+        "#14B8A6",
+        "#84CC16",
     ]
 
     # Configurações comuns de fonte
-    TITLE_FONT = {"fontsize": 16, "fontweight": "600", "color": "#111827", "pad": 16}
-    LABEL_FONT = {"fontsize": 11, "color": "#374151"}
+    title_font = {"fontsize": 16, "fontweight": "600", "color": "#111827", "pad": 16}
+    label_font = {"fontsize": 11, "color": "#374151"}
 
     def _apply_style():
         """Aplica estilo comum aos eixos."""
-        ax.set_title(titulo, **TITLE_FONT)
+        ax.set_title(titulo, **title_font)
         if xlabel:
-            ax.set_xlabel(xlabel, **LABEL_FONT)
+            ax.set_xlabel(xlabel, **label_font)
         if ylabel:
-            ax.set_ylabel(ylabel, **LABEL_FONT)
+            ax.set_ylabel(ylabel, **label_font)
         ax.tick_params(axis="both", labelsize=10, colors="#6B7280")
         # Grid suave
         ax.grid(True, axis="y", color="#E5E7EB", linewidth=0.8, linestyle="-")
@@ -567,8 +608,12 @@ def _tool_gerar_grafico(
             n_series = len(valores_data)
             width = 0.7 / n_series
             for i, serie in enumerate(valores_data):
-                cor = cores_list[i] if i < len(cores_list) else default_colors[i % len(default_colors)]
-                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i+1}"
+                cor = (
+                    cores_list[i]
+                    if i < len(cores_list)
+                    else default_colors[i % len(default_colors)]
+                )
+                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i + 1}"
                 bars = ax.bar(
                     [xi + i * width for xi in x_pos],
                     serie,
@@ -576,7 +621,7 @@ def _tool_gerar_grafico(
                     label=nome,
                     color=cor,
                     edgecolor="none",
-                    zorder=3
+                    zorder=3,
                 )
                 # Arredondar topo das barras
                 for bar in bars:
@@ -584,18 +629,13 @@ def _tool_gerar_grafico(
         else:
             cor = cores_list[0] if cores_list else default_colors[0]
             bars = ax.bar(
-                labels_list,
-                valores_data,
-                color=cor,
-                edgecolor="none",
-                width=0.6,
-                zorder=3
+                labels_list, valores_data, color=cor, edgecolor="none", width=0.6, zorder=3
             )
             for bar in bars:
                 bar.set_capstyle("round")
 
     elif tipo == "pie":
-        colors_pie = cores_list if cores_list else default_colors[:len(labels_list)]
+        colors_pie = cores_list if cores_list else default_colors[: len(labels_list)]
         wedges, texts, autotexts = ax.pie(
             valores_data,
             labels=labels_list,
@@ -604,7 +644,7 @@ def _tool_gerar_grafico(
             startangle=90,
             textprops={"fontsize": 11, "color": "#111827"},
             pctdistance=0.75,
-            wedgeprops={"edgecolor": "#FAFAFA", "linewidth": 2, "antialiased": True}
+            wedgeprops={"edgecolor": "#FAFAFA", "linewidth": 2, "antialiased": True},
         )
         for autotext in autotexts:
             autotext.set_color("white")
@@ -615,10 +655,15 @@ def _tool_gerar_grafico(
     elif tipo == "line":
         if isinstance(valores_data[0], list):
             for i, serie in enumerate(valores_data):
-                cor = cores_list[i] if i < len(cores_list) else default_colors[i % len(default_colors)]
-                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i+1}"
+                cor = (
+                    cores_list[i]
+                    if i < len(cores_list)
+                    else default_colors[i % len(default_colors)]
+                )
+                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i + 1}"
                 ax.plot(
-                    labels_list, serie,
+                    labels_list,
+                    serie,
                     marker="o",
                     markersize=6,
                     markerfacecolor="white",
@@ -626,27 +671,32 @@ def _tool_gerar_grafico(
                     color=cor,
                     label=nome,
                     linewidth=2.5,
-                    zorder=3
+                    zorder=3,
                 )
         else:
             cor = cores_list[0] if cores_list else default_colors[0]
             ax.plot(
-                labels_list, valores_data,
+                labels_list,
+                valores_data,
                 marker="o",
                 markersize=6,
                 markerfacecolor="white",
                 markeredgewidth=2,
                 color=cor,
                 linewidth=2.5,
-                zorder=3
+                zorder=3,
             )
             ax.fill_between(labels_list, valores_data, alpha=0.08, color=cor)
 
     elif tipo == "area":
         if isinstance(valores_data[0], list):
             for i, serie in enumerate(valores_data):
-                cor = cores_list[i] if i < len(cores_list) else default_colors[i % len(default_colors)]
-                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i+1}"
+                cor = (
+                    cores_list[i]
+                    if i < len(cores_list)
+                    else default_colors[i % len(default_colors)]
+                )
+                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i + 1}"
                 ax.fill_between(labels_list, serie, alpha=0.25, color=cor, label=nome)
                 ax.plot(labels_list, serie, color=cor, linewidth=1.5)
         else:
@@ -663,24 +713,20 @@ def _tool_gerar_grafico(
             edgecolor="#FAFAFA",
             linewidth=1.5,
             alpha=0.85,
-            zorder=3
+            zorder=3,
         )
 
     elif tipo == "scatter":
-        x_data = valores_data if not isinstance(valores_data[0], list) else [v[0] for v in valores_data]
+        x_data = (
+            valores_data if not isinstance(valores_data[0], list) else [v[0] for v in valores_data]
+        )
         y_data = labels_list if not isinstance(labels_list[0], (list, str)) else valores_data
         if isinstance(valores_data[0], list) and len(valores_data[0]) == 2:
             x_data = [v[0] for v in valores_data]
             y_data = [v[1] for v in valores_data]
         cor = cores_list[0] if cores_list else default_colors[0]
         ax.scatter(
-            x_data, y_data,
-            c=cor,
-            s=90,
-            alpha=0.7,
-            edgecolors="white",
-            linewidths=1.5,
-            zorder=3
+            x_data, y_data, c=cor, s=90, alpha=0.7, edgecolors="white", linewidths=1.5, zorder=3
         )
 
     else:
@@ -694,7 +740,7 @@ def _tool_gerar_grafico(
         dpi=180,
         bbox_inches="tight",
         facecolor=fig.get_facecolor(),
-        transparent=False
+        transparent=False,
     )
     plt.close(fig)
 
@@ -1044,7 +1090,7 @@ REGISTRO_FERRAMENTAS = [
                 },
                 "labels": {
                     "type": "string",
-                    "description": "Array JSON de categorias/periodos (e.g. '[\"Jan\",\"Fev\",\"Mar\"]')",
+                    "description": 'Array JSON de categorias/periodos (e.g. \'["Jan","Fev","Mar"]\')',
                 },
                 "valores": {
                     "type": "string",
@@ -1064,7 +1110,7 @@ REGISTRO_FERRAMENTAS = [
                 },
                 "cores": {
                     "type": "string",
-                    "description": "Array JSON de cores hex (opcional, e.g. '[\"#3498DB\",\"#E74C3C\"]')",
+                    "description": 'Array JSON de cores hex (opcional, e.g. \'["#3498DB","#E74C3C"]\')',
                 },
             },
             "required": ["tipo", "titulo", "labels", "valores"],
@@ -1099,11 +1145,11 @@ RETRY_BASE_DELAY = 1.0  # seconds
 # Circuit breaker configuration per tool
 # (failure_threshold, recovery_timeout_seconds)
 CIRCUIT_BREAKER_CONFIG = {
-    "pesquisar_web":       (5, 60),
-    "pesquisar_google":    (3, 120),
-    "pesquisar_noticias":  (5, 60),
-    "navegar_web":         (3, 120),
-    "abrir_no_navegador":  (3, 120),
+    "pesquisar_web": (5, 60),
+    "pesquisar_google": (3, 120),
+    "pesquisar_noticias": (5, 60),
+    "navegar_web": (3, 120),
+    "abrir_no_navegador": (3, 120),
 }
 
 # Tools protected by circuit breakers
@@ -1115,13 +1161,13 @@ _TOOL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Cache TTLs (in seconds)
 CACHE_TTL = {
-    "pesquisar_web": 3600,      # 1 hour
-    "navegar_web": 1800,        # 30 min
-    "buscar_memoria": 300,      # 5 min
+    "pesquisar_web": 3600,  # 1 hour
+    "navegar_web": 1800,  # 30 min
+    "buscar_memoria": 300,  # 5 min
     "informacoes_sistema": 60,  # 1 min
     "listar_documentos_rag": 600,  # 10 min
-    "listar_arquivos": 300,     # 5 min
-    "listar_estoque": 30,       # 30 sec (dados podem mudar rapido)
+    "listar_arquivos": 300,  # 5 min
+    "listar_estoque": 30,  # 30 sec (dados podem mudar rapido)
     "buscar_item_estoque": 30,  # 30 sec
 }
 
@@ -1148,7 +1194,7 @@ def _get_cache_key(nome: str, argumentos: dict) -> str:
 
 def _get_cache_path(cache_key: str) -> Path:
     """Get cache file path."""
-    return _TOOL_CACHE_DIR / f"{cache_key}.pkl"
+    return _TOOL_CACHE_DIR / f"{cache_key}.json"
 
 
 def _load_cached_result(cache_key: str, max_age: int) -> Any | None:
@@ -1158,8 +1204,8 @@ def _load_cached_result(cache_key: str, max_age: int) -> Any | None:
         return None
 
     try:
-        with open(cache_path, "rb") as f:
-            cached = pickle.load(f)
+        with open(cache_path, encoding="utf-8") as f:
+            cached = json.load(f)
 
         cached_time = cached.get("timestamp", 0)
         if time.time() - cached_time > max_age:
@@ -1177,8 +1223,8 @@ def _save_cached_result(cache_key: str, result: Any) -> None:
     """Save result to cache."""
     cache_path = _get_cache_path(cache_key)
     try:
-        with open(cache_path, "wb") as f:
-            pickle.dump({"timestamp": time.time(), "result": result}, f)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"timestamp": time.time(), "result": result}, f, ensure_ascii=False)
     except Exception as e:
         logger.warning("Failed to save cache for %s: %s", cache_key, e)
 
@@ -1218,14 +1264,19 @@ def _validate_tool_args(ferramenta: Ferramenta, argumentos: dict) -> tuple[bool,
 
     # Path traversal check for path arguments
     for arg_name, arg_value in argumentos.items():
-        if isinstance(arg_value, str) and ".." in arg_value:
-            if any(kw in arg_name.lower() for kw in ["caminho", "path", "diretorio", "url"]):
-                return False, f"Path traversal detectado em '{arg_name}'"
+        if (
+            isinstance(arg_value, str)
+            and ".." in arg_value
+            and any(kw in arg_name.lower() for kw in ["caminho", "path", "diretorio", "url"])
+        ):
+            return False, f"Path traversal detectado em '{arg_name}'"
 
     return True, ""
 
 
-def _retry_with_backoff(func, *args, max_retries=MAX_RETRIES, base_delay=RETRY_BASE_DELAY, **kwargs):
+def _retry_with_backoff(
+    func, *args, max_retries=MAX_RETRIES, base_delay=RETRY_BASE_DELAY, **kwargs
+):
     """Execute function with exponential backoff retry."""
     last_error = None
 
@@ -1235,17 +1286,18 @@ def _retry_with_backoff(func, *args, max_retries=MAX_RETRIES, base_delay=RETRY_B
         except Exception as e:
             last_error = e
             if attempt < max_retries:
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 logger.warning(
                     "Retry %d/%d for %s after %.1fs: %s",
-                    attempt + 1, max_retries, func.__name__, delay, e
+                    attempt + 1,
+                    max_retries,
+                    func.__name__,
+                    delay,
+                    e,
                 )
                 time.sleep(delay)
             else:
-                logger.error(
-                    "All retries exhausted for %s: %s",
-                    func.__name__, e
-                )
+                logger.error("All retries exhausted for %s: %s", func.__name__, e)
 
     raise last_error
 

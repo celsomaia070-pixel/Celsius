@@ -1,43 +1,71 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyd
 *.so
-.venv/
-venv/
-.env
-
-# Build
-build/
-dist/
 *.egg-info/
 celsius.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+keys/
+licenses.json
+*.pem
+*.key
+
+# Build outputs
+build/
+dist/
+*.spec.bak
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local app data
+data/
+logs/
+cache/
+chroma_db/
+conversations/
+voices/
+resources/
+chats.json
+memorias.json
+inventory.json
+temp_audio.wav
+temp_kfu_voice.mp3
+
+# Models and generated media
+*.gguf
+*.onnx
+*.bin
+*.safetensors
+*.mp3
+*.wav
 
 # IDE
 .idea/
 .vscode/
 *.swp
-
-# Testes
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-
-# Dados locais (não commitar dados de usuário)
-chroma_db/
-cache/
-conversations/
-chats.json
-memorias.json
-inventory.json
-*.log
-voices/
-resources/
+*.swo
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Pessoal
+# Personal scratch files
 CURRICULO_ATUALIZADO.md

@@ -1,151 +1,145 @@
-# Celsius - Agente Multimodal de IA Local
+# Celsius
 
-Assistente de IA multimodal com voz, memória e ações reais. Funciona 100% local com LLM via Vulkan (GPU AMD).
+Assistente local de IA multimodal para Windows, com chat, voz, memoria, RAG,
+analise de documentos/imagens, automacoes web e gerenciamento de estoque.
 
-## Funcionalidades
+O projeto roda modelos GGUF localmente via `llama-cpp-python`, com suporte a GPU
+quando disponivel e fallback para CPU.
 
-- **Chat com LLM local** — llama-cpp-python + Vulkan (GPU) ou CPU fallback
-- **Voz (microfone)** — faster-whisper (CTranslate2, int8) com VAD e pré-load em background
-- **Voz (TTS)** — edge-tts em português (pt-BR)
-- **Análise de documentos** — PDF, DOCX, ODT, ODS, ODP
-- **Análise de imagens** — visão multimodal (Qwen2.5-VL, Gemma 3) via mmproj
-- **Pesquisa web** — DuckDuckGo em tempo real
-- **Navegação web** — Playwright para automação
-- **RAG** — ChromaDB + sentence-transformers (paraphrase-multilingual-MiniLM-L12-v2)
-- **Memória de longo prazo** — busca semântica com embeddings
-- **Gerenciamento de estoque** — cadastro, entradas, saídas, relatórios com Kanban
-- **Relatórios** — geração de PDF e DOCX
-- **Interface PySide6** — temas claro/escuro, sidebar com conversas, paleta de comandos
-- **Ícones SVG nativos** — 23 ícones, zero dependências externas
-- **Sistema multi-agente** — agentes especializados (RAG, Código, Web, Arquivos, Memória)
+## Status do Projeto
+
+- Aplicacao desktop em Python com PySide6.
+- Testes automatizados com `pytest`.
+- Lint e formatacao com `ruff`.
+- Configuracao centralizada em `core/settings.py` e `.env`.
+- Modelos GGUF baixados sob demanda para reduzir o tamanho do instalador padrao.
+
+## Principais Recursos
+
+- Chat com LLM local.
+- Entrada por voz com Whisper.
+- Saida por voz com `edge-tts`.
+- Anexos de PDF, DOCX, ODT, ODS, ODP, imagens e audio.
+- RAG hibrido com ChromaDB, embeddings e BM25.
+- Memoria semantica de longo prazo.
+- Pesquisa e navegacao web.
+- Execucao controlada de codigo em sandbox.
+- Gerenciamento de estoque com interface Kanban.
+- Geracao de relatorios em PDF/DOCX.
+- Licenciamento com trial e chave de ativacao.
 
 ## Requisitos
 
-- Python 3.10+
-- llama-cpp-python com suporte Vulkan (GPU AMD) ou CPU
-- GPU AMD RX 7600 (ou similar) para melhor desempenho
-- FFmpeg (para processamento de áudio)
+- Windows 10/11.
+- Python 3.10 ou superior.
+- FFmpeg para audio.
+- Git, se for clonar o repositorio.
+- Inno Setup, apenas para gerar instalador.
+- GPU compativel com Vulkan recomendada para melhor desempenho.
 
-## Instalação
+## Comeco Rapido
 
-```bash
-# Clonar repositório
+```powershell
 git clone https://github.com/celso/celsius.git
 cd celsius
 
-# Criar ambiente virtual
 python -m venv .venv
-.venv\Scripts\activate  # Windows
+.\.venv\Scripts\Activate.ps1
 
-# Instalar dependências
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m playwright install chromium
 
-# Instalar Playwright (para navegação web)
-playwright install chromium
-
-# Executar (modelos GGUF são baixados automaticamente)
 python main.py
 ```
 
-## Uso
+Se o PowerShell bloquear a ativacao do ambiente virtual:
 
-```bash
-python main.py
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\.venv\Scripts\Activate.ps1
 ```
 
-### Atalhos de Teclado
+## Validacao Local
 
-| Atalho | Ação |
-|---|---|
-| `Ctrl+K` | Paleta de comandos |
-| `Ctrl+N` | Nova conversa |
-| `Ctrl+B` | Mostrar/esconder sidebar |
-| `Ctrl+Shift+L` | Alternar tema claro/escuro |
-| `Ctrl+Shift+Del` | Limpar conversa atual |
-| `Ctrl+,` | Configurações |
-| `Enter` | Enviar mensagem |
-
-### Chat
-
-- **Enviar mensagem**: Digite no campo de texto e pressione **Enter** ou clique no botão de envio.
-- **Anexar arquivo**: Clique no botão de **clips**. Imagens e documentos são processados automaticamente.
-- **Gravar áudio**: Clique no botão de **microfone** (toggle). O áudio é transcrito com faster-whisper e o texto é enviado automaticamente.
-- **Leitura em voz alta**: O botão de **volume** ativa/desativa TTS (edge-tts, pt-BR).
-- **Copiar resposta**: Passe o mouse sobre uma mensagem da IA e clique no ícone de **copiar**.
-- **Renderização**: Mensagens suportam Markdown completo: código, tabelas, listas, negrito, itálico e cabeçalhos.
-
-### Comandos Rápidos (no chat)
-
-- `"que horas são"` — retorna a hora atual
-- `"que dia é hoje"` — retorna a data atual
-- `"pesquisar inteligência artificial"` — pesquisa na web via DuckDuckGo
-- `"abra o YouTube música"` — abre YouTube
-- `"abra o Google receita"` — abre Google
-
-## Estrutura do Projeto
-
+```powershell
+python -m ruff check .
+python -m pytest -q
 ```
+
+Resultado validado localmente:
+
+```text
+438 passed, 3 skipped
+All checks passed!
+```
+
+## Documentacao
+
+- [Indice da documentacao](docs/README.md)
+- [Guia do iniciante](docs/GUIA_INICIANTE.md)
+- [Desenvolvimento](docs/DEVELOPMENT.md)
+- [Arquitetura](docs/ARCHITECTURE.md)
+- [Configuracao](docs/CONFIGURATION.md)
+- [Build e instalador](docs/BUILD.md)
+- [Seguranca](SECURITY.md)
+- [Contribuicao](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+
+## Estrutura Geral
+
+```text
 celsius/
-├── main.py                 # Entry point
-├── ai/
-│   ├── engine.py           # Motor principal (ReAct + tools)
-│   ├── react.py            # Loop ReAct + system prompts
-│   ├── tools.py            # Ferramentas do agente
-│   ├── rag.py              # RAG com ChromaDB
-│   └── browser.py          # Navegação web (Playwright)
-├── core/
-│   ├── config.py           # Configurações e modelos GGUF
-│   ├── llama_cpp.py        # Gerenciamento do modelo LLM
-│   ├── commands.py         # Comandos rápidos (YouTube, Google, etc.)
-│   ├── memory.py           # Memória semântica
-│   └── sandbox.py          # Execução segura de código Python
-├── processors/             # Processadores de arquivo (PDF, DOCX, etc.)
-├── workers/
-│   ├── mic_worker.py       # Gravação + faster-whisper
-│   ├── tts_worker.py       # Text-to-speech (edge-tts)
-│   └── worker_manager.py   # Gerenciamento de threads
-├── ui/
-│   ├── window.py           # Janela principal
-│   ├── icons.py            # Ícones SVG nativos
-│   ├── chat/               # Componentes do chat
-│   ├── dialogs.py          # Diálogos (memória, relatório)
-│   └── controllers/        # Controllers (conversa, workers)
-├── tests/
-├── resources/              # Modelos GGUF
-├── conversations/          # Histórico de conversas (SQLite)
-├── voices/                 # Cache de áudio TTS
-└── pyproject.toml
+|-- main.py                  # Entrada da aplicacao
+|-- ai/                      # Motor de IA, RAG, agentes e ferramentas
+|-- core/                    # Configuracao, modelos, memoria, sandbox e servicos
+|-- processors/              # Leitura de arquivos e extracao de conteudo
+|-- workers/                 # Threads de voz, IA, TTS e execucao assinc.
+|-- ui/                      # Interface PySide6
+|-- tests/                   # Testes automatizados
+|-- scripts/                 # Scripts auxiliares
+|-- tools/                   # Ferramentas operacionais, licencas
+|-- installer/               # Build do instalador Windows
+|-- resources/               # Modelos e recursos locais, ignorado no Git
+|-- docs/                    # Documentacao do projeto
+|-- .github/                 # CI, templates e configuracoes GitHub
+`-- pyproject.toml           # Metadados, pytest, ruff, mypy e bandit
 ```
 
-## Configuração
+## Configuracao
 
-O modelo padrão é `qwen2.5-vl-7b-q4km` com `num_ctx=16384` e `num_predict=2500`.
+Copie `.env.example` para `.env` quando quiser sobrescrever valores padrao:
 
-Modelos disponíveis (baixados automaticamente):
-
-| Modelo | Tamanho | Visão | Categoria |
-|---|---|---|---|
-| Qwen2.5 VL 7B | ~4.5 GB | Sim | Multimodal |
-| Gemma 3 4B | ~3.2 GB | Sim | Multimodal |
-| Qwen2.5 Omni 7B | ~4.5 GB | Não | Multimodal |
-| Qwen2.5 Coder 7B | ~5.4 GB | Não | Código |
-| Llama 3.2 3B | ~2.5 GB | Não | Rápido |
-| Qwen3.5 35B-A3B | ~19 GB | Não | Potente (MoE) |
-
-## Segurança
-
-- **Code Sandbox**: Execução isolada com imports bloqueados, limites de CPU/memória (256MB), e ambiente restrito
-- **Path Traversal**: Validação de caminhos contra diretório base
-- **Thread Safety**: Serviços com locks RLock para acesso concorrente
-
-## Testes
-
-```bash
-pytest
-pytest -v
-pytest -m "not slow"
+```powershell
+Copy-Item .env.example .env
 ```
 
-## Licença
+As variaveis usam o prefixo `CELSIUS_`. Exemplo:
 
-MIT
+```env
+CELSIUS_MODEL_LLM_MODEL=qwen2.5-vl-7b-q4km
+CELSIUS_MODEL_NUM_CTX=16384
+CELSIUS_TELEMETRY_ENABLED=false
+```
+
+Veja mais em [Configuracao](docs/CONFIGURATION.md).
+
+## Build
+
+Build local sem embutir modelos:
+
+```powershell
+pyinstaller celsius.spec --clean
+```
+
+Build com instalador:
+
+```powershell
+installer\build.bat
+```
+
+Veja detalhes em [Build e instalador](docs/BUILD.md).
+
+## Licenca
+
+MIT.

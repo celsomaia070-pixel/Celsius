@@ -36,31 +36,85 @@ class CodeWorker(QThread):
         self.resultado.emit(resultado)
 
 
-BLOCKED_IMPORTS = frozenset({
-    "os", "sys", "subprocess", "shutil", "pathlib", "glob",
-    "socket", "http", "urllib", "requests", "ftplib", "telnetlib",
-    "importlib", "pkgutil", "runpy", "compileall", "py_compile",
-    "ctypes", "multiprocessing", "threading", "asyncio",
-    "pickle", "shelve", "marshal", "dbm", "sqlite3",
-    "webbrowser", "tkinter", "PySide6", "PyQt6",
-    "code", "codeop", "compile",
-})
+BLOCKED_IMPORTS = frozenset(
+    {
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "pathlib",
+        "glob",
+        "socket",
+        "http",
+        "urllib",
+        "requests",
+        "ftplib",
+        "telnetlib",
+        "importlib",
+        "pkgutil",
+        "runpy",
+        "compileall",
+        "py_compile",
+        "ctypes",
+        "multiprocessing",
+        "threading",
+        "asyncio",
+        "pickle",
+        "shelve",
+        "marshal",
+        "dbm",
+        "sqlite3",
+        "webbrowser",
+        "tkinter",
+        "PySide6",
+        "PyQt6",
+        "code",
+        "codeop",
+        "compile",
+    }
+)
 
-BLOCKED_FUNCTION_NAMES = frozenset({
-    "eval", "exec", "compile", "__import__", "open", "input",
-    "breakpoint", "exit", "quit",
-})
+BLOCKED_FUNCTION_NAMES = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "open",
+        "input",
+        "breakpoint",
+        "exit",
+        "quit",
+    }
+)
 
-BLOCKED_ATTRIBUTES = frozenset({
-    "__globals__", "__code__", "__class__", "__bases__",
-    "__subclasses__", "__mro__", "__builtins__",
-})
+BLOCKED_ATTRIBUTES = frozenset(
+    {
+        "__globals__",
+        "__code__",
+        "__class__",
+        "__bases__",
+        "__subclasses__",
+        "__mro__",
+        "__builtins__",
+    }
+)
 
-BLOCKED_METHOD_NAMES = frozenset({
-    "system", "popen", "spawn", "fork", "exec",
-    "system_calls", "load_module", "find_module",
-    "find_loader", "import_module", "get_loader",
-})
+BLOCKED_METHOD_NAMES = frozenset(
+    {
+        "system",
+        "popen",
+        "spawn",
+        "fork",
+        "exec",
+        "system_calls",
+        "load_module",
+        "find_module",
+        "find_loader",
+        "import_module",
+        "get_loader",
+    }
+)
 
 BLOCKED_STRING_PATTERNS = (
     "__import__",
@@ -117,13 +171,24 @@ def _validate_code(code: str) -> str | None:
 
         # 4. Block string-based __import__ calls:
         #    __import__('os'), builtins.__import__('os')
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "__import__":
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "__import__"
+        ):
             return "Blocked function: __import__"
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "__import__":
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "__import__"
+        ):
             return "Blocked function: __import__"
 
         # 5. Block importlib usage
-        if isinstance(node, ast.Attribute) and node.attr in {"import_module", "import_module_of_type"}:
+        if isinstance(node, ast.Attribute) and node.attr in {
+            "import_module",
+            "import_module_of_type",
+        }:
             return f"Blocked method: importlib.{node.attr}"
 
         # 6. Scan string constants for suspicious patterns
@@ -165,6 +230,7 @@ import sys
 def _limit_resources() -> None:
     """Set resource limits in child process (Unix only, called via preexec_fn)."""
     import resource
+
     resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
     resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     resource.setrlimit(resource.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024))
@@ -179,10 +245,14 @@ def _limit_resources() -> None:
 def _sandbox_env() -> dict[str, str]:
     env = os.environ.copy()
     for key in [
-        "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-        "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN",
-        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HF_TOKEN",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
     ]:
         env.pop(key, None)
     env["PYTHONPATH"] = ""
@@ -209,8 +279,11 @@ def executar_codigo(codigo: str, timeout: int = 30, max_output: int = 50000) -> 
             WindowsSandboxConfig,
             executar_codigo_windows,
         )
+
         config = WindowsSandboxConfig(cpu_time_limit_seconds=timeout)
-        result = executar_codigo_windows(codigo, timeout=timeout, max_output=max_output, config=config)
+        result = executar_codigo_windows(
+            codigo, timeout=timeout, max_output=max_output, config=config
+        )
         return CodeResult(
             stdout=result.stdout,
             stderr=result.stderr,
@@ -219,9 +292,7 @@ def executar_codigo(codigo: str, timeout: int = 30, max_output: int = 50000) -> 
         )
 
     # Unix path: use preexec_fn + resource limits
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
         wrapper = _build_wrapper_code(codigo, timeout)
         f.write(wrapper)
         temp_path = f.name

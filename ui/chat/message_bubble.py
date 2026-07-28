@@ -1,14 +1,14 @@
 """
 MessageBubble - Widget para exibir mensagens do chat.
 """
+
 import re
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QKeySequence, QPixmap, QShortcut
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QTextEdit,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from ui.icons import icon
 from ui.theme import LIGHT_SCHEME
-from ui.theme.tokens import SPACING, RADIUS, TYPOGRAPHY
+from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY
 
 
 class MessageBubble(QWidget):
@@ -31,7 +31,7 @@ class MessageBubble(QWidget):
         is_streaming: bool = False,
         attachments: list = None,
         scheme=None,
-        parent=None
+        parent=None,
     ):
         super().__init__(parent)
         self.content = content
@@ -219,8 +219,8 @@ class MessageBubble(QWidget):
         clipboard.setText(self.content_label.toPlainText())
 
     def _print_content(self):
-        from PySide6.QtPrintSupport import QPrinter, QPrintDialog
         from PySide6.QtGui import QTextDocument
+        from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 
         printer = QPrinter(QPrinter.HighResolution)
         dialog = QPrintDialog(printer, self)
@@ -230,16 +230,16 @@ class MessageBubble(QWidget):
             doc.print_(printer)
 
     def _show_actions(self):
-        if hasattr(self, 'actions_widget'):
+        if hasattr(self, "actions_widget"):
             self._cancel_hide_actions()
             self.actions_widget.show()
 
     def _hide_actions(self):
-        if hasattr(self, 'actions_widget'):
+        if hasattr(self, "actions_widget"):
             self.actions_widget.hide()
 
     def _schedule_hide_actions(self):
-        if hasattr(self, '_hide_timer'):
+        if hasattr(self, "_hide_timer"):
             self._hide_timer.stop()
         self._hide_timer = QTimer()
         self._hide_timer.setSingleShot(True)
@@ -248,7 +248,7 @@ class MessageBubble(QWidget):
         self._hide_timer.start()
 
     def _cancel_hide_actions(self):
-        if hasattr(self, '_hide_timer'):
+        if hasattr(self, "_hide_timer"):
             self._hide_timer.stop()
 
     def _render_content(self):
@@ -264,54 +264,81 @@ class MessageBubble(QWidget):
         text = text.replace("&", "&").replace("<", "<").replace(">", ">")
 
         # Code blocks
-        text = re.sub(r'```(\w*)\n(.*?)```', lambda m: (
-            f'<div style="background:{s.code_bg}; border:1px solid {s.code_border}; border-radius:8px; padding:12px; margin:8px 0; font-family:Consolas,monospace; font-size:13px; color:{s.code_text};">'
-            f'<pre style="margin:0; white-space:pre-wrap;">{m.group(2)}</pre></div>'
-        ), text, flags=re.DOTALL)
+        text = re.sub(
+            r"```(\w*)\n(.*?)```",
+            lambda m: (
+                f'<div style="background:{s.code_bg}; border:1px solid {s.code_border}; border-radius:8px; padding:12px; margin:8px 0; font-family:Consolas,monospace; font-size:13px; color:{s.code_text};">'
+                f'<pre style="margin:0; white-space:pre-wrap;">{m.group(2)}</pre></div>'
+            ),
+            text,
+            flags=re.DOTALL,
+        )
 
         # Inline code
-        text = re.sub(r'`([^`]+)`',
-            f'<code style="background:{s.code_bg}; border:1px solid {s.code_border}; border-radius:4px; padding:2px 6px; font-family:Consolas,monospace; font-size:13px; color:{s.accent_primary};">\\1</code>', text)
+        text = re.sub(
+            r"`([^`]+)`",
+            f'<code style="background:{s.code_bg}; border:1px solid {s.code_border}; border-radius:4px; padding:2px 6px; font-family:Consolas,monospace; font-size:13px; color:{s.accent_primary};">\\1</code>',
+            text,
+        )
 
         # Bold/italic
-        text = re.sub(r'\*\*(.+?)\*\*', f'<b style="color:{tp};">\\1</b>', text)
-        text = re.sub(r'\*(.+?)\*', f'<i style="color:{s.text_secondary};">\\1</i>', text)
+        text = re.sub(r"\*\*(.+?)\*\*", f'<b style="color:{tp};">\\1</b>', text)
+        text = re.sub(r"\*(.+?)\*", f'<i style="color:{s.text_secondary};">\\1</i>', text)
 
         # Headers
-        text = re.sub(r'^### (.+)$', f'<h4 style="color:{tp}; margin:12px 0 4px 0; font-size:15px;">\\1</h4>', text, flags=re.MULTILINE)
-        text = re.sub(r'^## (.+)$', f'<h3 style="color:{tp}; margin:14px 0 6px 0; font-size:16px;">\\1</h3>', text, flags=re.MULTILINE)
-        text = re.sub(r'^# (.+)$', f'<h2 style="color:{tp}; margin:16px 0 8px 0; font-size:18px;">\\1</h2>', text, flags=re.MULTILINE)
+        text = re.sub(
+            r"^### (.+)$",
+            f'<h4 style="color:{tp}; margin:12px 0 4px 0; font-size:15px;">\\1</h4>',
+            text,
+            flags=re.MULTILINE,
+        )
+        text = re.sub(
+            r"^## (.+)$",
+            f'<h3 style="color:{tp}; margin:14px 0 6px 0; font-size:16px;">\\1</h3>',
+            text,
+            flags=re.MULTILINE,
+        )
+        text = re.sub(
+            r"^# (.+)$",
+            f'<h2 style="color:{tp}; margin:16px 0 8px 0; font-size:18px;">\\1</h2>',
+            text,
+            flags=re.MULTILINE,
+        )
 
         # Lists
         def process_list(match):
             items = match.group(0).strip().split("\n")
             html = f'<ul style="margin:6px 0; padding-left:20px; color:{tp};">'
             for item in items:
-                item = re.sub(r'^[-*]\s+', '', item.strip())
+                item = re.sub(r"^[-*]\s+", "", item.strip())
                 if item:
                     html += f'<li style="margin:3px 0; color:{tp};">{item}</li>'
-            html += '</ul>'
+            html += "</ul>"
             return html
 
-        text = re.sub(r'(?:^[-*] .+\n?)+', process_list, text, flags=re.MULTILINE)
+        text = re.sub(r"(?:^[-*] .+\n?)+", process_list, text, flags=re.MULTILINE)
 
         # Numbered lists
         def process_num_list(match):
             items = match.group(0).strip().split("\n")
             html = f'<ol style="margin:6px 0; padding-left:20px; color:{tp};">'
             for item in items:
-                item = re.sub(r'^\d+\.\s+', '', item.strip())
+                item = re.sub(r"^\d+\.\s+", "", item.strip())
                 if item:
                     html += f'<li style="margin:3px 0; color:{tp};">{item}</li>'
-            html += '</ol>'
+            html += "</ol>"
             return html
 
-        text = re.sub(r'(?:^\d+\. .+\n?)+', process_num_list, text, flags=re.MULTILINE)
+        text = re.sub(r"(?:^\d+\. .+\n?)+", process_num_list, text, flags=re.MULTILINE)
 
         # Tables
         def process_table(match):
             lines = match.group(0).strip().split("\n")
-            rows = [l for l in lines if l.strip() and not re.match(r'^\|[-:|]+\|$', l.strip())]
+            rows = [
+                line
+                for line in lines
+                if line.strip() and not re.match(r"^\|[-:|]+\|$", line.strip())
+            ]
             if len(rows) < 2:
                 return match.group(0)
             html = '<table style="border-collapse:collapse; width:100%; margin:10px 0; font-size:13px;">'
@@ -330,7 +357,7 @@ class MessageBubble(QWidget):
             html += "</table>"
             return html
 
-        text = re.sub(r'(?:^\|.+\|\n?)+', process_table, text, flags=re.MULTILINE)
+        text = re.sub(r"(?:^\|.+\|\n?)+", process_table, text, flags=re.MULTILINE)
 
         # Images: ![alt](path) -> <img>
         def process_image(m):
@@ -338,16 +365,21 @@ class MessageBubble(QWidget):
             src = m.group(2)
             if not src.startswith(("http://", "https://", "data:image")):
                 from pathlib import Path as _Path
+
                 p = _Path(src)
                 if not p.is_absolute():
                     p = _Path(__file__).parent.parent.parent / src
                 src = p.as_posix()
             return f'<img src="{src}" alt="{alt}" style="max-width:100%; border-radius:8px; margin:8px 0;">'
 
-        text = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', process_image, text)
+        text = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", process_image, text)
 
         # Links
-        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', f'<a href="\\2" style="color:{s.accent_primary}; text-decoration:none;">\\1</a>', text)
+        text = re.sub(
+            r"\[([^\]]+)\]\(([^)]+)\)",
+            f'<a href="\\2" style="color:{s.accent_primary}; text-decoration:none;">\\1</a>',
+            text,
+        )
 
         # Newlines to <br>
         text = text.replace("\n", "<br>")
@@ -362,6 +394,7 @@ class MessageBubble(QWidget):
 
     def _fade_in(self):
         from ui.animations import fade_in
+
         fade_in(self)
 
     def update_content(self, content: str):
@@ -376,7 +409,7 @@ class MessageBubble(QWidget):
     def finish_streaming(self):
         self.is_streaming = False
         self._cursor_timer.stop()
-        if hasattr(self, 'name_label'):
+        if hasattr(self, "name_label"):
             self.name_label.show()
         self.update_content(self._full_content)
 
@@ -401,7 +434,7 @@ class MessageBubble(QWidget):
                 selection-background-color: {s.accent_primary}40;
             }}
         """)
-        if hasattr(self, 'actions_widget'):
+        if hasattr(self, "actions_widget"):
             # Recreate actions with new scheme
             self.actions_widget.deleteLater()
             self.actions_widget = self._create_actions()

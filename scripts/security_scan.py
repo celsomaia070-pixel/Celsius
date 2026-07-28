@@ -10,9 +10,10 @@ Runs:
 Usage:
     python scripts/security_scan.py
 """
+
+import json
 import subprocess
 import sys
-import json
 
 
 def run_pip_audit() -> bool:
@@ -120,6 +121,7 @@ def check_circuit_breakers() -> bool:
     print("=" * 60)
     try:
         from core.circuit_breaker import get_all_breakers
+
         breakers = get_all_breakers()
         if not breakers:
             print("  No circuit breakers registered yet (normal on fresh start).")
@@ -141,6 +143,7 @@ def check_metrics() -> bool:
     print("=" * 60)
     try:
         from core.metrics import get_metrics
+
         m = get_metrics()
         snap = m.snapshot()
         print(f"  Uptime: {snap['uptime_seconds']:.1f}s")

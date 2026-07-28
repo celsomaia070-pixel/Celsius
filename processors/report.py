@@ -28,13 +28,7 @@ class GeradorRelatorio:
             for chave, valor in metadados.items():
                 meta_linhas += f"- **{chave}**: {valor}\n"
 
-        return (
-            f"# {titulo}\n\n"
-            f"*Gerado em: {data}*\n\n"
-            f"{meta_linhas}\n"
-            f"---\n\n"
-            f"{conteudo}\n"
-        )
+        return f"# {titulo}\n\n*Gerado em: {data}*\n\n{meta_linhas}\n---\n\n{conteudo}\n"
 
     @staticmethod
     def exportar_pdf(titulo: str, conteudo: str, caminho_saida: str, metadados: dict = None):
@@ -48,7 +42,9 @@ class GeradorRelatorio:
         if dejavu_path:
             pdf.add_font("DejaVu", "", dejavu_path, uni=True)
             pdf.add_font("DejaVu", "B", dejavu_path.replace("Sans.ttf", "Sans-Bold.ttf"), uni=True)
-            pdf.add_font("DejaVu", "I", dejavu_path.replace("Sans.ttf", "Sans-Oblique.ttf"), uni=True)
+            pdf.add_font(
+                "DejaVu", "I", dejavu_path.replace("Sans.ttf", "Sans-Oblique.ttf"), uni=True
+            )
             use_unicode = True
         else:
             use_unicode = False
@@ -91,7 +87,9 @@ class GeradorRelatorio:
                 linha_limpa = linha.encode("latin-1", errors="replace").decode("latin-1")
                 pdf.multi_cell(0, 6, linha_limpa)
 
-        os.makedirs(os.path.dirname(caminho_saida) if os.path.dirname(caminho_saida) else ".", exist_ok=True)
+        os.makedirs(
+            os.path.dirname(caminho_saida) if os.path.dirname(caminho_saida) else ".", exist_ok=True
+        )
         pdf.output(caminho_saida)
         return caminho_saida
 
@@ -144,6 +142,8 @@ class GeradorRelatorio:
             else:
                 documento.add_paragraph(linha)
 
-        os.makedirs(os.path.dirname(caminho_saida) if os.path.dirname(caminho_saida) else ".", exist_ok=True)
+        os.makedirs(
+            os.path.dirname(caminho_saida) if os.path.dirname(caminho_saida) else ".", exist_ok=True
+        )
         documento.save(caminho_saida)
         return caminho_saida

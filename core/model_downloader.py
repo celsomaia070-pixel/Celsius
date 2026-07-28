@@ -1,7 +1,7 @@
 """Downloads GGUF models from HuggingFace."""
-import os
+
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from core.config import GGUFModel, get_settings
 
@@ -40,8 +40,8 @@ def is_mmproj_downloaded(model_id: str) -> bool:
 
 def download_model(
     model_id: str,
-    fn_progress: Optional[Callable[[str, int], None]] = None,
-    fn_status: Optional[Callable[[str], None]] = None,
+    fn_progress: Callable[[str, int], None] | None = None,
+    fn_status: Callable[[str], None] | None = None,
 ) -> Path | None:
     """Download a GGUF model from HuggingFace. Returns the local path on success."""
     model = _find_model(model_id)
@@ -59,8 +59,10 @@ def download_model(
 
     try:
         from huggingface_hub import hf_hub_download
-    except ImportError:
-        raise ImportError("huggingface_hub nao esta instalado. Execute: pip install huggingface_hub")
+    except ImportError as err:
+        raise ImportError(
+            "huggingface_hub nao esta instalado. Execute: pip install huggingface_hub"
+        ) from err
 
     if fn_status:
         fn_status(f"Baixando {model.name} ({model.quant})...")
@@ -92,7 +94,7 @@ def download_model(
 
 def download_mmproj(
     model_id: str,
-    fn_status: Optional[Callable[[str], None]] = None,
+    fn_status: Callable[[str], None] | None = None,
 ) -> Path | None:
     """Download mmproj file for a model (vision support)."""
     model = _find_model(model_id)
@@ -110,7 +112,7 @@ def download_mmproj(
         return None
 
     if fn_status:
-        fn_status(f"Baixando mmproj (suporte a visao)...")
+        fn_status("Baixando mmproj (suporte a visao)...")
 
     try:
         path = hf_hub_download(
@@ -137,9 +139,11 @@ def get_model_size_gb(model_id: str) -> float:
 
 def _find_model(model_id: str) -> GGUFModel | None:
     from core.config import get_model_by_id
+
     return get_model_by_id(model_id)
 
 
 def _get_all_models() -> list[GGUFModel]:
     from core.config import GGUF_MODELS
+
     return GGUF_MODELS

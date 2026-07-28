@@ -1,35 +1,34 @@
-# celsius.spec - PyInstaller spec file for Celsius
+# celsius.spec - PyInstaller spec file for Celsius (One-Dir mode)
 
+import os
 import sys
 from pathlib import Path
 
-# Get project root
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(os.getcwd())
 
-# Platform-specific binary names
-if sys.platform == "win32":
-    LLAMA_SERVER_BIN = "llama-server.exe"
-elif sys.platform == "darwin":
-    LLAMA_SERVER_BIN = "llama-server-macos"
-else:
-    LLAMA_SERVER_BIN = "llama-server-linux"
-
-# Model file (update with your actual model filename)
+BUNDLE_MODELS = os.environ.get("CELSIUS_BUNDLE_MODELS", "0") == "1"
 MODEL_FILE = "qwen2.5-vl-7b-q4_k_m.gguf"
+MMPROJ_FILE = "mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf"
+
+datas = []
+
+if BUNDLE_MODELS:
+    for fname in [MODEL_FILE, MMPROJ_FILE]:
+        p = PROJECT_ROOT / "resources" / fname
+        if p.exists():
+            datas.append((str(p), "resources"))
+
+for dll in (PROJECT_ROOT / "resources").glob("*.dll"):
+    datas.append((str(dll), "resources"))
+
+datas.append((str(PROJECT_ROOT / "logo"), "logo"))
+datas.append((str(PROJECT_ROOT / "pyproject.toml"), "."))
 
 a = Analysis(
     ['main.py'],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[
-        # Bundled resources
-        (str(PROJECT_ROOT / "resources" / LLAMA_SERVER_BIN), "resources"),
-        (str(PROJECT_ROOT / "resources" / MODEL_FILE), "resources"),
-        # UI assets
-        (str(PROJECT_ROOT / "logo"), "logo"),
-        # Config files
-        (str(PROJECT_ROOT / "pyproject.toml"), "."),
-    ],
+    datas=datas,
     hiddenimports=[
         "PySide6.QtCore",
         "PySide6.QtWidgets",
@@ -51,11 +50,15 @@ a = Analysis(
         "pydub",
         "playwright",
         "numpy",
+        "cryptography",
+        "cryptography.hazmat.primitives.asymmetric.padding",
+        "cryptography.hazmat.primitives.serialization",
         "core.llama_cpp",
         "core.config",
         "core.commands",
         "core.memory",
         "core.logging_config",
+        "core.license",
         "ai.react",
         "ai.tools",
         "ai.engine",
@@ -80,6 +83,7 @@ a = Analysis(
         "ui.command_palette",
         "ui.styles",
         "ui.theme",
+        "ui.activation_dialog",
     ],
     hookspath=[],
     hooksconfig={},
@@ -93,17 +97,13 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='Celsius',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -113,10 +113,20 @@ exe = EXE(
     icon=str(PROJECT_ROOT / "logo" / "logo.ico") if (PROJECT_ROOT / "logo" / "logo.ico").exists() else None,
 )
 
-# For macOS .app bundle
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='Celsius',
+)
+
 if sys.platform == "darwin":
     app = BUNDLE(
-        exe,
+        coll,
         name='Celsius.app',
         icon=str(PROJECT_ROOT / "logo" / "logo.icns") if (PROJECT_ROOT / "logo" / "logo.icns").exists() else None,
         bundle_identifier='com.celso.celsius',

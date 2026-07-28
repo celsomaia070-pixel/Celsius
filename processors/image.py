@@ -33,7 +33,12 @@ class ProcessadorImagem(ProcessadorArquivo):
         try:
             exif = img._getexif()
             if exif:
-                campos_relevantes = {271: "Camera", 272: "Modelo", 306: "Data", 36867: "Data Original"}
+                campos_relevantes = {
+                    271: "Camera",
+                    272: "Modelo",
+                    306: "Data",
+                    36867: "Data Original",
+                }
                 partes_exif = []
                 for tag_id, nome in campos_relevantes.items():
                     if tag_id in exif:

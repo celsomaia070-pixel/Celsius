@@ -7,8 +7,6 @@ from ai.react import loop_react
 from core.commands import executar_comando
 from core.config import get_settings
 
-MAX_HISTORICO_SESSION = get_settings().max_history_session
-
 RESPOSTAS_OLA = [
     "Ola! Em que posso ajudar?",
     "Oi! Como posso ajudar?",
@@ -64,20 +62,35 @@ COMANDOS_RAPIDOS = {
 }
 
 HORAS_PADROES = [
-    "que horas sao", "horas", "hora", "qual a hora",
-    "que hora e", "hora atual", "horario", "qual o horario",
+    "que horas sao",
+    "horas",
+    "hora",
+    "qual a hora",
+    "que hora e",
+    "hora atual",
+    "horario",
+    "qual o horario",
 ]
 
 DATA_PADROES = [
-    "que dia e hoje", "qual a data", "que data", "dia atual", "data atual",
+    "que dia e hoje",
+    "qual a data",
+    "que data",
+    "dia atual",
+    "data atual",
 ]
 
 
 def _formatar_data_atual() -> str:
     now = datetime.now()
     dias_semana = {
-        0: "segunda-feira", 1: "terca-feira", 2: "quarta-feira",
-        3: "quinta-feira", 4: "sexta-feira", 5: "sabado", 6: "domingo",
+        0: "segunda-feira",
+        1: "terca-feira",
+        2: "quarta-feira",
+        3: "quinta-feira",
+        4: "sexta-feira",
+        5: "sabado",
+        6: "domingo",
     }
     return f"Data atual: {now.strftime('%d/%m/%Y')} ({dias_semana[now.weekday()]})"
 
@@ -89,6 +102,7 @@ def _responder_rapido(pergunta: str) -> str | None:
     limpo = limpo.strip()
 
     import re
+
     if limpo in HORAS_PADROES or re.search(r"\bhoras?\b|\bhorario\b", limpo):
         return f"Hora atual: {datetime.now().strftime('%H:%M')}"
 
@@ -113,8 +127,8 @@ def _responder_rapido(pergunta: str) -> str | None:
 class ConversationContext:
     """Manages conversation history for a session with smart summarization."""
 
-    def __init__(self, max_history: int = MAX_HISTORICO_SESSION):
-        self.max_history = max_history
+    def __init__(self, max_history: int | None = None):
+        self.max_history = max_history or get_settings().max_history_session
         self.history: list[dict] = []
 
     def add_user(self, content: str) -> None:
@@ -127,7 +141,7 @@ class ConversationContext:
 
     def _trim(self) -> None:
         if len(self.history) > self.max_history:
-            self.history = self.history[-self.max_history:]
+            self.history = self.history[-self.max_history :]
 
     def get_history(self) -> list[dict]:
         return self.history.copy()
@@ -141,17 +155,41 @@ def _detectar_intencao_estoque(pergunta: str) -> str | None:
     t = pergunta.lower()
     # Saida: rebaixa, baixa, diminui, saida, remove, usa, gasta, envia, vende
     saida_kw = [
-        "dê baixa", "baixa", "diminui", " dê saida", "saida", "remove", "removeu",
-        "usei", "usou", "gastei", "consumi", "enviei", "enviou",
-        "vendi", "vendeu", "tirar", "tirou", "menos",
+        "dê baixa",
+        "baixa",
+        "diminui",
+        " dê saida",
+        "saida",
+        "remove",
+        "removeu",
+        "usei",
+        "usou",
+        "gastei",
+        "consumi",
+        "enviei",
+        "enviou",
+        "vendi",
+        "vendeu",
+        "tirar",
+        "tirou",
+        "menos",
     ]
     if any(kw in t for kw in saida_kw):
         return "saida"
     # Entrada: entrada, adicione, adiciona, recebi, comprou, entrou, repor, mais, aumenta
     entrada_kw = [
-        "entrada", "adicione", "adiciona", "recebi", "comprei",
-        "comprou", "entrou", "repor", "reposicao", "aumenta",
-        "mais", "plus",
+        "entrada",
+        "adicione",
+        "adiciona",
+        "recebi",
+        "comprei",
+        "comprou",
+        "entrou",
+        "repor",
+        "reposicao",
+        "aumenta",
+        "mais",
+        "plus",
     ]
     if any(kw in t for kw in entrada_kw):
         return "entrada"
@@ -161,25 +199,38 @@ def _detectar_intencao_estoque(pergunta: str) -> str | None:
 def _extrair_quantidade(pergunta: str) -> int | None:
     """Extrai quantidade numerica da pergunta."""
     import re
+
     # Padroes: "5 unidades", "5 esticadores", "em 5", "5 pecas"
-    m = re.search(r'(\d+)\s*(unidade|unidades|un|peça|pecas|estoque)?', pergunta)
+    m = re.search(r"(\d+)\s*(unidade|unidades|un|peça|pecas|estoque)?", pergunta)
     if m:
         return int(m.group(1))
     # Por extenso
     extenso = {
-        "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3,
-        "quatro": 4, "cinco": 5, "seis": 6, "sete": 7, "oito": 8,
-        "nove": 9, "dez": 10, "vinte": 20, "trinta": 30, "cinquenta": 50,
+        "um": 1,
+        "uma": 1,
+        "dois": 2,
+        "duas": 2,
+        "tres": 3,
+        "quatro": 4,
+        "cinco": 5,
+        "seis": 6,
+        "sete": 7,
+        "oito": 8,
+        "nove": 9,
+        "dez": 10,
+        "vinte": 20,
+        "trinta": 30,
+        "cinquenta": 50,
     }
+    pergunta_lower = pergunta.lower()
     for palavra, num in extenso.items():
-        if re.search(rf'\b{palavra}\b', t := pergunta.lower()):
+        if re.search(rf"\b{palavra}\b", pergunta_lower):
             return num
     return None
 
 
 def _processar_operacao_estoque(pergunta: str) -> str | None:
     """Detecta e executa operacoes de entrada/saida no estoque. Retorna resultado ou None."""
-    import re
     from core.inventory import get_inventory_service
 
     intencao = _detectar_intencao_estoque(pergunta)
@@ -242,7 +293,8 @@ def _processar_operacao_estoque(pergunta: str) -> str | None:
 
 def _obter_contexto_estoque(pergunta: str) -> str:
     """Obtem dados relevantes do estoque para injetar no contexto."""
-    from core.inventory import get_inventory_service, ColunaKanban
+    from core.inventory import ColunaKanban, get_inventory_service
+
     service = get_inventory_service()
     pergunta_lower = pergunta.lower()
 
@@ -252,10 +304,33 @@ def _obter_contexto_estoque(pergunta: str) -> str:
 
     # Palavras genericas que NAO indicam busca especifica
     palavras_genericas = {
-        "quais", "nome", "nomes", "itens", "item", "estoque", "tenho",
-        "listar", "lista", "mostrar", "mostra", "ver", "todos", "todas",
-        "completo", "completa", "total", "resumo", "produto", "produtos",
-        "sao", "são", "dos", "das", "meu", "minha", "aqui",
+        "quais",
+        "nome",
+        "nomes",
+        "itens",
+        "item",
+        "estoque",
+        "tenho",
+        "listar",
+        "lista",
+        "mostrar",
+        "mostra",
+        "ver",
+        "todos",
+        "todas",
+        "completo",
+        "completa",
+        "total",
+        "resumo",
+        "produto",
+        "produtos",
+        "sao",
+        "são",
+        "dos",
+        "das",
+        "meu",
+        "minha",
+        "aqui",
     }
 
     # Busca especifica por nome (ex: "martelo", "arame")
@@ -265,11 +340,10 @@ def _obter_contexto_estoque(pergunta: str) -> str:
         palavras = item.nome.lower().split()
         matched = False
         for p in palavras:
-            if len(p) > 2 and p in pergunta_lower:
-                if p not in palavras_genericas:
-                    termos_busca.append(item)
-                    matched = True
-                    break
+            if len(p) > 2 and p in pergunta_lower and p not in palavras_genericas:
+                termos_busca.append(item)
+                matched = True
+                break
         if not matched and item.categoria.lower() in pergunta_lower:
             termos_busca.append(item)
             matched = True
@@ -352,7 +426,9 @@ def gerar_resposta(
         if contexto_estoque:
             prompt_dict = dict(prompt_dict)
             doc_existente = prompt_dict.get("documento", "")
-            prompt_dict["documento"] = (doc_existente + "\n\n### Dados do Estoque (SEMPRE DISPONIVEL)\n" + contexto_estoque).strip()
+            prompt_dict["documento"] = (
+                doc_existente + "\n\n### Dados do Estoque (SEMPRE DISPONIVEL)\n" + contexto_estoque
+            ).strip()
             if not nome_doc:
                 prompt_dict["nome_documento"] = "Dados do Estoque"
     except Exception:
@@ -379,6 +455,7 @@ def gerar_resposta_com_imagem(
     fn_chunk: Callable[[str], None] | None = None,
 ) -> str:
     import base64
+
     from core.llama_cpp import get_llama
 
     if fn_status:
@@ -387,7 +464,9 @@ def gerar_resposta_com_imagem(
     with open(caminho_imagem, "rb") as f:
         imagem_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-    pergunta_final = pergunta if pergunta else "Descreva esta imagem em detalhes. Se houver texto, transcreva-o."
+    pergunta_final = (
+        pergunta if pergunta else "Descreva esta imagem em detalhes. Se houver texto, transcreva-o."
+    )
 
     data_e_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
 
@@ -415,6 +494,7 @@ def gerar_resposta_com_imagem(
 
     try:
         from core.llama_cpp import get_llama_manager
+
         mgr = get_llama_manager()
         if not mgr._chat_handler:
             return "Erro: O modelo carregado não possui suporte a visão (handler não inicializado). Verifique se o modelo é multimodal (ex: Qwen2.5-VL) e se o arquivo mmproj existe na pasta resources/."
@@ -437,5 +517,6 @@ def gerar_resposta_com_imagem(
         return resultado
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         return f"Erro ao analisar imagem: {e}. Nota: O modelo atual pode nao suportar visao. Use um modelo multimodal (ex: Qwen2.5-VL, LLaVA) com arquivo mmproj para suporte a imagens."

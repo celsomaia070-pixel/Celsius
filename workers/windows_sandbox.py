@@ -3,6 +3,7 @@
 Provides CPU time limits, memory limits, and process tree restrictions
 without requiring pywin32 as a dependency.
 """
+
 import ctypes
 import ctypes.wintypes
 import logging
@@ -33,6 +34,7 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 @dataclass
 class WindowsSandboxConfig:
     """Configuration for Windows sandbox limits."""
+
     cpu_time_limit_seconds: int = 30
     process_memory_limit_mb: int = 256
     job_memory_limit_mb: int = 512
@@ -44,6 +46,7 @@ class WindowsSandboxConfig:
 @dataclass
 class WindowsSandboxResult:
     """Result from a Windows sandboxed execution."""
+
     stdout: str
     stderr: str
     returncode: int
@@ -104,32 +107,37 @@ def _configure_job_limits(job_handle: ctypes.wintypes.HANDLE, config: WindowsSan
         flags |= JOB_OBJECT_LIMIT_JOB_MEMORY
 
     struct_data = struct.pack(
-        '<qqII'       # PerProcess(8) + PerJob(8) + Flags(4) + pad(4) = 24
-        'QQ'          # MinWS(8) + MaxWS(8) = 16
-        'II'          # ActiveLimit(4) + pad(4) = 8
-        'Q'           # Affinity(8)
-        'II'          # Priority(4) + Scheduling(4) = 8
-        'QQQQQQ'      # IoInfo (6 x uint64 = 48 bytes)
-        'QQQQ',       # ProcMem(8) + JobMem(8) + PeakProc(8) + PeakJob(8) = 32
+        "<qqII"  # PerProcess(8) + PerJob(8) + Flags(4) + pad(4) = 24
+        "QQ"  # MinWS(8) + MaxWS(8) = 16
+        "II"  # ActiveLimit(4) + pad(4) = 8
+        "Q"  # Affinity(8)
+        "II"  # Priority(4) + Scheduling(4) = 8
+        "QQQQQQ"  # IoInfo (6 x uint64 = 48 bytes)
+        "QQQQ",  # ProcMem(8) + JobMem(8) + PeakProc(8) + PeakJob(8) = 32
         # BasicLimitInformation
-        0,                                          # PerProcessUserTimeLimit
-        0,                                          # PerJobUserTimeLimit
-        flags,                                      # LimitFlags
-        0,                                          # padding
-        4 * 1024 * 1024,                           # MinimumWorkingSetSize (4MB)
-        256 * 1024 * 1024,                         # MaximumWorkingSetSize (256MB)
-        config.active_process_limit,                # ActiveProcessLimit
-        0,                                          # padding
-        0,                                          # Affinity (all cores)
-        0,                                          # PriorityClass
-        0,                                          # SchedulingClass
+        0,  # PerProcessUserTimeLimit
+        0,  # PerJobUserTimeLimit
+        flags,  # LimitFlags
+        0,  # padding
+        4 * 1024 * 1024,  # MinimumWorkingSetSize (4MB)
+        256 * 1024 * 1024,  # MaximumWorkingSetSize (256MB)
+        config.active_process_limit,  # ActiveProcessLimit
+        0,  # padding
+        0,  # Affinity (all cores)
+        0,  # PriorityClass
+        0,  # SchedulingClass
         # IoInfo (all zeros)
-        0, 0, 0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
         # Memory limits
         config.process_memory_limit_mb * 1024 * 1024,  # ProcessMemoryLimit
-        config.job_memory_limit_mb * 1024 * 1024,      # JobMemoryLimit
-        0,                                              # PeakProcessMemoryUsed
-        0,                                              # PeakJobMemoryUsed
+        config.job_memory_limit_mb * 1024 * 1024,  # JobMemoryLimit
+        0,  # PeakProcessMemoryUsed
+        0,  # PeakJobMemoryUsed
     )
 
     success = kernel32.SetInformationJobObject(
@@ -146,10 +154,14 @@ def _sandbox_env() -> dict[str, str]:
     """Create a restricted environment for the subprocess."""
     env = os.environ.copy()
     for key in [
-        "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-        "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-        "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN",
-        "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HF_TOKEN",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
     ]:
         env.pop(key, None)
     env["PYTHONPATH"] = ""
@@ -200,9 +212,9 @@ def executar_codigo_windows(
             try:
                 # Get native process handle for Job Object assignment
                 # Python 3.14 uses ._handle on Windows
-                proc_handle = getattr(process, '_handle', None)
+                proc_handle = getattr(process, "_handle", None)
                 if proc_handle is None:
-                    proc_handle = getattr(process, 'process_handle', None)
+                    proc_handle = getattr(process, "process_handle", None)
                 if proc_handle is not None:
                     assigned = kernel32.AssignProcessToJobObject(job_handle, proc_handle)
                     if not assigned:

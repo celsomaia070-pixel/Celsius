@@ -3,9 +3,9 @@
 Uses SentenceTransformer for semantic matching between user queries
 and agent capabilities, replacing brittle keyword matching.
 """
+
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,13 @@ REGISTRO_AGENTES = [
 
 # Keyword fallback for when embedding model is unavailable
 _KEYWORD_MAP = {
-    "rag_agent": ["indexar", "index", "documento indexado", "buscar documento", "listar documentos"],
+    "rag_agent": [
+        "indexar",
+        "index",
+        "documento indexado",
+        "buscar documento",
+        "listar documentos",
+    ],
     "code_agent": ["executar codigo", "rodar codigo", "python", "calcular", "script", "programa"],
     "browser_agent": ["navegar", "abrir site", "acessar pagina", "extrair de site", "scraping"],
     "search_agent": ["pesquisar", "buscar na web", "procurar na internet", "noticias", "preco"],
@@ -110,7 +116,9 @@ def _get_embedding_model():
     if _embedding_model is None:
         try:
             from sentence_transformers import SentenceTransformer
+
             from core.config import get_settings
+
             settings = get_settings()
             _embedding_model = SentenceTransformer(settings.embedding_model)
         except Exception as e:
@@ -137,14 +145,14 @@ def _compute_agent_embeddings():
     try:
         descriptions = [agent.descricao for agent in REGISTRO_AGENTES]
         embeddings = model.encode(descriptions)
-        for agent, emb in zip(REGISTRO_AGENTES, embeddings):
+        for agent, emb in zip(REGISTRO_AGENTES, embeddings, strict=False):
             agent._embedding = emb.tolist()
         _embeddings_computed = True
     except Exception as e:
         logger.warning("Failed to compute agent embeddings: %s", e)
 
 
-def _classify_by_embedding(pergunta: str) -> Optional[SubAgent]:
+def _classify_by_embedding(pergunta: str) -> SubAgent | None:
     """Classify user query using embedding similarity."""
     model = _get_embedding_model()
     if model is None or not _embeddings_computed:
@@ -152,6 +160,7 @@ def _classify_by_embedding(pergunta: str) -> Optional[SubAgent]:
 
     try:
         import numpy as np
+
         query_embedding = model.encode([pergunta])[0]
         # Normalize for cosine similarity
         query_norm = query_embedding / np.linalg.norm(query_embedding)
@@ -178,7 +187,7 @@ def _classify_by_embedding(pergunta: str) -> Optional[SubAgent]:
         return None
 
 
-def _classify_by_keywords(pergunta: str) -> Optional[SubAgent]:
+def _classify_by_keywords(pergunta: str) -> SubAgent | None:
     """Fallback classification using keyword matching."""
     pergunta_lower = pergunta.lower()
 
@@ -190,9 +199,9 @@ def _classify_by_keywords(pergunta: str) -> Optional[SubAgent]:
     return None
 
 
-def classificar_tarefa(pergunta: str) -> Optional[SubAgent]:
+def classificar_tarefa(pergunta: str) -> SubAgent | None:
     """Classify user query to select the best sub-agent.
-    
+
     Uses embedding-based classification with keyword fallback.
     """
     if not pergunta or len(pergunta.strip()) < 3:
@@ -208,7 +217,7 @@ def classificar_tarefa(pergunta: str) -> Optional[SubAgent]:
     return _classify_by_keywords(pergunta)
 
 
-def obter_prompt_agente(agente: Optional[SubAgent]) -> str:
+def obter_prompt_agente(agente: SubAgent | None) -> str:
     """Get the system prompt addition for a sub-agent."""
     if agente is None:
         return ""

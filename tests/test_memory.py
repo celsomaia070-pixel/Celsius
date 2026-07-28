@@ -72,8 +72,7 @@ class TestMemoryService:
                 time.sleep(0.001)
 
         threads = [
-            threading.Thread(target=add_memories, args=(f"thread_{i}", 10))
-            for i in range(5)
+            threading.Thread(target=add_memories, args=(f"thread_{i}", 10)) for i in range(5)
         ]
 
         for t in threads:
@@ -87,6 +86,7 @@ class TestMemoryService:
     def test_get_memory_service_singleton(self, temp_settings):
         # Reset global
         import core.memory
+
         core.memory._memory_service = None
 
         service1 = get_memory_service()

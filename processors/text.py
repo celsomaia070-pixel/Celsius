@@ -4,7 +4,23 @@ from processors.base import ProcessadorArquivo
 
 
 class ProcessadorTexto(ProcessadorArquivo):
-    extensoes_suportadas = [".txt", ".md", ".py", ".json", ".csv", ".xml", ".html", ".css", ".js", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".log"]
+    extensoes_suportadas = [
+        ".txt",
+        ".md",
+        ".py",
+        ".json",
+        ".csv",
+        ".xml",
+        ".html",
+        ".css",
+        ".js",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".log",
+    ]
 
     @classmethod
     def processar(cls, caminho: str | Path, base_dir: Path | None = None) -> str:

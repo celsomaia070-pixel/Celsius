@@ -1,8 +1,8 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from ui.theme.schemes import ColorScheme, get_scheme
 from core.memory import get_memory_service
+from ui.theme.schemes import ColorScheme, get_scheme
 
 
 class CaixaMemoriaDialog(QDialog):

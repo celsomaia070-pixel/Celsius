@@ -5,6 +5,7 @@ Endpoints:
 - GET /health   - Health check status
 - GET /circuit-breakers - Circuit breaker states
 """
+
 import json
 import logging
 import threading
@@ -28,13 +29,17 @@ class _MetricsHandler(BaseHTTPRequestHandler):
         elif self.path == "/health":
             try:
                 from core.llama_cpp import get_llama_manager
+
                 manager = get_llama_manager()
                 healthy = manager.is_healthy() if manager._started else False
-                self._respond(200, {
-                    "status": "healthy" if healthy else "degraded",
-                    "model_loaded": manager._started,
-                    "model_id": manager.current_model_id,
-                })
+                self._respond(
+                    200,
+                    {
+                        "status": "healthy" if healthy else "degraded",
+                        "model_loaded": manager._started,
+                        "model_id": manager.current_model_id,
+                    },
+                )
             except Exception as e:
                 self._respond(200, {"status": "error", "error": str(e)})
 

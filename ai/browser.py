@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 
 from core.circuit_breaker import CircuitBreakerOpenError, get_circuit_breaker
@@ -6,8 +7,12 @@ from core.circuit_breaker import CircuitBreakerOpenError, get_circuit_breaker
 logger = logging.getLogger(__name__)
 
 # Circuit breakers for browser operations
-_browser_navigate_cb = get_circuit_breaker("browser:navigate", failure_threshold=3, recovery_timeout=120)
-_browser_content_cb = get_circuit_breaker("browser:content", failure_threshold=5, recovery_timeout=60)
+_browser_navigate_cb = get_circuit_breaker(
+    "browser:navigate", failure_threshold=3, recovery_timeout=120
+)
+_browser_content_cb = get_circuit_breaker(
+    "browser:content", failure_threshold=5, recovery_timeout=60
+)
 
 
 class BrowserAgent:
@@ -18,6 +23,7 @@ class BrowserAgent:
 
     async def start(self, headless=True):
         from playwright.async_api import async_playwright
+
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=headless)
         context = await self._browser.new_context(
@@ -74,10 +80,8 @@ class BrowserAgent:
         except Exception as e:
             return f"Erro: {e}"
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await self._page.wait_for_load_state("domcontentloaded")
-            except Exception:
-                pass
 
     async def get_page_content(self):
         return await self._page.content()
@@ -90,8 +94,7 @@ def navegar_web(url, timeout=30):
     # Check circuit breaker before attempting
     if not _browser_navigate_cb.allow_request():
         raise CircuitBreakerOpenError(
-            "Navegacao web indisponivel (circuit breaker aberto). "
-            "Tente novamente em 120s."
+            "Navegacao web indisponivel (circuit breaker aberto). Tente novamente em 120s."
         )
 
     agent = BrowserAgent()

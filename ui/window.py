@@ -1,24 +1,15 @@
 """
 Main Window - Janela principal refatorada usando controllers e views extraídos.
 """
-import os
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication,
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -26,7 +17,6 @@ from PySide6.QtWidgets import (
 from core.config import get_settings
 from core.inventory import get_inventory_service
 from core.memory import get_memory_service
-from processors import processar_arquivo
 from ui.chat import ModernChatView, ModernInputArea
 from ui.command_palette import CommandPaletteManager
 from ui.controllers.conversation_manager import ConversationManager
@@ -37,9 +27,8 @@ from ui.inventory_panel import InventoryPanel
 from ui.jarvis_visualizer import JarvisVoiceVisualizer
 from ui.kanban_view import KanbanContainer
 from ui.sidebar import Sidebar
-from ui.theme import DARK_SCHEME, LIGHT_SCHEME, ThemeMode, get_stylesheet, scheme_from_name
 from ui.state.theme_manager import ThemeManager
-from ui.theme.tokens import SPACING, RADIUS, TYPOGRAPHY
+from ui.theme import ThemeMode, scheme_from_name
 from workers.ai_worker import WorkerManager
 
 
@@ -58,9 +47,7 @@ class ModernChatWindow(QMainWindow):
         self.theme_controller = ThemeController(self)
         self.worker_controller = WorkerController(self)
         self.conversation_manager = ConversationManager(
-            settings=self.settings,
-            memory_service=self.memory_service,
-            parent=self
+            settings=self.settings, memory_service=self.memory_service, parent=self
         )
 
         self._theme_mode = ThemeMode.LIGHT
@@ -87,6 +74,9 @@ class ModernChatWindow(QMainWindow):
 
         # Connect controllers
         self._connect_controllers()
+
+        # Populate model combo with all available models
+        self._populate_model_combo()
 
         # Command palette
         self.palette_manager = CommandPaletteManager(self)
@@ -211,12 +201,13 @@ class ModernChatWindow(QMainWindow):
 
         # Conversation manager
         self.conversation_manager.conversation_changed.connect(self._on_conversation_changed)
-        self.conversation_manager.conversation_list_changed.connect(self._refresh_sidebar_conversations)
+        self.conversation_manager.conversation_list_changed.connect(
+            self._refresh_sidebar_conversations
+        )
         self.conversation_manager.conversation_deleted.connect(self._on_conversation_deleted)
         self.conversation_manager.conversation_renamed.connect(self._on_conversation_renamed)
 
     def _apply_theme(self):
-        scheme = scheme_from_name(self._theme_mode.value)
         self.theme_controller.apply_theme(self)
 
     def _toggle_theme(self):
@@ -265,9 +256,10 @@ class ModernChatWindow(QMainWindow):
 
     def _delete_conversation(self, conv_id: str):
         reply = QMessageBox.question(
-            self, "Excluir conversa",
+            self,
+            "Excluir conversa",
             "Tem certeza que deseja excluir esta conversa?",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
             self.conversation_manager.delete_conversation(conv_id)
@@ -324,11 +316,49 @@ class ModernChatWindow(QMainWindow):
             self.chat_view.hide_thinking()
 
     # Model handlers
+    def _populate_model_combo(self):
+        """Fill model combo with all GGUF_MODELS and select current."""
+        from core.config import GGUF_MODELS, get_model_by_id
+
+        model_names = [m.display_name for m in GGUF_MODELS]
+        self.input_area.set_models(model_names)
+        current = get_model_by_id(self.settings.llm_model)
+        if current:
+            idx = self.input_area.model_combo.findText(current.display_name)
+            if idx >= 0:
+                self.input_area.model_combo.setCurrentIndex(idx)
+
     def _on_model_list_loaded(self, models: list):
         self.input_area.set_models(models)
 
-    def _on_model_changed(self, model_name: str):
-        self.settings.set("current_model", model_name)
+    def _on_model_changed(self, display_name: str):
+        """Switch to the selected model by display name."""
+        from core.config import GGUF_MODELS
+
+        match = next((m for m in GGUF_MODELS if m.display_name == display_name), None)
+        if not match:
+            return
+        old_model = self.settings.llm_model
+        if match.id == old_model:
+            return
+        self.settings.llm_model = match.id
+        # Restart llama.cpp with the new model
+        from core.llama_cpp import start_llama_server, stop_llama_server
+
+        try:
+            stop_llama_server()
+            if not start_llama_server(
+                model_id=match.id,
+                n_gpu_layers=-1,
+                n_ctx=16384,
+                n_batch=1024,
+                n_threads=0,
+            ):
+                self.settings.llm_model = old_model
+                QMessageBox.warning(self, "Erro", f"Falha ao carregar modelo {match.name}")
+        except Exception as e:
+            self.settings.llm_model = old_model
+            QMessageBox.warning(self, "Erro", f"Falha ao trocar modelo: {e}")
 
     def _on_model_loaded(self, model_name: str):
         self.input_area.set_models(self.input_area.model_combo.currentText(), model_name)
@@ -386,15 +416,16 @@ class ModernChatWindow(QMainWindow):
         if not self._current_conv_id:
             self._new_conversation()
 
-        self.conversation_manager.add_message(self._current_conv_id, "user", text, self.input_area.get_attachments())
-        self.chat_view.add_user_message(text, self.input_area.get_attachments())
+        attachments = self.input_area.get_attachments()
+        self.conversation_manager.add_message(self._current_conv_id, "user", text, attachments)
+        self.chat_view.add_user_message(text, attachments)
         self.input_area.clear_attachments()
 
         # Defer heavy operations (history/memory retrieval) to next event loop iteration
         # so the user message can render first
-        QTimer.singleShot(0, lambda: self._start_ai_response(text))
+        QTimer.singleShot(0, lambda: self._start_ai_response(text, attachments))
 
-    def _start_ai_response(self, text: str):
+    def _start_ai_response(self, text: str, attachments: list | None = None):
         history = self.conversation_manager.get_history_for_ai(self._current_conv_id)
         memories = self.conversation_manager.get_memories_for_ai() if self._memories_enabled else []
 
@@ -405,11 +436,13 @@ class ModernChatWindow(QMainWindow):
             system_prompt=system_prompt,
             conversation_history=history,
             memories=memories,
-            model_name=self.settings.llm_model
+            model_name=self.settings.llm_model,
+            attachments=attachments or [],
         )
 
     def _build_system_prompt(self) -> str:
         from datetime import date
+
         today = date.today().strftime("%d/%m/%Y")
         return f"Voce e o Celsius, um assistente de IA util e conciso. Hoje e {today}."
 
@@ -421,11 +454,17 @@ class ModernChatWindow(QMainWindow):
 
     def _process_attachment(self, file_path: str):
         from pathlib import Path
+
         ext = Path(file_path).suffix.lower()
 
-        if ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
-            self.input_area.add_attachment(file_path)
-        elif ext in [".pdf", ".txt", ".md", ".csv", ".xlsx", ".docx"]:
+        if ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"] or ext in [
+            ".pdf",
+            ".txt",
+            ".md",
+            ".csv",
+            ".xlsx",
+            ".docx",
+        ]:
             self.input_area.add_attachment(file_path)
         else:
             QMessageBox.warning(self, "Tipo nao suportado", f"Extensao {ext} nao suportada.")
@@ -458,12 +497,14 @@ class ModernChatWindow(QMainWindow):
 
     def _get_quantity(self, title: str, label: str):
         from PySide6.QtWidgets import QInputDialog
+
         qtd, ok = QInputDialog.getInt(self, title, label, 1, 0, 9999)
         return qtd, ok
 
     # Kanban handlers
     def _on_kanban_move(self, item_id: str, new_column: str):
         from core.inventory import ColunaKanban
+
         self.inventory_service.mover_item(item_id, ColunaKanban(new_column))
         self.inventory_panel.refresh()
 
@@ -473,13 +514,21 @@ class ModernChatWindow(QMainWindow):
 
     def _show_memories_dialog(self):
         from ui.dialogs import CaixaMemoriaDialog
-        dialog = CaixaMemoriaDialog(memory_service=self.memory_service, scheme=scheme_from_name(self._theme_mode.value), parent=self)
+
+        dialog = CaixaMemoriaDialog(
+            memory_service=self.memory_service,
+            scheme=scheme_from_name(self._theme_mode.value),
+            parent=self,
+        )
         dialog.exec()
 
     # Settings
     def _show_settings(self):
         from ui.dialogs import ConfiguracoesDialog
-        dialog = ConfiguracoesDialog(self.settings, scheme=scheme_from_name(self._theme_mode.value), parent=self)
+
+        dialog = ConfiguracoesDialog(
+            self.settings, scheme=scheme_from_name(self._theme_mode.value), parent=self
+        )
         if dialog.exec():
             self._apply_theme()
 

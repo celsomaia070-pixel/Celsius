@@ -48,7 +48,11 @@ class TestFileProcessors:
 
         # Try to access via path traversal
         result = processar_arquivo(str(test_file) + "/../../etc/passwd", base_dir=temp_dir)
-        assert "Path traversal" in result or "nao suportado" in result.lower() or "erro" in result.lower()
+        assert (
+            "Path traversal" in result
+            or "nao suportado" in result.lower()
+            or "erro" in result.lower()
+        )
 
     def test_processor_registry(self):
         assert ".pdf" in PROCESSADORES

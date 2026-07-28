@@ -1,5 +1,5 @@
-from datetime import datetime
 import os
+from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor, QPixmap
@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
@@ -17,10 +16,10 @@ from PySide6.QtWidgets import (
 )
 
 from core.config import get_settings
-from ui.components.base import Divider, IconButton, SearchInput
+from ui.components.base import SearchInput
 from ui.icons import icon
 from ui.theme.schemes import get_scheme
-from ui.theme.tokens import SPACING, RADIUS, TYPOGRAPHY
+from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY
 
 
 class ConversationItem(QListWidgetItem):
@@ -31,8 +30,8 @@ class ConversationItem(QListWidgetItem):
         self.timestamp = timestamp
         if isinstance(self.timestamp, str):
             try:
-                self.timestamp = datetime.fromisoformat(self.timestamp.replace('Z', '+00:00'))
-            except:
+                self.timestamp = datetime.fromisoformat(self.timestamp.replace("Z", "+00:00"))
+            except Exception:
                 self.timestamp = datetime.now()
         elif self.timestamp is None:
             self.timestamp = datetime.now()
@@ -74,7 +73,7 @@ class Sidebar(QWidget):
         self._scheme = scheme
         self._apply_scheme()
         self._update_tab_styles()
-        if hasattr(self, 'search_input') and hasattr(self.search_input, 'set_scheme'):
+        if hasattr(self, "search_input") and hasattr(self.search_input, "set_scheme"):
             self.search_input.set_scheme(scheme)
 
     def _apply_scheme(self):
@@ -104,7 +103,9 @@ class Sidebar(QWidget):
         # Header
         header = QWidget()
         header.setFixedHeight(56)
-        header.setStyleSheet(f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};")
+        header.setStyleSheet(
+            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+        )
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(SPACING.space_4, 0, SPACING.space_4, 0)
 
@@ -145,7 +146,9 @@ class Sidebar(QWidget):
         # Tab bar
         tab_bar = QWidget()
         tab_bar.setFixedHeight(40)
-        tab_bar.setStyleSheet(f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};")
+        tab_bar.setStyleSheet(
+            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+        )
         tab_layout = QHBoxLayout(tab_bar)
         tab_layout.setContentsMargins(SPACING.space_3, 0, SPACING.space_3, 0)
         tab_layout.setSpacing(0)
@@ -183,7 +186,9 @@ class Sidebar(QWidget):
 
         # Search
         self.search_input = SearchInput(placeholder="Buscar conversas...", icon_name="search")
-        self.search_input.setContentsMargins(SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2)
+        self.search_input.setContentsMargins(
+            SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2
+        )
         self.search_input.textChanged.connect(self._filter_conversations)
         layout.addWidget(self.search_input)
 
@@ -228,9 +233,13 @@ class Sidebar(QWidget):
 
         # Bottom section
         bottom = QWidget()
-        bottom.setStyleSheet(f"border-top: 1px solid {s.border_default}; background: {s.bg_primary};")
+        bottom.setStyleSheet(
+            f"border-top: 1px solid {s.border_default}; background: {s.bg_primary};"
+        )
         bottom_layout = QVBoxLayout(bottom)
-        bottom_layout.setContentsMargins(SPACING.space_3, SPACING.space_3, SPACING.space_3, SPACING.space_3)
+        bottom_layout.setContentsMargins(
+            SPACING.space_3, SPACING.space_3, SPACING.space_3, SPACING.space_3
+        )
         bottom_layout.setSpacing(SPACING.space_1)
 
         # Memory button

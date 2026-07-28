@@ -1,4 +1,5 @@
 """Llama.cpp Python bindings for embedded local LLM inference with Vulkan/GPU support."""
+
 import atexit
 import gc
 import io
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from PIL import Image
+
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -31,6 +33,7 @@ class Qwen25VLChatHandlerWithPIL(Qwen25VLChatHandler):
     def _load_image(self, image_url: str) -> bytes:
         if image_url.startswith("data:"):
             import base64
+
             header, data = image_url.split(",", 1)
             image_bytes = base64.b64decode(data)
             if PIL_AVAILABLE:
@@ -46,6 +49,7 @@ class Qwen25VLChatHandlerWithPIL(Qwen25VLChatHandler):
             return image_bytes
         else:
             import urllib.request
+
             with urllib.request.urlopen(image_url) as f:
                 return f.read()
 
@@ -61,6 +65,7 @@ class Llava15ChatHandlerWithPIL(Llava15ChatHandler):
     def _load_image(self, image_url: str) -> bytes:
         if image_url.startswith("data:"):
             import base64
+
             header, data = image_url.split(",", 1)
             image_bytes = base64.b64decode(data)
             if PIL_AVAILABLE:
@@ -76,6 +81,7 @@ class Llava15ChatHandlerWithPIL(Llava15ChatHandler):
             return image_bytes
         else:
             import urllib.request
+
             with urllib.request.urlopen(image_url) as f:
                 return f.read()
 
@@ -154,6 +160,7 @@ class LlamaManager:
         # Use half the cores to avoid contention with GPU inference
         if n_threads <= 0:
             import os
+
             n_threads = max(1, (os.cpu_count() or 4) // 2)
 
         # Vision support (mmproj)
@@ -173,7 +180,9 @@ class LlamaManager:
                     verbose=verbose,
                 )
             chat_handler = self._chat_handler
-            print(f"[LLAMA] Vision handler created: {type(self._chat_handler).__name__} for {model_id}")
+            print(
+                f"[LLAMA] Vision handler created: {type(self._chat_handler).__name__} for {model_id}"
+            )
         else:
             chat_handler = None
             # Set chat_format for non-vision Qwen models
@@ -257,7 +266,9 @@ class LlamaManager:
             return False
         try:
             # Quick health check with minimal inference
-            with metrics.timer(MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"):
+            with metrics.timer(
+                MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"
+            ):
                 self._llm("test", max_tokens=1, temperature=0)
             metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status="ok")
             return True
@@ -295,7 +306,9 @@ class LlamaManager:
 
         metrics.inc(MetricNames.LLM_REQUESTS_TOTAL, model=self._current_model_id or "unknown")
 
-        with metrics.timer(MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"):
+        with metrics.timer(
+            MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"
+        ):
             result = self._llm.create_chat_completion(**call_kwargs)
 
         # Extract token usage if available
@@ -398,6 +411,7 @@ stop_llama_server = stop_llama
 
 # ── Multi-Model Router ─────────────────────────────────────────────────
 
+
 @dataclass
 class ModelRouter:
     """Routes queries to appropriate model based on complexity.
@@ -406,8 +420,8 @@ class ModelRouter:
     """
 
     # Thresholds for routing
-    SIMPLE_MAX_TOKENS: int = 200       # Queries shorter than this → fast model
-    COMPLEX_MIN_TOKENS: int = 100      # Queries longer than this → main model
+    SIMPLE_MAX_TOKENS: int = 200  # Queries shorter than this → fast model
+    COMPLEX_MIN_TOKENS: int = 100  # Queries longer than this → main model
 
     # Patterns that indicate complex tasks
     COMPLEX_PATTERNS: list[str] = None
@@ -444,8 +458,7 @@ class ModelRouter:
 
         # Check for complex patterns FIRST (before simple check)
         complex_score = sum(
-            1 for pattern in self.COMPLEX_PATTERNS
-            if re.search(pattern, query_lower)
+            1 for pattern in self.COMPLEX_PATTERNS if re.search(pattern, query_lower)
         )
 
         # Very short queries without tool/code patterns → simple
@@ -466,7 +479,7 @@ class ModelRouter:
 
         if complexity == "simple":
             # Fast model for simple queries
-            return getattr(settings, 'fast_llm_model', 'llama3.2-3b-q5km')
+            return getattr(settings, "fast_llm_model", "llama3.2-3b-q5km")
         else:
             # Main model for complex tasks
             return settings.llm_model
@@ -486,7 +499,7 @@ class MultiModelManager:
     def get_manager(self, model_id: str) -> LlamaManager:
         """Get the appropriate manager for a model ID."""
         settings = get_settings()
-        if model_id == getattr(settings, 'fast_llm_model', None):
+        if model_id == getattr(settings, "fast_llm_model", None):
             # Check if fast model is loaded, if not fall back to main
             if self.fast_manager._started:
                 return self.fast_manager
@@ -494,10 +507,7 @@ class MultiModelManager:
         return self.main_manager
 
     def route_and_invoke(
-        self,
-        query: str,
-        has_document: bool = False,
-        **kwargs
+        self, query: str, has_document: bool = False, **kwargs
     ) -> tuple[str, LlamaManager]:
         """Route query to appropriate model and return (model_id, manager)."""
         model_id = self.router.get_model_for_query(query, has_document)
@@ -515,11 +525,14 @@ _multi_manager: MultiModelManager | None = None
 
 
 def get_multi_model_manager() -> MultiModelManager:
-    """Get singleton multi-model manager."""
-    global _multi_manager
-    if _multi_manager is None:
-        _multi_manager = MultiModelManager()
-    return _multi_manager
+    """Get singleton multi-model manager.
+
+    Delegates to core.model_router so production and tests use the same
+    routing implementation.
+    """
+    from core.model_router import get_multi_model_manager as _get_router_manager
+
+    return _get_router_manager()
 
 
 def get_llama() -> LlamaManager:

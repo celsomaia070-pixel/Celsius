@@ -6,6 +6,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class GGUFModel:
     """Represents a downloadable GGUF model."""
+
     id: str
     name: str
     category: str  # "multimodal", "code", "fast"
@@ -147,6 +148,7 @@ def get_model_by_id(model_id: str) -> GGUFModel | None:
 
 # ── Settings ────────────────────────────────────────────────────
 
+
 @dataclass
 class Settings:
     base_dir: Path = field(default_factory=lambda: _get_base_dir())
@@ -232,8 +234,16 @@ def _get_base_dir() -> Path:
 settings = Settings()
 
 
-def get_settings() -> Settings:
-    return settings
+def get_settings():
+    """Return the canonical pydantic settings object.
+
+    The legacy dataclass above is kept for constants and old imports, but
+    runtime code should read from core.settings so .env overrides apply
+    consistently across the app.
+    """
+    from core.settings import get_settings as _get_canonical_settings
+
+    return _get_canonical_settings()
 
 
 # Backwards compatibility

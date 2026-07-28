@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from core.config import MAX_FILE_SIZE_BYTES
+from core.settings import get_settings
 
 
 class SecurityError(Exception):
@@ -24,10 +24,11 @@ def validate_path(path: str | Path, base_dir: Path | None = None) -> Path:
     if not path.is_file():
         raise SecurityError(f"Not a file: {path}")
 
+    max_file_size_bytes = get_settings().max_file_size_mb * 1024 * 1024
     file_size = path.stat().st_size
-    if file_size > MAX_FILE_SIZE_BYTES:
+    if file_size > max_file_size_bytes:
         size_mb = file_size / (1024 * 1024)
-        limit_mb = MAX_FILE_SIZE_BYTES / (1024 * 1024)
+        limit_mb = max_file_size_bytes / (1024 * 1024)
         raise SecurityError(
             f"File too large: {size_mb:.1f} MB exceeds limit of {limit_mb:.0f} MB: {path}"
         )

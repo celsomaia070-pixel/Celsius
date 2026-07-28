@@ -1,4 +1,6 @@
-from core.commands import executar_comando, pesquisar_web
+"""Core module — lazy imports to avoid circular dependencies."""
+
+# Backwards compatibility — these re-export the original config values
 from core.config import (
     ARQUIVO_AUDIO_TEMP,
     ARQUIVO_MEMORIAS,
@@ -12,22 +14,21 @@ from core.config import (
     THRESHOLD_MEMORIA,
     TOP_MEMORIAS,
     GGUFModel,
-    Settings,
     get_model_by_id,
-    get_settings,
 )
-from core.llama_cpp import (
-    get_llama,
-    get_llama_client_config,
-    start_llama_server,
-    stop_llama_server,
-    switch_llama_model,
-)
+from core.container import get_container, reset_container
 from core.logging_config import get_logger, setup_logging
-from core.memory import (
-    MemoryService,
-    buscar_memorias,
-    carregar_memorias,
-    get_memory_service,
-    salvar_memorias,
+from core.settings import (
+    FeatureFlags,
+    FileSettings,
+    InventorySettings,
+    MemorySettings,
+    ModelSettings,
+    RagSettings,
+    SecuritySettings,
+    Settings,
+    TelemetrySettings,
+    UiSettings,
+    get_settings,
+    reset_settings,
 )

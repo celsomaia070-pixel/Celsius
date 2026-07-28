@@ -1,23 +1,19 @@
 from PySide6.QtCore import (
     QEasingCurve,
-    QParallelAnimationGroup,
     QPropertyAnimation,
-    QSequentialAnimationGroup,
     Qt,
     QTimer,
-    Property,
 )
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
-    QSizePolicy,
     QWidget,
 )
 
 from ui.theme.schemes import ColorScheme, get_scheme
-from ui.theme.tokens import SPACING, RADIUS, TYPOGRAPHY
+from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY
 
 
 def fade_in(widget: QWidget, duration: int = 300, start: float = 0.0, end: float = 1.0):
@@ -73,12 +69,11 @@ class PulsingDots(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(self._spacing)
-        for i in range(self._dot_count):
+        for _i in range(self._dot_count):
             dot = QLabel()
             dot.setFixedSize(self._dot_size, self._dot_size)
             dot.setStyleSheet(
-                f"background: {self._scheme.text_muted};"
-                f"border-radius: {self._dot_size // 2}px;"
+                f"background: {self._scheme.text_muted};border-radius: {self._dot_size // 2}px;"
             )
             effect = QGraphicsOpacityEffect(dot)
             dot.setGraphicsEffect(effect)
@@ -115,8 +110,7 @@ class PulsingDots(QWidget):
         self._scheme = scheme
         for dot in self.findChildren(QLabel):
             dot.setStyleSheet(
-                f"background: {scheme.text_muted};"
-                f"border-radius: {self._dot_size // 2}px;"
+                f"background: {scheme.text_muted};border-radius: {self._dot_size // 2}px;"
             )
 
 
@@ -131,7 +125,9 @@ class ThinkingIndicator(QWidget):
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(SPACING.space_2, SPACING.space_1, SPACING.space_2, SPACING.space_1)
+        layout.setContentsMargins(
+            SPACING.space_2, SPACING.space_1, SPACING.space_2, SPACING.space_1
+        )
         layout.setSpacing(SPACING.space_2)
         self._label = QLabel(self._base_text)
         self._label.setStyleSheet(
@@ -192,7 +188,9 @@ class TypingIndicator(QWidget):
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2)
+        layout.setContentsMargins(
+            SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2
+        )
         layout.setSpacing(0)
         self._container = QWidget()
         self._container.setStyleSheet(
@@ -201,16 +199,15 @@ class TypingIndicator(QWidget):
             f"padding: {SPACING.space_2}px {SPACING.space_3}px;"
         )
         container_layout = QHBoxLayout(self._container)
-        container_layout.setContentsMargins(SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2)
+        container_layout.setContentsMargins(
+            SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2
+        )
         container_layout.setSpacing(SPACING.space_1)
         self._dots = []
-        for i in range(3):
+        for _i in range(3):
             dot = QLabel()
             dot.setFixedSize(8, 8)
-            dot.setStyleSheet(
-                f"background: {self._scheme.text_muted};"
-                f"border-radius: 4px;"
-            )
+            dot.setStyleSheet(f"background: {self._scheme.text_muted};border-radius: 4px;")
             effect = QGraphicsOpacityEffect(dot)
             dot.setGraphicsEffect(effect)
             self._dots.append((dot, effect))
@@ -219,12 +216,12 @@ class TypingIndicator(QWidget):
         layout.addStretch()
 
     def _start_animation(self):
-        for i, (dot, effect) in enumerate(self._dots):
+        for i, (_dot, _effect) in enumerate(self._dots):
             timer = QTimer(self)
             timer.setSingleShot(True)
             timer.timeout.connect(lambda idx=i: self._pulse_dot(idx))
             timer.start(i * 250)
-            self._timers = getattr(self, '_timers', [])
+            self._timers = getattr(self, "_timers", [])
             self._timers.append(timer)
 
     def _pulse_dot(self, index):
@@ -243,21 +240,17 @@ class TypingIndicator(QWidget):
         timer.setSingleShot(True)
         timer.timeout.connect(lambda idx=index: self._pulse_dot(idx))
         timer.start(1000)
-        if not hasattr(self, '_timers'):
+        if not hasattr(self, "_timers"):
             self._timers = []
         self._timers.append(timer)
 
     def set_scheme(self, scheme: ColorScheme):
         self._scheme = scheme
         self._container.setStyleSheet(
-            f"background: {scheme.bg_secondary};"
-            f"border-radius: {RADIUS.radius_lg}px;"
+            f"background: {scheme.bg_secondary};border-radius: {RADIUS.radius_lg}px;"
         )
         for dot, _ in self._dots:
-            dot.setStyleSheet(
-                f"background: {scheme.text_muted};"
-                f"border-radius: 4px;"
-            )
+            dot.setStyleSheet(f"background: {scheme.text_muted};border-radius: 4px;")
 
 
 class ShimmerOverlay(QWidget):
@@ -287,6 +280,7 @@ class ShimmerOverlay(QWidget):
         if not self.isVisible():
             return
         from PySide6.QtGui import QLinearGradient, QPainter
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         gradient = QLinearGradient(self._offset - 100, 0, self._offset + 100, 0)

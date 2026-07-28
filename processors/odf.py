@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.config import LIMITE_TEXTO_DOCUMENTO
+from core.settings import get_settings
 from processors.base import ProcessadorArquivo
 
 
@@ -50,7 +50,9 @@ class ProcessadorODF(ProcessadorArquivo):
                     repeticoes = celula.getAttribute("numbercolumnsrepeated")
                     conteudo = ""
                     for p in celula.getElementsByType(P):
-                        conteudo += teletype.extractText(p) if hasattr(teletype, "extractText") else ""
+                        conteudo += (
+                            teletype.extractText(p) if hasattr(teletype, "extractText") else ""
+                        )
                     try:
                         if repeticoes and int(repeticoes) > 10:
                             continue
@@ -77,6 +79,7 @@ class ProcessadorODF(ProcessadorArquivo):
 
     @classmethod
     def _truncar(cls, texto: str) -> str:
-        if len(texto) > LIMITE_TEXTO_DOCUMENTO:
-            return texto[:LIMITE_TEXTO_DOCUMENTO] + "\n... [Documento truncado] ..."
+        limite_texto = get_settings().doc_text_limit
+        if len(texto) > limite_texto:
+            return texto[:limite_texto] + "\n... [Documento truncado] ..."
         return texto

@@ -1,5 +1,7 @@
-from collections.abc import Callable
+import contextlib
 import gc
+from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
@@ -8,6 +10,7 @@ from ai.engine import gerar_resposta, gerar_resposta_com_imagem
 
 class WorkerSignals(QObject):
     """Signals for worker communication."""
+
     finished = Signal(str)
     status = Signal(str)
     step = Signal(object)
@@ -45,6 +48,7 @@ class AIWorker(QRunnable):
     def run(self):
         gc.disable()
         try:
+            self._prepare_attachments()
             if self.prompt_dict.get("caminho_imagem"):
                 resposta = gerar_resposta_com_imagem(
                     self.prompt_dict["caminho_imagem"],
@@ -61,16 +65,56 @@ class AIWorker(QRunnable):
                 )
             self.signals.finished.emit(resposta)
         except Exception as e:
-            try:
+            with contextlib.suppress(RuntimeError):
                 self.signals.error.emit(str(e))
-            except RuntimeError:
-                pass
-            try:
+            with contextlib.suppress(RuntimeError):
                 self.signals.finished.emit(f"Erro: {e}")
-            except RuntimeError:
-                pass
         finally:
             gc.enable()
+
+    def _prepare_attachments(self) -> None:
+        attachments = self.prompt_dict.pop("anexos", []) or []
+        if not attachments:
+            return
+
+        from core.settings import get_settings
+        from processors import processar_arquivo
+
+        settings = get_settings()
+        doc_parts = []
+        existing_doc = self.prompt_dict.get("documento", "").strip()
+        if existing_doc:
+            doc_parts.append(existing_doc)
+
+        doc_names = []
+        first_image = ""
+        for file_path, file_name in attachments:
+            path = Path(file_path)
+            suffix = path.suffix.lower()
+            if suffix in settings.image_extensions and not first_image:
+                first_image = str(path)
+                continue
+
+            try:
+                processed = processar_arquivo(str(path), base_dir=path.parent)
+            except Exception as exc:
+                processed = f"Erro ao processar anexo '{file_name}': {exc}"
+            doc_names.append(file_name)
+            doc_parts.append(f"### Anexo: {file_name}\n{processed}")
+
+        if first_image and not doc_parts:
+            self.prompt_dict["caminho_imagem"] = first_image
+        elif first_image:
+            doc_parts.append(f"### Imagem anexada\nCaminho: {first_image}")
+
+        if doc_parts:
+            self.prompt_dict["documento"] = "\n\n".join(doc_parts)
+            if doc_names:
+                self.prompt_dict["nome_documento"] = ", ".join(doc_names)
+            if doc_names:
+                self.prompt_dict["caminho_documento"] = "; ".join(
+                    str(Path(path)) for path, _name in attachments
+                )
 
 
 class WorkerManager:

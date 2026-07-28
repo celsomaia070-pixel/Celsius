@@ -3,10 +3,7 @@ Stylesheet Generator - Gera QSS a partir dos ColorScheme e tokens.
 Fonte única de verdade para todos os estilos QSS da aplicação.
 """
 
-from ui.theme.tokens import (
-    SPACING, RADIUS, TYPOGRAPHY, SHADOWS, BORDERS, TRANSITIONS
-)
-from ui.theme.schemes import ColorScheme, ThemeMode
+from ui.theme.schemes import ColorScheme
 
 
 def px(value: int) -> str:
@@ -15,7 +12,7 @@ def px(value: int) -> str:
 
 def _rgba_to_hex_with_alpha(color: str, alpha: float) -> str:
     """Converte hex para rgba string para QSS."""
-    color = color.lstrip('#')
+    color = color.lstrip("#")
     if len(color) == 6:
         r = int(color[0:2], 16)
         g = int(color[2:4], 16)
@@ -30,14 +27,12 @@ def generate_base_stylesheet(scheme: ColorScheme) -> str:
     sp = scheme.spacing
     rad = scheme.radius
     typo = scheme.typography
-    sh = scheme.shadows
     bd = scheme.borders
-    tr = scheme.transitions
 
     return f"""
 /* ============================================================
    BASE STYLESHEET - Gerado a partir de design tokens
-   Theme: {'Light' if s.bg_primary == '#FFFFFF' else 'Dark'}
+   Theme: {"Light" if s.bg_primary == "#FFFFFF" else "Dark"}
    ============================================================ */
 
 /* ----- Global ----- */
@@ -922,13 +917,15 @@ def generate_input_stylesheet(scheme: ColorScheme) -> str:
 
 def generate_all_stylesheets(scheme: ColorScheme) -> str:
     """Gera o stylesheet completo combinando todos os módulos."""
-    return "\n".join([
-        generate_base_stylesheet(scheme),
-        generate_chat_stylesheet(scheme),
-        generate_sidebar_stylesheet(scheme),
-        generate_inventory_stylesheet(scheme),
-        generate_input_stylesheet(scheme),
-    ])
+    return "\n".join(
+        [
+            generate_base_stylesheet(scheme),
+            generate_chat_stylesheet(scheme),
+            generate_sidebar_stylesheet(scheme),
+            generate_inventory_stylesheet(scheme),
+            generate_input_stylesheet(scheme),
+        ]
+    )
 
 
 def get_stylesheet(scheme: ColorScheme) -> str:

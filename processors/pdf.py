@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.config import LIMITE_TEXTO_DOCUMENTO
+from core.settings import get_settings
 from processors.base import ProcessadorArquivo
 
 
@@ -38,8 +38,9 @@ class ProcessadorPDF(ProcessadorArquivo):
                 texto += f"Página {i + 1}/{total_paginas}\n{texto_pagina}\n\n"
 
         texto = texto.strip()
-        if len(texto) > LIMITE_TEXTO_DOCUMENTO:
-            texto = texto[:LIMITE_TEXTO_DOCUMENTO] + "\n... [Documento truncado] ..."
+        limite_texto = get_settings().doc_text_limit
+        if len(texto) > limite_texto:
+            texto = texto[:limite_texto] + "\n... [Documento truncado] ..."
 
         resultado = f"PDF: {total_paginas} páginas"
         if info_meta:

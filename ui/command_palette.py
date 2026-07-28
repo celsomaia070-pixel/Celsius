@@ -22,9 +22,7 @@ class CommandPalette(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.Dialog | Qt.NoDropShadowWindowHint
-        )
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setModal(True)
         self.resize(600, 400)
@@ -176,12 +174,14 @@ class CommandPalette(QDialog):
             self.add_action(action_id, name, icon_name, shortcut)
 
     def add_action(self, action_id: str, name: str, icon_name: str, shortcut: str = ""):
-        self._actions.append({
-            "id": action_id,
-            "name": name,
-            "icon": icon_name,
-            "shortcut": shortcut,
-        })
+        self._actions.append(
+            {
+                "id": action_id,
+                "name": name,
+                "icon": icon_name,
+                "shortcut": shortcut,
+            }
+        )
 
     def _filter_actions(self, text: str):
         self._filtered_actions = []
@@ -192,9 +192,11 @@ class CommandPalette(QDialog):
         else:
             text_lower = text.lower()
             for action in self._actions:
-                if (text_lower in action["name"].lower() or
-                    text_lower in action["id"].lower() or
-                    text_lower in action.get("shortcut", "").lower()):
+                if (
+                    text_lower in action["name"].lower()
+                    or text_lower in action["id"].lower()
+                    or text_lower in action.get("shortcut", "").lower()
+                ):
                     self._filtered_actions.append(action)
 
         for action in self._filtered_actions:
@@ -207,9 +209,7 @@ class CommandPalette(QDialog):
             w_layout.setSpacing(12)
 
             icon_label = QLabel()
-            icon_label.setPixmap(
-                icon(action["icon"], self._scheme.text_secondary).pixmap(20, 20)
-            )
+            icon_label.setPixmap(icon(action["icon"], self._scheme.text_secondary).pixmap(20, 20))
             w_layout.addWidget(icon_label)
 
             name_label = QLabel(action["name"])
@@ -269,10 +269,7 @@ class CommandPalette(QDialog):
         super().showEvent(event)
         if self.parent():
             parent_rect = self.parent().geometry()
-            self.move(
-                parent_rect.center().x() - self.width() // 2,
-                parent_rect.top() + 80
-            )
+            self.move(parent_rect.center().x() - self.width() // 2, parent_rect.top() + 80)
         self.search_input.clear()
         self.search_input.setFocus()
         QTimer.singleShot(0, lambda: self.search_input.setFocus())
@@ -291,6 +288,7 @@ class CommandPaletteManager:
         self.palette.action_triggered.connect(self._execute_action)
 
         from PySide6.QtGui import QKeySequence, QShortcut
+
         self.shortcut = QShortcut(QKeySequence("Ctrl+K"), window)
         self.shortcut.activated.connect(self._show_palette)
 
@@ -307,7 +305,9 @@ class CommandPaletteManager:
         handlers = {
             "new_chat": self.window._new_conversation,
             "clear_chat": self.window.chat_view.clear,
-            "toggle_sidebar": lambda: self.window.sidebar.setVisible(not self.window.sidebar.isVisible()),
+            "toggle_sidebar": lambda: self.window.sidebar.setVisible(
+                not self.window.sidebar.isVisible()
+            ),
             "toggle_theme": self.window._toggle_theme,
             "settings": self.window._show_settings,
             "change_model": lambda: self.window.input_area.model_combo.showPopup(),

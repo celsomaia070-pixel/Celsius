@@ -3,6 +3,7 @@
 Provides lightweight in-process metrics without requiring Prometheus server.
 All metrics are stored in memory and can be queried via API or exported.
 """
+
 import logging
 import threading
 import time
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MetricPoint:
     """Single metric data point."""
+
     name: str
     value: float
     timestamp: float
@@ -162,8 +164,10 @@ class _TimerContext:
 
 # --- Predefined metric names ---
 
+
 class MetricNames:
     """Centralized metric names for consistency."""
+
     # Tool execution
     TOOL_CALLS_TOTAL = "celsius_tool_calls_total"
     TOOL_ERRORS_TOTAL = "celsius_tool_errors_total"

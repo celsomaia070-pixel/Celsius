@@ -1,11 +1,12 @@
 import json
 import logging
+import os
+import tempfile
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from core.config import get_settings
 
@@ -154,8 +155,16 @@ class InventoryService:
                 "items": [item.to_dict() for item in self._items.values()],
                 "movimentacoes": [m.to_dict() for m in self._movimentacoes[-200:]],
             }
-            with open(path, "w", encoding="utf-8") as f:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                dir=path.parent,
+                text=True,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_name, path)
         except Exception as e:
             logger.error("Erro ao salvar estoque: %s", e)
 
@@ -163,7 +172,7 @@ class InventoryService:
         with self._lock:
             return list(self._items.values())
 
-    def get_item(self, item_id: str) -> Optional[ItemEstoque]:
+    def get_item(self, item_id: str) -> ItemEstoque | None:
         with self._lock:
             return self._items.get(item_id)
 
@@ -217,7 +226,7 @@ class InventoryService:
         categoria: str = None,
         estoque_min: int = None,
         estoque_max: int = None,
-    ) -> Optional[ItemEstoque]:
+    ) -> ItemEstoque | None:
         with self._lock:
             item = self._items.get(item_id)
             if not item:
@@ -236,7 +245,7 @@ class InventoryService:
             self._notify("item_editado", item)
             return item
 
-    def entrada(self, item_id: str, quantidade: int) -> Optional[Movimentacao]:
+    def entrada(self, item_id: str, quantidade: int) -> Movimentacao | None:
         with self._lock:
             item = self._items.get(item_id)
             if not item or quantidade <= 0:
@@ -259,7 +268,7 @@ class InventoryService:
             self._notify("entrada", mov)
             return mov
 
-    def saida(self, item_id: str, quantidade: int) -> Optional[Movimentacao]:
+    def saida(self, item_id: str, quantidade: int) -> Movimentacao | None:
         with self._lock:
             item = self._items.get(item_id)
             if not item or quantidade <= 0 or quantidade > item.quantidade:
@@ -303,13 +312,11 @@ class InventoryService:
         q = query.lower().strip()
         with self._lock:
             return [
-                i
-                for i in self._items.values()
-                if q in i.nome.lower() or q in i.categoria.lower()
+                i for i in self._items.values() if q in i.nome.lower() or q in i.categoria.lower()
             ]
 
 
-_inventory_service: Optional[InventoryService] = None
+_inventory_service: InventoryService | None = None
 
 
 def get_inventory_service() -> InventoryService:

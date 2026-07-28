@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from ui.theme.schemes import ColorScheme, ThemeMode, get_scheme, SCHEMES
+from ui.theme.schemes import SCHEMES, ColorScheme, ThemeMode, get_scheme
 
 
 class ThemeManager(QObject):
@@ -83,7 +83,7 @@ class ThemeManager(QObject):
 
     def get_available_schemes(self) -> list[str]:
         """Retorna lista de temas disponíveis."""
-        return [mode.value for mode in SCHEMES.keys()]
+        return [mode.value for mode in SCHEMES]
 
     def _notify_listeners(self):
         """Notifica todos os widgets registrados sobre a mudança de tema."""
@@ -116,8 +116,7 @@ class ThemeManager(QObject):
                 "system_follow": self._system_follow,
             }
             self._CONFIG_FILE.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8"
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
             )
         except OSError:
             pass

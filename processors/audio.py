@@ -1,3 +1,4 @@
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -15,6 +16,7 @@ class ProcessadorAudio(ProcessadorArquivo):
     def _carregar_modelo(cls):
         if cls._modelo_whisper is None:
             import whisper
+
             cls._modelo_whisper = whisper.load_model(MODELO_WHISPER)
         return cls._modelo_whisper
 
@@ -26,16 +28,15 @@ class ProcessadorAudio(ProcessadorArquivo):
         caminho_wav = str(path)
         temporario = False
 
-        if not path.suffix.lower() == ".wav":
+        if path.suffix.lower() != ".wav":
             try:
                 from pydub import AudioSegment
 
                 audio = AudioSegment.from_file(str(path))
                 audio = audio.set_channels(1).set_frame_rate(16000)
 
-                temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                caminho_wav = temp.name
-                temp.close()
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp:
+                    caminho_wav = temp.name
 
                 audio.export(caminho_wav, format="wav")
                 temporario = True
@@ -64,7 +65,5 @@ class ProcessadorAudio(ProcessadorArquivo):
             return f"Erro ao transcrever audio: {e}"
         finally:
             if temporario and os.path.exists(caminho_wav):
-                try:
+                with contextlib.suppress(Exception):
                     os.remove(caminho_wav)
-                except Exception:
-                    pass

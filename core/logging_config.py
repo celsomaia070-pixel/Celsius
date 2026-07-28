@@ -4,13 +4,9 @@ from pathlib import Path
 
 import structlog
 
-from core.config import get_settings
-
 
 def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
     """Configure structured logging with structlog."""
-
-    settings = get_settings()
 
     # Configure standard library logging
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]

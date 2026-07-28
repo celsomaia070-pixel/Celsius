@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Politica de seguranca
+    url: https://github.com/celso/celsius/security/policy
+    about: Para vulnerabilidades, siga SECURITY.md.

@@ -6,9 +6,8 @@ Mantém compatibilidade com o sistema existente enquanto integra o novo sistema.
 from dataclasses import dataclass
 from enum import Enum
 
-from ui.theme.schemes import ColorScheme, ThemeMode as SchemeMode, get_scheme, SCHEMES
-from ui.theme.tokens import tokens
-from ui.theme.stylesheet import get_stylesheet as generate_stylesheet
+from ui.theme.schemes import ColorScheme, get_scheme
+from ui.theme.schemes import ThemeMode as SchemeMode
 
 
 class ThemeMode(Enum):
@@ -20,6 +19,7 @@ class ThemeMode(Enum):
 # ============================================================
 # Cores Legacy (mantidas para compatibilidade)
 # ============================================================
+
 
 @dataclass
 class LegacyColorScheme:
@@ -87,23 +87,19 @@ def _scheme_to_legacy(scheme: ColorScheme) -> LegacyColorScheme:
         bg_tertiary=scheme.surfaceVariant,
         bg_hover=scheme.surfaceHover,
         bg_active=scheme.surfaceActive,
-
         # Text
         text_primary=scheme.onSurface,
         text_secondary=scheme.onSurfaceVariant,
         text_muted=scheme.onSurfaceDisabled,
         text_inverse=scheme.onPrimary,
-
         # Accent
         accent_primary=scheme.primary,
         accent_hover=scheme.primaryHover,
         accent_pressed=scheme.primaryActive,
-
         # Borders
         border_subtle=scheme.borderSubtle,
         border_default=scheme.border,
         border_strong=scheme.borderHover,
-
         # Semantic
         success=scheme.success,
         success_bg=scheme.successContainer,
@@ -113,23 +109,19 @@ def _scheme_to_legacy(scheme: ColorScheme) -> LegacyColorScheme:
         error_bg=scheme.dangerContainer,
         info=scheme.info,
         info_bg=scheme.infoContainer,
-
         # Bubbles
         user_bubble_bg=scheme.primary,
         user_bubble_text=scheme.onPrimary,
         assistant_bubble_bg=scheme.surfaceVariant,
         assistant_bubble_text=scheme.onSurface,
-
         # Code
         code_bg=scheme.surfaceVariant,
         code_text=scheme.onSurface,
         code_border=scheme.border,
-
         # Scrollbar
         scrollbar_bg=scheme.background,
         scrollbar_handle=scheme.borderHover,
         scrollbar_handle_hover=scheme.onSurfaceDisabled,
-
         # Shadows
         shadow_1=f"rgba(0, 0, 0, {0.04 if scheme.is_light else 0.2})",
         shadow_2=f"rgba(0, 0, 0, {0.08 if scheme.is_light else 0.3})",
@@ -147,20 +139,16 @@ LIGHT_SCHEME = LegacyColorScheme(
     bg_tertiary="#F7F7F8",
     bg_hover="#F0F0F1",
     bg_active="#E8E8EA",
-
     text_primary="#1A1A1B",
     text_secondary="#6E6E73",
     text_muted="#9E9EA3",
     text_inverse="#FFFFFF",
-
     accent_primary="#000000",
     accent_hover="#1A1A1A",
     accent_pressed="#333333",
-
     border_subtle="#E5E5E7",
     border_default="#E5E5E7",
     border_strong="#D1D1D6",
-
     success="#008000",
     success_bg="#E8F5E9",
     warning="#B8860B",
@@ -169,20 +157,16 @@ LIGHT_SCHEME = LegacyColorScheme(
     error_bg="#FDEDEC",
     info="#0066CC",
     info_bg="#E3F2FD",
-
     user_bubble_bg="#000000",
     user_bubble_text="#FFFFFF",
     assistant_bubble_bg="#F7F7F8",
     assistant_bubble_text="#1A1A1B",
-
     code_bg="#F7F7F8",
     code_text="#1A1A1B",
     code_border="#E5E5E7",
-
     scrollbar_bg="#FFFFFF",
     scrollbar_handle="#D1D1D6",
     scrollbar_handle_hover="#9E9EA3",
-
     shadow_1="rgba(0, 0, 0, 0.04)",
     shadow_2="rgba(0, 0, 0, 0.08)",
     shadow_3="rgba(0, 0, 0, 0.12)",
@@ -194,20 +178,16 @@ DARK_SCHEME = LegacyColorScheme(
     bg_tertiary="#21262D",
     bg_hover="#30363D",
     bg_active="#1F6FEB",
-
     text_primary="#E6EDF3",
     text_secondary="#8B949E",
     text_muted="#484F58",
     text_inverse="#0D1117",
-
     accent_primary="#58A6FF",
     accent_hover="#79C0FF",
     accent_pressed="#388BF0",
-
     border_subtle="#21262D",
     border_default="#30363D",
     border_strong="#484F58",
-
     success="#3FB950",
     success_bg="#163D2A",
     warning="#D29922",
@@ -216,20 +196,16 @@ DARK_SCHEME = LegacyColorScheme(
     error_bg="#4D1A1A",
     info="#58A6FF",
     info_bg="#1A3A5C",
-
     user_bubble_bg="#007AFF",
     user_bubble_text="#FFFFFF",
     assistant_bubble_bg="#1E1E1E",
     assistant_bubble_text="#E6EDF3",
-
     code_bg="#161B22",
     code_text="#E6EDF3",
     code_border="#30363D",
-
     scrollbar_bg="#0D1117",
     scrollbar_handle="#30363D",
     scrollbar_handle_hover="#484F58",
-
     shadow_1="rgba(0, 0, 0, 0.2)",
     shadow_2="rgba(0, 0, 0, 0.3)",
     shadow_3="rgba(0, 0, 0, 0.4)",
@@ -239,6 +215,7 @@ DARK_SCHEME = LegacyColorScheme(
 # ============================================================
 # Funções Legacy (mantidas para compatibilidade)
 # ============================================================
+
 
 def get_legacy_scheme(mode: ThemeMode = ThemeMode.LIGHT) -> LegacyColorScheme:
     """Retorna o esquema legacy para o modo especificado."""
@@ -513,6 +490,7 @@ QTabBar::tab:selected {{
 # ============================================================
 # Funções de conversão
 # ============================================================
+
 
 def scheme_from_name(name: str) -> ColorScheme:
     """Retorna um ColorScheme a partir do nome (light/dark)."""

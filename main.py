@@ -1,8 +1,6 @@
 import contextlib
 import faulthandler
-import os
 import signal
-import subprocess
 import sys
 import threading
 import traceback
@@ -10,13 +8,30 @@ import traceback
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from core.config import get_model_by_id, get_settings
+from core.container import get_container, reset_container
 from core.llama_cpp import get_llama_manager, stop_llama_server
-from core.model_downloader import download_mmproj, download_model, is_model_downloaded
+from core.settings import get_feature_flags, get_settings
+from core.telemetry import init_telemetry, shutdown_telemetry
 from ui.window import ModernChatWindow
 
+VERSION = "1.0.0"
 
-def _start_health_check(app: QApplication, model_id: str) -> QTimer:
+BANNER = r"""
+   _____ _                            _
+  / ____| |                          | |
+ | |    | |__   ___  _ __   ___  _ __| |_ ___ _ __
+ | |    | '_ \ / _ \| '_ \ / _ \| '__| __/ _ \ '__|
+ | |____| | | | (_) | | | | (_) | |  | ||  __/ |
+  \_____|_| |_|\___/|_| |_|\___/|_|   \__\___|_|
+                                        v{version}
+"""
+
+
+def _print_banner():
+    print(BANNER.format(version=VERSION))
+
+
+def _start_health_check(app: QApplication, model_id: str, settings) -> QTimer:
     """Start periodic health check for the LLM model."""
     manager = get_llama_manager()
 
@@ -25,111 +40,126 @@ def _start_health_check(app: QApplication, model_id: str) -> QTimer:
             print("[HealthCheck] Model unhealthy, attempting recovery...")
             try:
                 manager.stop()
-                if not manager.start(model_id=model_id, n_gpu_layers=-1, n_ctx=16384, n_batch=1024):
+                if not manager.start(
+                    model_id=model_id,
+                    n_gpu_layers=settings.model.n_gpu_layers,
+                    n_ctx=settings.model.num_ctx,
+                    n_batch=settings.model.n_batch,
+                    n_threads=settings.model.n_threads,
+                ):
                     print("[HealthCheck] Failed to recover model")
             except Exception as e:
                 print(f"[HealthCheck] Recovery failed: {e}")
 
-    timer = QTimer()
+    timer = QTimer(app)
     timer.timeout.connect(check_health)
-    timer.start(300000)  # Check every 5 minutes
+    timer.start(300000)
     return timer
+
+
+def _import_optional(name: str):
+    try:
+        return __import__(name)
+    except ImportError:
+        return None
+
+
+def _ensure_model_available(settings) -> None:
+    model_id = settings.model.llm_model
+    model_path = settings.get_model_path(model_id)
+    if model_path.exists():
+        return
+
+    print(f"[Model] Modelo ausente: {model_path.name}. Tentando download sob demanda...")
+    from core.model_downloader import download_mmproj, download_model
+
+    downloaded = download_model(model_id, fn_status=lambda msg: print(f"[Model] {msg}"))
+    if downloaded is None:
+        raise FileNotFoundError(
+            f"Modelo '{model_id}' nao encontrado e download automatico falhou.\n"
+            f"Coloque o arquivo GGUF em {settings.resources_dir} ou escolha outro modelo."
+        )
+    download_mmproj(model_id, fn_status=lambda msg: print(f"[Model] {msg}"))
 
 
 def main():
     faulthandler.enable()
+    _print_banner()
 
-    try:
-        import edge_tts
-    except ImportError:
-        pass
-
-    try:
-        import sentence_transformers
-    except ImportError:
-        pass
-
-    try:
-        import transformers
-    except ImportError:
-        pass
-
-    # Pre-load embedding model on main thread (avoids GC crash in worker threads on Python 3.14)
-    try:
-        from ai.agents import preload_embedding_model
-        preload_embedding_model()
-    except Exception:
-        pass
-
-    # Pre-load Whisper model in background (evita delay na primeira uso)
-    _whisper_preloader = None
-    try:
-        from PySide6.QtCore import QThread
-        class WhisperPreloader(QThread):
-            def run(self):
-                try:
-                    from workers.mic_worker import preload_whisper_model
-                    preload_whisper_model()
-                except Exception:
-                    pass
-        _whisper_preloader = WhisperPreloader()
-        _whisper_preloader.start()
-    except Exception:
-        pass
+    _import_optional("edge_tts")
+    _import_optional("sentence_transformers")
+    _import_optional("transformers")
 
     settings = get_settings()
-    model = get_model_by_id(settings.llm_model)
+    telemetry_settings = settings.telemetry
+    if telemetry_settings.enabled:
+        init_telemetry(
+            service_name=telemetry_settings.service_name,
+            service_version=VERSION,
+            otlp_endpoint=telemetry_settings.otlp_endpoint,
+            sample_rate=telemetry_settings.sample_rate,
+            log_level=telemetry_settings.log_level.value,
+        )
 
-    # Create QApplication first (needed for dialogs)
+    get_container()
+    features = get_feature_flags()
+
+    # Log hardware observations (informational only — never overrides user model)
+    if settings.hardware.auto_detect:
+        try:
+            from core.hardware import detect_hardware
+            from core.model_selector import select_optimal_model
+
+            profile = detect_hardware()
+            recommendation = select_optimal_model(profile)
+            print(f"[Hardware] {recommendation.profile.summary}")
+            print(f"[Hardware] Modelo recomendado: {recommendation.main_model_id}")
+            print(f"[Hardware] Modelo ativo: {settings.model.llm_model}")
+        except Exception as e:
+            print(f"[Hardware] Deteccao falhou: {e}")
+
+    # Pre-load embedding model on main thread (avoids GC crash in worker threads on Python 3.14)
+    if features.multi_agent:
+        try:
+            from ai.agents import preload_embedding_model
+
+            preload_embedding_model()
+        except Exception:
+            pass
+
+    # Pre-load Whisper model in background
+    _whisper_preloader = None
+    if features.voice_input:
+        try:
+            from PySide6.QtCore import QThread
+
+            class WhisperPreloader(QThread):
+                def run(self):
+                    try:
+                        from workers.mic_worker import preload_whisper_model
+
+                        preload_whisper_model()
+                    except Exception:
+                        pass
+
+            _whisper_preloader = WhisperPreloader()
+            _whisper_preloader.start()
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # Check if model is downloaded
-    if model and not is_model_downloaded(settings.llm_model):
-        reply = QMessageBox.question(
-            None,
-            "Modelo nao encontrado",
-            f"O modelo '{model.name}' ({model.quant}) nao foi baixado ainda.\n"
-            f"Tamanho: ~{model.size_gb}GB\n\n"
-            f"Deseja baixar agora?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if reply == QMessageBox.Yes:
-            from PySide6.QtCore import QThread, Signal
-
-            class DownloadThread(QThread):
-                done = Signal(bool, str)
-
-                def run(self):
-                    try:
-                        download_model(settings.llm_model)
-                        if model.has_mmproj:
-                            download_mmproj(settings.llm_model)
-                        self.done.emit(True, "")
-                    except Exception as e:
-                        self.done.emit(False, str(e))
-
-            # Show downloading message
-            msg = QMessageBox()
-            msg.setWindowTitle("Baixando modelo")
-            msg.setText(f"Baixando {model.name}... Aguarde.")
-            msg.setStandardButtons(QMessageBox.NoButton)
-            msg.show()
-
-            thread = DownloadThread()
-            thread.done.connect(lambda ok, err: _on_download_done(app, msg, ok, err))
-            thread.start()
-            app.exec()
-            return 0
-        else:
-            return 0
-
-    # Start embedded Llama with GPU acceleration
     from core.llama_cpp import start_llama_server
 
     try:
-        if not start_llama_server(n_gpu_layers=-1, n_ctx=16384, n_batch=1024):
+        _ensure_model_available(settings)
+        if not start_llama_server(
+            n_gpu_layers=settings.model.n_gpu_layers,
+            n_ctx=settings.model.num_ctx,
+            n_batch=settings.model.n_batch,
+            n_threads=settings.model.n_threads,
+        ):
             QMessageBox.critical(
                 None,
                 "Erro ao iniciar LLM local",
@@ -148,22 +178,22 @@ def main():
     window = ModernChatWindow()
     window.show()
 
-    # Ensure model stops on app exit
     def _safe_shutdown():
         with contextlib.suppress(Exception):
             stop_llama_server()
+        with contextlib.suppress(Exception):
+            shutdown_telemetry()
+        with contextlib.suppress(Exception):
+            reset_container()
 
     app.aboutToQuit.connect(_safe_shutdown)
 
-    # Start periodic health check
-    _start_health_check(app, settings.llm_model)
+    _start_health_check(app, settings.model.llm_model, settings)
 
-    # Override default ctrl+c to avoid crash from interrupted threads
     signal.signal(signal.SIGINT, lambda *_: app.quit())
 
     result = app.exec()
 
-    # Force cleanup of remaining threads
     for thread in threading.enumerate():
         if thread is not threading.main_thread() and thread.is_alive():
             thread.join(timeout=1.0)
@@ -171,26 +201,9 @@ def main():
     return result
 
 
-def _on_download_done(app, msg, ok, error):
-    msg.close()
-    if ok:
-        app.quit()
-        # Restart with guard to avoid infinite restart loops
-        env = os.environ.copy()
-        env["CELSIUS_RESTARTED"] = "1"
-        subprocess.Popen([sys.executable] + sys.argv, env=env)
-    else:
-        QMessageBox.critical(None, "Erro", f"Falha ao baixar modelo: {error}")
-        app.quit()
-
-
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except SystemExit:
-        pass
     except Exception:
         traceback.print_exc()
         sys.exit(1)
-    finally:
-        os._exit(0)

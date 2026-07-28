@@ -1,6 +1,7 @@
 """
 WorkerController - Gerencia workers de IA e processamento assíncrono.
 """
+
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from workers.ai_worker import WorkerManager
@@ -31,9 +32,15 @@ class WorkerController(QObject):
         self._mic_worker = None
         self._voz_worker = None
 
-    def send_message(self, message: str, system_prompt: str = "",
-                     conversation_history: list = None, memories: list = None,
-                     model_name: str = None):
+    def send_message(
+        self,
+        message: str,
+        system_prompt: str = "",
+        conversation_history: list = None,
+        memories: list = None,
+        model_name: str = None,
+        attachments: list = None,
+    ):
         """Envia mensagem para IA."""
         self.ai_response_started.emit()
 
@@ -50,6 +57,8 @@ class WorkerController(QObject):
             "pergunta": message,
             "documento": "\n\n".join(doc_parts) if doc_parts else "",
             "nome_documento": "",
+            "anexos": attachments or [],
+            "modelo_solicitado": model_name or "",
         }
 
         self.worker_manager.submit_ai_task(

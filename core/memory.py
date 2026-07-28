@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import tempfile
 import threading
 from datetime import datetime
 
@@ -60,10 +62,7 @@ class MemoryService:
 
     def get_all_texts(self) -> list[str]:
         with self._lock:
-            return [
-                m.get("texto", "") if isinstance(m, dict) else m
-                for m in self._memories
-            ]
+            return [m.get("texto", "") if isinstance(m, dict) else m for m in self._memories]
 
     def search(self, query: str) -> list[str]:
         all_texts = self.get_all_texts()
@@ -85,7 +84,7 @@ class MemoryService:
                     return []
 
                 similarities = np.dot(vetores, query_embedding) / (norm_vetores * norm_query)
-                top_indices = np.argsort(similarities)[::-1][:self.settings.top_memories]
+                top_indices = np.argsort(similarities)[::-1][: self.settings.top_memories]
 
                 return [
                     list(self._embeddings_cache.keys())[i]
@@ -98,8 +97,17 @@ class MemoryService:
 
     def _save(self) -> None:
         try:
-            with open(self.settings.memorias_file, "w", encoding="utf-8") as f:
+            path = self.settings.memorias_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                dir=path.parent,
+                text=True,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._memories, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_name, path)
         except Exception as e:
             print(f"Erro ao salvar memorias: {e}")
 
