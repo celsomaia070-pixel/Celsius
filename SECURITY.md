@@ -75,6 +75,11 @@ Controles usados no repositorio:
 - `pip-audit` para vulnerabilidades conhecidas em dependencias.
 - Dependabot para dependencias Python e GitHub Actions.
 
+Algumas vulnerabilidades transitivas podem ser aceitas temporariamente no CI
+quando nao houver correcao compativel ou quando o pacote afetado nao for usado em
+modo servidor/exposto. Essas excecoes devem ficar explicitas no workflow e ser
+revisadas quando Dependabot abrir atualizacoes.
+
 Antes de distribuir builds:
 
 ```powershell

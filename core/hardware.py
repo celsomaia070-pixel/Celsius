@@ -72,7 +72,7 @@ def detect_cpu() -> CpuInfo:
     """Detect CPU information."""
     try:
         logical = os.cpu_count() or 4
-        physical = _get_physical_cores()
+        physical = min(_get_physical_cores(), logical)
         architecture = platform.machine()
         brand = platform.processor() or "Unknown CPU"
         return CpuInfo(

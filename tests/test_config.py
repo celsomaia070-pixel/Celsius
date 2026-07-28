@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import core.config
 from core.config import GGUF_MODELS, GGUFModel, Settings, _get_base_dir, get_model_by_id
 
 
@@ -59,7 +60,8 @@ class TestBaseDir:
     def test_get_base_dir_not_frozen(self, monkeypatch):
         monkeypatch.setattr("sys.frozen", False, raising=False)
         base = _get_base_dir()
-        assert "PythonProject" in base.name or "PythonProject" in base.parent.name
+        expected = Path(core.config.__file__).resolve().parent.parent
+        assert base == expected
 
 
 class TestGGUFModel:
