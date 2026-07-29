@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-label="Celsius Project AI">
+  <text x="0" y="32"
+        font-family="Segoe UI, Arial, sans-serif"
+        font-size="25"
+        font-weight="700"
+        letter-spacing="0"
+        fill="__TEXT__">Celsius</text>
+  <text x="96" y="32"
+        font-family="Segoe UI, Arial, sans-serif"
+        font-size="18"
+        font-weight="600"
+        letter-spacing="0"
+        fill="__MUTED__">Project</text>
+  <text x="172" y="32"
+        font-family="Segoe UI, Arial, sans-serif"
+        font-size="18"
+        font-weight="700"
+        letter-spacing="0"
+        fill="__ACCENT__">AI</text>
+</svg>

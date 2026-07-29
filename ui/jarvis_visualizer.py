@@ -95,14 +95,16 @@ class JarvisVoiceVisualizer(QWidget):
         parent=None,
         assistant_name: str = "Celsius",
         particle_count: int = _DEFAULT_PARTICLE_COUNT,
-        fps: int = 30,
+        fps: int = 60,
         use_internal_audio: bool = False,
     ):
         super().__init__(parent)
         self._assistant_name = assistant_name
         self._particle_count = max(200, min(1600, particle_count))
-        self._active_interval_ms = max(16, int(1000 / max(1, fps)))
-        self._idle_interval_ms = max(80, self._active_interval_ms * 3)
+        fps = max(1, min(120, fps))
+        idle_fps = min(30, fps)
+        self._active_interval_ms = max(8, int(1000 / fps))
+        self._idle_interval_ms = max(self._active_interval_ms, int(1000 / idle_fps))
         self._use_internal_audio = use_internal_audio
 
         self.setWindowTitle(f"{self._assistant_name} Voice")
@@ -170,6 +172,7 @@ class JarvisVoiceVisualizer(QWidget):
         self._isIdle = False
         self._is_speaking = True
         self._target_energy = 1.0
+        self._timer.setInterval(self._active_interval_ms)
         if not self._timer.isActive():
             self._timer.start(self._active_interval_ms)
         self.show()
@@ -188,6 +191,7 @@ class JarvisVoiceVisualizer(QWidget):
         self._listening_tick = 0
         if self._use_internal_audio:
             self._mic_monitor.start()
+        self._timer.setInterval(self._active_interval_ms)
         if not self._timer.isActive():
             self._timer.start(self._active_interval_ms)
         self.show()

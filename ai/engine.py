@@ -4,7 +4,7 @@ import random
 from collections.abc import Callable
 from datetime import datetime
 
-from ai.react import loop_react
+from ai.react import INTERNAL_CHAT_MARKERS, _first_internal_marker_index, loop_react
 from core.commands import executar_comando
 from core.settings import get_settings
 
@@ -54,9 +54,13 @@ def _assistant_name() -> str:
     return get_settings().assistant.name
 
 
+def _assistant_profile() -> str:
+    return get_settings().assistant.profile
+
+
 COMANDOS_RAPIDOS = {
     "quem e voce": lambda: (
-        f"Sou o {_assistant_name()}, um agente multimodal de IA. Tenho capacidades reais de acao: processar arquivos, executar codigo, navegar na web, indexar documentos e muito mais. O que precisa?"
+        f"Sou o {_assistant_name()}, {_assistant_profile()}. Tenho capacidades reais de acao: processar arquivos, executar codigo, navegar na web, indexar documentos e muito mais. O que precisa?"
     ),
     "qual seu nome": lambda: f"Meu nome e {_assistant_name()}.",
     "seu nome": lambda: _assistant_name(),
@@ -68,9 +72,11 @@ COMANDOS_RAPIDOS = {
     "suas funcoes": RESPOSTAS_FUNCOES,
     "quais suas funcionalidades": RESPOSTAS_FUNCOES,
     "o que voce e": lambda: (
-        f"Sou o {_assistant_name()}, um agente multimodal de IA. Nao sou um assistente basico - tenho capacidades reais de acao como processar documentos, executar codigo, navegar na web e muito mais."
+        f"Sou o {_assistant_name()}, {_assistant_profile()}. Nao sou um assistente basico - tenho capacidades reais de acao como processar documentos, executar codigo, navegar na web e muito mais."
     ),
-    "voce e um assistente": "Nao sou um mero assistente. Sou um agente multimodal de IA com capacidades reais de acao. Posso processar documentos, executar codigo, navegar na web, indexar informacoes e muito mais.",
+    "voce e um assistente": lambda: (
+        f"Sou o {_assistant_name()}, {_assistant_profile()}, com capacidades reais de acao. Posso processar documentos, executar codigo, navegar na web, indexar informacoes e muito mais."
+    ),
 }
 
 HORAS_PADROES = [
@@ -304,6 +310,103 @@ def _processar_operacao_estoque(pergunta: str) -> str | None:
     return None
 
 
+def _is_inventory_general_query(pergunta: str) -> bool:
+    pergunta_lower = pergunta.lower()
+    general_terms = {
+        "estoque",
+        "inventario",
+        "inventário",
+        "itens",
+        "item",
+        "produtos",
+        "produto",
+        "mercadorias",
+        "mercadoria",
+        "insumos",
+    }
+    list_terms = {
+        "quais",
+        "qual",
+        "listar",
+        "lista",
+        "liste",
+        "mostrar",
+        "mostra",
+        "mostre",
+        "ver",
+        "todos",
+        "todas",
+        "completo",
+        "completa",
+        "geral",
+        "resumo",
+        "relacao",
+        "relação",
+        "meu estoque",
+        "todo estoque",
+        "estoque completo",
+    }
+    specific_terms = {
+        "quanto de",
+        "quantos",
+        "quantas",
+        "tem de",
+        "tenho de",
+        "tenho do",
+        "tenho da",
+        "quantidade de",
+    }
+    if any(term in pergunta_lower for term in specific_terms):
+        return False
+    return any(term in pergunta_lower for term in general_terms) and any(
+        term in pergunta_lower for term in list_terms
+    )
+
+
+def _formatar_contexto_estoque_completo(itens, coluna_kanban) -> str:
+    by_coluna = {}
+    for item in itens:
+        by_coluna.setdefault(item.localizacao, []).append(item)
+
+    linhas = []
+    for col in coluna_kanban:
+        group = sorted(by_coluna.get(col.value, []), key=lambda item: item.nome.lower())
+        if group:
+            linhas.append(f"\n[{col.label}]")
+            for item in group:
+                status = "CRITICO" if item.precisa_repor else "OK"
+                linhas.append(
+                    f"  - {item.nome} (ID:{item.id}) | {item.categoria} | "
+                    f"{item.quantidade} un. | min:{item.estoque_min} max:{item.estoque_max} | {status}"
+                )
+    return "\n".join(linhas)
+
+
+def _responder_lista_estoque_direta(pergunta: str) -> str | None:
+    """Return a deterministic full inventory list for broad listing requests."""
+
+    if not _is_inventory_general_query(pergunta):
+        return None
+
+    from core.inventory import ColunaKanban, get_inventory_service
+
+    service = get_inventory_service()
+    itens = service.get_all_items()
+    if not itens:
+        return "O estoque esta vazio. Nenhum item cadastrado."
+
+    total = len(itens)
+    total_unidades = sum(item.quantidade for item in itens)
+    criticos = sum(1 for item in itens if item.precisa_repor)
+    contexto = _formatar_contexto_estoque_completo(itens, ColunaKanban)
+    return (
+        f"Estoque completo: {total} item(ns), {total_unidades} unidade(s) no total, "
+        f"{criticos} item(ns) em alerta.\n"
+        "Segue a lista completa cadastrada:\n"
+        f"{contexto}"
+    )
+
+
 def _obter_contexto_estoque(pergunta: str) -> str:
     """Obtem dados relevantes do estoque para injetar no contexto."""
     from core.inventory import ColunaKanban, get_inventory_service
@@ -314,6 +417,8 @@ def _obter_contexto_estoque(pergunta: str) -> str:
     itens = service.get_all_items()
     if not itens:
         return "Estoque: Nenhum item cadastrado."
+
+    is_general_query = _is_inventory_general_query(pergunta)
 
     # Palavras genericas que NAO indicam busca especifica
     palavras_genericas = {
@@ -346,22 +451,27 @@ def _obter_contexto_estoque(pergunta: str) -> str:
         "aqui",
     }
 
-    # Busca especifica por nome (ex: "martelo", "arame")
+    # Busca especifica por nome (ex: "martelo", "arame").
+    # Para perguntas gerais ("quais produtos tenho?", "meu estoque completo"),
+    # nao deixe categorias genericas filtrarem o inventario por acidente.
     termos_busca = []
-    termos_genericos = []
-    for item in itens:
-        palavras = item.nome.lower().split()
-        matched = False
-        for p in palavras:
-            if len(p) > 2 and p in pergunta_lower and p not in palavras_genericas:
+    if not is_general_query:
+        for item in itens:
+            palavras = item.nome.lower().split()
+            matched = False
+            for p in palavras:
+                if len(p) > 2 and p in pergunta_lower and p not in palavras_genericas:
+                    termos_busca.append(item)
+                    matched = True
+                    break
+            categoria = item.categoria.lower().strip()
+            if (
+                not matched
+                and categoria
+                and categoria not in palavras_genericas
+                and categoria in pergunta_lower
+            ):
                 termos_busca.append(item)
-                matched = True
-                break
-        if not matched and item.categoria.lower() in pergunta_lower:
-            termos_busca.append(item)
-            matched = True
-        if not matched:
-            termos_genericos.append(item)
 
     # Se achou match ESPECIFICO (nome de item real), retorna so esses
     if termos_busca:
@@ -375,29 +485,38 @@ def _obter_contexto_estoque(pergunta: str) -> str:
         return "Dados do estoque (itens encontrados):\n" + "\n".join(linhas)
 
     # Caso geral: lista COMPLETA (nenhum nome especifico detectado)
-    by_coluna = {}
-    for item in itens:
-        by_coluna.setdefault(item.localizacao, []).append(item)
-
-    linhas = []
-    for col in ColunaKanban:
-        group = by_coluna.get(col.value, [])
-        if group:
-            linhas.append(f"\n[{col.label}]")
-            for item in group:
-                status = "CRITICO" if item.precisa_repor else "OK"
-                linhas.append(
-                    f"  - {item.nome} (ID:{item.id}) | {item.categoria} | "
-                    f"{item.quantidade} un. | min:{item.estoque_min} max:{item.estoque_max} | {status}"
-                )
-
     total = len(itens)
     criticos = sum(1 for i in itens if i.precisa_repor)
     return (
         f"Dados do estoque do usuario ({total} itens, {criticos} em estoque critico).\n"
         f"IMPORTANTE: Listar TODOS os itens, incluindo os em estoque critico/abaixo do minimo.\n"
-        + "\n".join(linhas)
+        + _formatar_contexto_estoque_completo(itens, ColunaKanban)
     )
+
+
+def _normalizar_historico_recente(history: object, pergunta_atual: str) -> list[dict]:
+    """Prepare recent chat history for the LLM without duplicating the current user turn."""
+    if not isinstance(history, list):
+        return []
+
+    normalized = []
+    for msg in history:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = str(msg.get("content", "")).strip()
+        if role in {"user", "assistant"} and content:
+            normalized.append({"role": role, "content": content})
+
+    if (
+        normalized
+        and pergunta_atual
+        and normalized[-1]["role"] == "user"
+        and normalized[-1]["content"].strip() == pergunta_atual.strip()
+    ):
+        normalized.pop()
+
+    return normalized
 
 
 def gerar_resposta(
@@ -409,6 +528,12 @@ def gerar_resposta(
     pergunta_direta = prompt_dict.get("pergunta", "").strip()
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()
+
+    if fn_status:
+        if texto_doc and nome_doc and nome_doc != "Dados do Estoque":
+            fn_status("Analisando documentos anexados...")
+        else:
+            fn_status("Elaborando a melhor resposta...")
 
     # Comandos diretos sempre rodam (independente do historico)
     comando = executar_comando(pergunta_direta)
@@ -432,9 +557,17 @@ def gerar_resposta(
                 fn_chunk(resultado_estoque)
             return resultado_estoque
 
+    resposta_estoque_direta = _responder_lista_estoque_direta(pergunta_direta)
+    if resposta_estoque_direta:
+        if fn_chunk:
+            fn_chunk(resposta_estoque_direta)
+        return resposta_estoque_direta
+
     # Sempre injetar dados do estoque no contexto para que o assistente
     # tenha acesso total ao inventário em qualquer pergunta
     try:
+        if fn_status:
+            fn_status("Consultando dados do estoque...")
         contexto_estoque = _obter_contexto_estoque(pergunta_direta or "")
         if contexto_estoque:
             prompt_dict = dict(prompt_dict)
@@ -447,7 +580,7 @@ def gerar_resposta(
     except Exception as e:
         logger.warning("Falha ao injetar contexto de estoque: %s", e)
 
-    history = []
+    history = _normalizar_historico_recente(prompt_dict.get("historico", []), pergunta_direta)
 
     resposta, _ = loop_react(
         prompt_dict,
@@ -477,12 +610,17 @@ def gerar_resposta_com_imagem(
     with open(caminho_imagem, "rb") as f:
         imagem_b64 = base64.b64encode(f.read()).decode("utf-8")
 
+    if fn_status:
+        fn_status("Interpretando conteudo visual...")
+
     pergunta_final = (
         pergunta if pergunta else "Descreva esta imagem em detalhes. Se houver texto, transcreva-o."
     )
 
     data_e_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
     settings = get_settings()
+    customer_context = settings.customer_prompt_context
+    response_style_context = settings.response_style_prompt_context
 
     mensagens = [
         {
@@ -492,6 +630,9 @@ def gerar_resposta_com_imagem(
                 "IMPORTANTE: Responda SEMPRE e EXCLUSIVAMENTE em portugues do Brasil.\n"
                 "NUNCA use outro idioma. Todas as suas respostas DEVEM ser em portugues.\n\n"
                 f"Voce e {settings.assistant.name}, {settings.assistant.profile}.\n"
+                "Essa identidade e fixa: voce e Celsius.\n"
+                f"{customer_context}\n\n"
+                f"{response_style_context}\n\n"
                 "Analise a imagem enviada e responda a pergunta do usuario.\n"
                 "Se houver texto na imagem, transcreva-o.\n"
                 "Nao comence se apresentando. Va direto ao assunto."
@@ -516,14 +657,24 @@ def gerar_resposta_com_imagem(
         llama = get_llama()
         stream = llama.chat_completion(
             messages=mensagens,
-            temperature=0.7,
+            temperature=settings.response.temperature,
             max_tokens=2048,
+            top_p=settings.response.top_p,
             stream=True,
+            stop=list(INTERNAL_CHAT_MARKERS),
         )
 
         resposta = ""
         for chunk in stream:
             token = chunk["choices"][0]["delta"].get("content", "") or ""
+            combined = resposta + token
+            marker_idx = _first_internal_marker_index(combined)
+            if marker_idx >= 0:
+                token = combined[len(resposta) : marker_idx]
+                resposta = combined[:marker_idx]
+                if token and fn_chunk:
+                    fn_chunk(token)
+                break
             resposta += token
             if fn_chunk:
                 fn_chunk(token)

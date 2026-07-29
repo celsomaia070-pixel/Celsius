@@ -173,6 +173,12 @@ class CommandPalette(QDialog):
         for action_id, name, icon_name, shortcut in actions:
             self.add_action(action_id, name, icon_name, shortcut)
 
+    def set_actions(self, actions):
+        self._actions = []
+        for action_id, name, icon_name, shortcut in actions:
+            self.add_action(action_id, name, icon_name, shortcut)
+        self._refresh_items()
+
     def add_action(self, action_id: str, name: str, icon_name: str, shortcut: str = ""):
         self._actions.append(
             {
@@ -302,6 +308,10 @@ class CommandPaletteManager:
         def _noop():
             self.window.chat_view.add_assistant_message("Funcionalidade em desenvolvimento.")
 
+        if action_id.startswith("open_module:"):
+            self.window.sidebar.set_active_tab(action_id.split(":", 1)[1])
+            return
+
         handlers = {
             "new_chat": self.window._new_conversation,
             "clear_chat": self.window.chat_view.clear,
@@ -325,3 +335,23 @@ class CommandPaletteManager:
 
         if action_id in handlers:
             handlers[action_id]()
+
+    def configure_modules(self, modules):
+        actions = [
+            ("new_chat", "Nova conversa", "fa5s.plus", "Ctrl+N"),
+            ("clear_chat", "Limpar conversa", "fa5s.trash", "Ctrl+Shift+Del"),
+            ("toggle_sidebar", "Alternar barra lateral", "fa5s.sidebar", "Ctrl+B"),
+            ("toggle_theme", "Alternar tema claro/escuro", "fa5s.moon", "Ctrl+Shift+L"),
+            ("memory_view", "Ver memorias", "fa5s.brain", ""),
+        ]
+        for module in modules:
+            shortcut = "Ctrl+," if module.id == "settings" else ""
+            actions.append(
+                (
+                    f"open_module:{module.id}",
+                    f"Abrir {module.name}",
+                    f"fa5s.{module.icon}",
+                    shortcut,
+                )
+            )
+        self.palette.set_actions(actions)

@@ -2,11 +2,16 @@
 Main Window - Janela principal refatorada usando controllers e views extraídos.
 """
 
-from PySide6.QtCore import Qt, QTimer
+import contextlib
+import tempfile
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -16,6 +21,12 @@ from PySide6.QtWidgets import (
 
 from core.inventory import get_inventory_service
 from core.memory import get_memory_service
+from core.mobile_access import (
+    MobileAccessServer,
+    ensure_mobile_certificate,
+    ensure_mobile_token,
+)
+from core.modules import get_module_definition, sidebar_modules
 from core.settings import get_settings
 from ui.chat import ModernChatView, ModernInputArea
 from ui.command_palette import CommandPaletteManager
@@ -35,6 +46,8 @@ from workers.ai_worker import WorkerManager
 class ModernChatWindow(QMainWindow):
     """Main window with sidebar and chat area."""
 
+    mobile_command_received = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.settings = get_settings()
@@ -50,7 +63,8 @@ class ModernChatWindow(QMainWindow):
             settings=self.settings, memory_service=self.memory_service, parent=self
         )
 
-        self._theme_mode = ThemeMode.LIGHT
+        self._theme_mode = self._resolve_theme_mode()
+        self.theme_controller.set_mode(self._theme_mode)
         self._current_conv_id = None
         self._mic_worker = None
         self._voz_worker = None
@@ -60,6 +74,9 @@ class ModernChatWindow(QMainWindow):
         self._pending_file_path = ""
         self._memories_enabled = True
         self._voice_enabled = False
+        self._ai_busy = False
+        self._next_response_should_speak_on_pc = False
+        self._mobile_server = None
         self._jarvis = None
         if self.settings.ui.jarvis_enabled:
             self._jarvis = JarvisVoiceVisualizer(
@@ -82,6 +99,7 @@ class ModernChatWindow(QMainWindow):
 
         # Connect controllers
         self._connect_controllers()
+        self.mobile_command_received.connect(self._on_mobile_command_received)
 
         # Populate model combo with all available models
         self._populate_model_combo()
@@ -89,11 +107,14 @@ class ModernChatWindow(QMainWindow):
         # Command palette
         self.palette_manager = CommandPaletteManager(self)
         self.palette_manager.palette.action_triggered.connect(self._handle_palette_action)
+        self._apply_module_configuration()
 
         self._register_shortcuts()
 
         # New conversation
         self._new_conversation()
+        QTimer.singleShot(500, self._maybe_show_first_setup)
+        self._start_mobile_access_if_enabled()
 
     def _setup_ui(self):
         central = QWidget()
@@ -111,6 +132,9 @@ class ModernChatWindow(QMainWindow):
         self.sidebar.conversation_rename_requested.connect(self._rename_conversation)
         self.sidebar.toggle_memories.connect(self._on_toggle_memories)
         self.sidebar.open_memories.connect(self._show_memories_dialog)
+        self.sidebar.suppliers_requested.connect(self._show_suppliers_dialog)
+        self.sidebar.settings_requested.connect(self._show_settings)
+        self.sidebar.mobile_pair_requested.connect(self._show_mobile_pairing_shortcut)
         self.sidebar.tab_changed.connect(self._on_tab_changed)
         root_layout.addWidget(self.sidebar)
 
@@ -184,7 +208,18 @@ class ModernChatWindow(QMainWindow):
         self.kanban_container.hide()
         main_layout.addWidget(self.kanban_container)
 
+        self.module_placeholder = QLabel("")
+        self.module_placeholder.setWordWrap(True)
+        self.module_placeholder.setAlignment(Qt.AlignCenter)
+        self.module_placeholder.hide()
+        main_layout.addWidget(self.module_placeholder, 1)
+
         root_layout.addWidget(content_widget, 1)
+
+    def _resolve_theme_mode(self) -> ThemeMode:
+        if self.settings.ui.theme == "dark":
+            return ThemeMode.DARK
+        return ThemeMode.LIGHT
 
     def _icon(self, name: str, color=None):
         """Helper para criar ícones usando o theme atual."""
@@ -206,6 +241,7 @@ class ModernChatWindow(QMainWindow):
         self.worker_controller.mic_level.connect(self._on_mic_level)
         self.worker_controller.voice_text_ready.connect(self._on_voice_text_ready)
         self.worker_controller.voice_error.connect(self._on_voice_error)
+        self.worker_controller.voice_audio_ready.connect(self._on_voice_audio_ready)
         self.worker_controller.voice_finished.connect(self._on_voice_finished)
 
         # Conversation manager
@@ -218,9 +254,15 @@ class ModernChatWindow(QMainWindow):
 
     def _apply_theme(self):
         self.theme_controller.apply_theme(self)
+        if hasattr(self, "module_placeholder"):
+            scheme = scheme_from_name(self._theme_mode.value)
+            self.module_placeholder.setStyleSheet(
+                f"background: {scheme.bg_primary}; color: {scheme.text_secondary}; "
+                "font-size: 15px; padding: 28px;"
+            )
 
     def _toggle_theme(self):
-        self.theme_controller.toggle()
+        self._theme_mode = self.theme_controller.toggle()
         self._apply_theme()
 
     def _load_conversations(self):
@@ -277,53 +319,348 @@ class ModernChatWindow(QMainWindow):
         self.conversation_manager.rename_conversation(conv_id, new_title)
 
     def _on_tab_changed(self, tab: str):
-        if tab == "estoque":
+        if tab == "chat":
+            self.chat_view.show()
+            self.input_area.show()
+            self.inventory_panel.hide()
+            self.kanban_container.hide()
+            self.module_placeholder.hide()
+        elif tab == "inventory":
             self.chat_view.hide()
             self.input_area.hide()
             self.inventory_panel.show()
             self.kanban_container.hide()
+            self.module_placeholder.hide()
         elif tab == "kanban":
             self.chat_view.hide()
             self.input_area.hide()
             self.inventory_panel.hide()
             self.kanban_container.show()
-        else:
+            self.module_placeholder.hide()
+        elif tab in {"suppliers", "settings"}:
             self.chat_view.show()
             self.input_area.show()
             self.inventory_panel.hide()
             self.kanban_container.hide()
+            self.module_placeholder.hide()
+        else:
+            module = get_module_definition(tab)
+            if module and module.is_ready:
+                self.chat_view.show()
+                self.input_area.show()
+                self.inventory_panel.hide()
+                self.kanban_container.hide()
+                self.module_placeholder.hide()
+                self._show_module_records_dialog(tab)
+            else:
+                self._show_module_placeholder(tab)
+
+    def _show_module_placeholder(self, module_id: str):
+        module = get_module_definition(module_id)
+        if module is None:
+            title = "Modulo indisponivel"
+            description = "Este modulo nao esta configurado para esta empresa."
+        else:
+            title = module.name
+            description = module.description
+        self.chat_view.hide()
+        self.input_area.hide()
+        self.inventory_panel.hide()
+        self.kanban_container.hide()
+        self.module_placeholder.setText(
+            f"{title}\n\n{description}\n\nModulo em preparacao para esta empresa."
+        )
+        self.module_placeholder.show()
+
+    def _apply_module_configuration(self):
+        modules = sidebar_modules(self.settings.modules.enabled)
+        self.sidebar.configure_modules(modules)
+        if hasattr(self, "palette_manager"):
+            self.palette_manager.configure_modules(modules)
+
+    def _maybe_show_first_setup(self):
+        if self.settings.modules.first_setup_completed or self.settings.customer.is_configured():
+            return
+        from ui.dialogs import AssistentePrimeiraConfiguracaoDialog
+
+        dialog = AssistentePrimeiraConfiguracaoDialog(
+            self.settings, scheme=scheme_from_name(self._theme_mode.value), parent=self
+        )
+        if dialog.exec():
+            self._apply_module_configuration()
+            self._apply_theme()
+
+    def _start_mobile_access_if_enabled(self):
+        if not self.settings.mobile.enabled:
+            return
+        self._restart_mobile_access(show_message=False)
+
+    def _restart_mobile_access(self, show_message: bool = True, show_pairing: bool = True):
+        self._stop_mobile_access()
+        if not self.settings.mobile.enabled:
+            return
+
+        token = ensure_mobile_token(self.settings.mobile.pairing_token)
+        self.settings.mobile.pairing_token = token
+        self.settings.save_local_preferences()
+
+        host = self.settings.mobile.host if self.settings.mobile.allow_lan else "127.0.0.1"
+        cert_file = key_file = None
+        use_https = self.settings.mobile.use_https
+        https_warning = ""
+        if use_https:
+            try:
+                cert_file, key_file = ensure_mobile_certificate(
+                    self.settings.data_dir / "mobile_access"
+                )
+            except RuntimeError as exc:
+                use_https = False
+                https_warning = (
+                    f"\n\nAviso: HTTPS local indisponivel ({exc}). "
+                    "O acesso pelo celular foi iniciado em HTTP; alguns navegadores podem bloquear o microfone."
+                )
+
+        server = MobileAccessServer(
+            host=host,
+            port=self.settings.mobile.port,
+            token=token,
+            command_callback=self._queue_mobile_command,
+            voice_enabled=self.settings.mobile.voice_commands_enabled,
+            voice_command_callback=self._queue_mobile_voice_command,
+            use_https=use_https,
+            cert_file=cert_file,
+            key_file=key_file,
+        )
+        try:
+            self._mobile_server = server.start()
+        except Exception as exc:
+            if not use_https:
+                raise
+            https_warning = (
+                f"\n\nAviso: nao foi possivel iniciar HTTPS local ({exc}). "
+                "O acesso pelo celular foi iniciado em HTTP; alguns navegadores podem bloquear o microfone."
+            )
+            self._mobile_server = MobileAccessServer(
+                host=host,
+                port=self.settings.mobile.port,
+                token=token,
+                command_callback=self._queue_mobile_command,
+                voice_enabled=self.settings.mobile.voice_commands_enabled,
+                voice_command_callback=self._queue_mobile_voice_command,
+                use_https=False,
+            ).start()
+        if show_message:
+            self.chat_view.add_assistant_message(
+                "Acesso pelo celular ativo nesta rede:\n\n"
+                f"{self._mobile_server.url}\n\n"
+                "Use esse endereço no navegador do celular. Mantenha o token privado."
+                f"{https_warning}"
+            )
+        if show_pairing:
+            self._show_mobile_pairing_dialog()
+
+    def _show_mobile_pairing_dialog(self):
+        if not self._mobile_server:
+            return
+        from ui.dialogs import PareamentoCelularDialog
+
+        dialog = PareamentoCelularDialog(
+            self._mobile_server.url,
+            https_enabled=self._mobile_server.use_https,
+            scheme=scheme_from_name(self._theme_mode.value),
+            parent=self,
+        )
+        dialog.exec()
+
+    def _show_mobile_pairing_shortcut(self):
+        if self._mobile_server:
+            self._show_mobile_pairing_dialog()
+            return
+
+        if not self.settings.mobile.enabled:
+            self.settings.mobile.enabled = True
+            self.settings.mobile.allow_lan = True
+            self.settings.mobile.voice_commands_enabled = True
+            self.settings.mobile.use_https = True
+
+        self.settings.mobile.pairing_token = ensure_mobile_token(self.settings.mobile.pairing_token)
+        self.settings.save_local_preferences()
+
+        try:
+            self._restart_mobile_access(show_message=False, show_pairing=True)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Celular",
+                f"Nao foi possivel iniciar o acesso pelo celular:\n{exc}",
+            )
+
+    def _stop_mobile_access(self):
+        if self._mobile_server:
+            self._mobile_server.stop()
+            self._mobile_server = None
+
+    def _queue_mobile_command(self, message: str, source: str):
+        if self._ai_busy:
+            return (
+                False,
+                "O Celsius ainda esta respondendo. Tente novamente em instantes.",
+            )
+        prefix = "Comando por voz do celular" if source == "phone_voice" else "Comando do celular"
+        self.mobile_command_received.emit(f"{prefix}: {message}")
+        return True, "Comando enviado ao Celsius no PC."
+
+    def _queue_mobile_voice_command(self, audio: bytes, mime_type: str):
+        if self._ai_busy:
+            return (
+                False,
+                "",
+                "O Celsius ainda esta respondendo. Tente novamente em instantes.",
+            )
+
+        suffix = self._audio_suffix_from_mime(mime_type)
+        temp_path = ""
+        try:
+            if suffix == ".wav":
+                from core.mobile_voice import transcribe_mobile_wav
+
+                transcript = transcribe_mobile_wav(
+                    audio, model_name=self.settings.model.whisper_model
+                )
+                self.mobile_command_received.emit(f"Comando por voz do celular: {transcript}")
+                return True, transcript, "Voz transcrita no PC e enviada ao Celsius."
+
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
+                temp.write(audio)
+                temp_path = temp.name
+
+            from processors.audio import ProcessadorAudio
+
+            result = ProcessadorAudio.processar(temp_path, base_dir=Path(temp_path).parent)
+            if result.lower().startswith("erro"):
+                if "converter audio" in result.lower():
+                    return (
+                        False,
+                        "",
+                        "Erro ao converter audio. Reabra o QR Code atualizado para gravar em WAV "
+                        "ou instale o FFmpeg no Windows.",
+                    )
+                return False, "", result
+
+            marker = "Transcricao:\n"
+            transcript = result.split(marker, 1)[1].strip() if marker in result else result.strip()
+            if not transcript:
+                return False, "", "Nao consegui entender a gravacao."
+
+            self.mobile_command_received.emit(f"Comando por voz do celular: {transcript}")
+            return True, transcript, "Voz transcrita no PC e enviada ao Celsius."
+        except Exception as exc:
+            return False, "", f"Erro ao transcrever voz do celular: {exc}"
+        finally:
+            if temp_path:
+                with contextlib.suppress(OSError):
+                    Path(temp_path).unlink()
+
+    def _audio_suffix_from_mime(self, mime_type: str) -> str:
+        mime = (mime_type or "").lower()
+        if "wav" in mime:
+            return ".wav"
+        if "ogg" in mime:
+            return ".ogg"
+        if "mp4" in mime or "m4a" in mime:
+            return ".m4a"
+        if "mpeg" in mime or "mp3" in mime:
+            return ".mp3"
+        return ".webm"
+
+    def _on_mobile_command_received(self, message: str):
+        self._next_response_should_speak_on_pc = True
+        self._on_user_message(message)
 
     # AI Response handlers
     def _on_ai_response_started(self):
+        self._ai_busy = True
+        self.input_area.set_busy(True)
         self.chat_view.start_streaming()
 
     def _on_ai_response_token(self, token: str):
         self.chat_view.append_streaming(token)
 
     def _on_ai_response_finished(self, full_text: str):
+        self._ai_busy = False
+        self.input_area.set_busy(False)
         self.chat_view.finish_streaming(full_text)
         if self._current_conv_id:
             self.conversation_manager.add_message(self._current_conv_id, "assistant", full_text)
-        if self._voice_enabled and full_text.strip():
+        if self._mobile_server:
+            self._mobile_server.publish_response(full_text, kind="assistant")
+        should_speak_on_pc = self._voice_enabled or self._next_response_should_speak_on_pc
+        self._next_response_should_speak_on_pc = False
+        if should_speak_on_pc and full_text.strip():
             if self._jarvis:
                 self._jarvis.start_speaking()
-            self.worker_controller.start_voice(full_text)
+            self.worker_controller.start_voice(
+                full_text,
+                force_enabled=should_speak_on_pc,
+            )
 
     def _on_ai_response_error(self, error: str):
+        self._ai_busy = False
+        self.input_area.set_busy(False)
         self.chat_view.hide_thinking()
-        self.chat_view.add_assistant_message(f"Erro: {error}")
+        error_text = f"Erro: {error}"
+        if getattr(self.chat_view, "_streaming_bubble", None):
+            self.chat_view.finish_streaming(error_text)
+        else:
+            self.chat_view.add_assistant_message(error_text)
+        if self._mobile_server:
+            self._mobile_server.publish_response(error_text, kind="error")
+        self._next_response_should_speak_on_pc = False
 
     def _on_ai_status_update(self, status: str):
-        if "Raciocinando" in status or "pensando" in status.lower():
-            self.chat_view.show_thinking("Pensando")
-        elif "busco" in status.lower():
-            self.chat_view.show_thinking("Buscando informacoes")
-        elif "Analisando" in status:
-            self.chat_view.show_thinking("Analisando")
-        elif "Processando" in status:
-            self.chat_view.show_thinking("Processando")
-        else:
-            self.chat_view.hide_thinking()
+        label = self._friendly_ai_status(status)
+        if label:
+            self.chat_view.show_thinking(label)
+
+    def _friendly_ai_status(self, status: str) -> str:
+        raw = (status or "").strip()
+        lowered = raw.lower()
+
+        if any(term in lowered for term in ("extraindo", "arquivo", "anexo")):
+            return "Extraindo conteudo do arquivo"
+        if "imagem" in lowered or "visual" in lowered:
+            return "Analisando imagem"
+        if "document" in lowered:
+            return "Analisando documentos"
+        if "contexto da conversa" in lowered or "historico" in lowered:
+            return "Carregando contexto da conversa"
+        if "estoque" in lowered:
+            return "Consultando dados do estoque"
+        if "memoria" in lowered:
+            return "Consultando memorias relevantes"
+        if "ferramenta" in lowered or "executando" in lowered:
+            return "Consultando ferramentas"
+        if "modelo" in lowered:
+            return "Selecionando melhor modelo local"
+        if "estruturando" in lowered:
+            return "Estruturando a resposta"
+        if "escrevendo" in lowered:
+            return "Escrevendo resposta"
+        if "elaborando" in lowered:
+            return "Elaborando a melhor resposta"
+        if "organizando" in lowered:
+            return "Organizando os detalhes"
+        if "validando" in lowered:
+            return "Validando informacoes"
+        if "refinando" in lowered:
+            return "Refinando a resposta final"
+        if "processando" in lowered:
+            return "Processando"
+        if "analisando" in lowered:
+            return "Analisando"
+        if "pensando" in lowered or "raciocinando" in lowered:
+            return "Pensando"
+        return raw or "Pensando"
 
     # Model handlers
     def _populate_model_combo(self):
@@ -385,6 +722,9 @@ class ModernChatWindow(QMainWindow):
                 self._jarvis.stop_listening()
             self.input_area.set_mic_active(False)
         else:
+            self.worker_controller.stop_voice()
+            if self._jarvis:
+                self._jarvis.stop_speaking()
             self.worker_controller.start_mic()
             if self._jarvis:
                 self._jarvis.start_listening()
@@ -425,6 +765,10 @@ class ModernChatWindow(QMainWindow):
             self._jarvis.stop_speaking()
         QMessageBox.warning(self, "Erro na voz", error)
 
+    def _on_voice_audio_ready(self, audio: bytes, mime_type: str):
+        if self._mobile_server:
+            self._mobile_server.publish_audio(audio, mime_type=mime_type)
+
     def _on_voice_finished(self):
         if self._jarvis:
             self._jarvis.stop_speaking()
@@ -434,6 +778,19 @@ class ModernChatWindow(QMainWindow):
 
     # User message handler
     def _on_user_message(self, text: str):
+        self.worker_controller.stop_voice()
+        if self._jarvis:
+            self._jarvis.stop_speaking()
+
+        if self._ai_busy:
+            self.chat_view.add_assistant_message(
+                "Ainda estou terminando a resposta anterior. Envie a proxima mensagem quando eu concluir."
+            )
+            return
+
+        self._ai_busy = True
+        self.input_area.set_busy(True)
+
         if not self._current_conv_id:
             self._new_conversation()
 
@@ -452,7 +809,7 @@ class ModernChatWindow(QMainWindow):
 
         system_prompt = self._build_system_prompt()
 
-        self.worker_controller.send_message(
+        sent = self.worker_controller.send_message(
             message=text,
             system_prompt=system_prompt,
             conversation_history=history,
@@ -460,14 +817,22 @@ class ModernChatWindow(QMainWindow):
             model_name=self.settings.llm_model,
             attachments=attachments or [],
         )
+        if sent is False:
+            self._ai_busy = False
+            self.input_area.set_busy(False)
 
     def _build_system_prompt(self) -> str:
         from datetime import date
 
         today = date.today().strftime("%d/%m/%Y")
         assistant = self.settings.assistant
-        owner_clause = f" Voce ajuda {assistant.owner_name}." if assistant.owner_name else ""
-        return f"Voce e {assistant.name}, {assistant.profile}.{owner_clause} Hoje e {today}."
+        return (
+            f"Voce e {assistant.name}, {assistant.profile}. "
+            f"Sua identidade fixa e Celsius. Hoje e {today}. "
+            "Ajude em tarefas gerais do usuario quando solicitado, incluindo redacao, estudos, "
+            "tecnologia e explicacoes. O perfil da empresa orienta contexto, mas nao limita "
+            "os assuntos que voce pode responder."
+        )
 
     # File attachment
     def _on_attach_file(self):
@@ -516,7 +881,7 @@ class ModernChatWindow(QMainWindow):
             QMessageBox.warning(self, "Erro", "Quantidade maior que o estoque disponivel.")
 
     def _on_inventory_item_selected(self, item_id: str):
-        self.sidebar.set_active_tab("estoque")
+        self.sidebar.set_active_tab("inventory")
 
     def _get_quantity(self, title: str, label: str):
         from PySide6.QtWidgets import QInputDialog
@@ -545,6 +910,20 @@ class ModernChatWindow(QMainWindow):
         )
         dialog.exec()
 
+    def _show_suppliers_dialog(self):
+        from ui.dialogs import FornecedoresDialog
+
+        dialog = FornecedoresDialog(scheme=scheme_from_name(self._theme_mode.value), parent=self)
+        dialog.exec()
+
+    def _show_module_records_dialog(self, module_id: str):
+        from ui.dialogs import ModuloRegistrosDialog
+
+        dialog = ModuloRegistrosDialog(
+            module_id, scheme=scheme_from_name(self._theme_mode.value), parent=self
+        )
+        dialog.exec()
+
     # Settings
     def _show_settings(self):
         from ui.dialogs import ConfiguracoesDialog
@@ -553,6 +932,13 @@ class ModernChatWindow(QMainWindow):
             self.settings, scheme=scheme_from_name(self._theme_mode.value), parent=self
         )
         if dialog.exec():
+            self._apply_module_configuration()
+            if dialog.mobile_action in {"pair", "regenerate"}:
+                self._restart_mobile_access(show_message=True, show_pairing=True)
+            elif dialog.mobile_action == "restart":
+                self._restart_mobile_access(show_message=True, show_pairing=False)
+            else:
+                self._restart_mobile_access(show_message=False, show_pairing=False)
             self._apply_theme()
 
     # Command palette
@@ -563,6 +949,8 @@ class ModernChatWindow(QMainWindow):
             self._toggle_theme()
         elif action_id == "open_settings":
             self._show_settings()
+        elif action_id.startswith("open_module:"):
+            self.sidebar.set_active_tab(action_id.split(":", 1)[1])
         elif action_id == "clear_chat":
             self.chat_view.clear()
             if self._current_conv_id:
@@ -581,6 +969,7 @@ class ModernChatWindow(QMainWindow):
         if self._jarvis:
             self._jarvis.close()
             self._jarvis = None
+        self._stop_mobile_access()
         self.worker_controller.cleanup()
         super().closeEvent(event)
 

@@ -152,6 +152,23 @@ def detect_ram_mb() -> int:
     try:
         if system == "Windows":
             result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_ComputerSystem | "
+                    "Select-Object -ExpandProperty TotalPhysicalMemory",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line.isdigit():
+                    return int(line) // (1024 * 1024)
+
+            result = subprocess.run(
                 ["wmic", "memorychip", "get", "Capacity"],
                 capture_output=True,
                 text=True,

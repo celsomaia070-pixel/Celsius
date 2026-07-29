@@ -237,4 +237,6 @@ SCHEMES = {
 
 def get_scheme(mode: ThemeMode = ThemeMode.LIGHT) -> ColorScheme:
     """Retorna o esquema de cores para o modo especificado."""
+    if mode == ThemeMode.SYSTEM:
+        return LIGHT_SCHEME
     return SCHEMES.get(mode, LIGHT_SCHEME)

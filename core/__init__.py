@@ -19,16 +19,21 @@ from core.config import (
 from core.container import get_container, reset_container
 from core.logging_config import get_logger, setup_logging
 from core.settings import (
+    CompanyModulesSettings,
+    CustomerSettings,
     FeatureFlags,
     FileSettings,
     InventorySettings,
     MemorySettings,
+    MobileAccessSettings,
     ModelSettings,
     RagSettings,
+    ResponseStyleSettings,
     SecuritySettings,
     Settings,
     TelemetrySettings,
     UiSettings,
+    VoiceSettings,
     get_settings,
     reset_settings,
 )

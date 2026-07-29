@@ -29,7 +29,7 @@ class ThemeManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_name: ThemeMode = ThemeMode.LIGHT
-        self._current_scheme: ColorScheme = get_scheme("light")
+        self._current_scheme: ColorScheme = get_scheme(ThemeMode.LIGHT)
         self._system_follow: bool = False
         self._listeners: list[QObject] = []
         self._load()

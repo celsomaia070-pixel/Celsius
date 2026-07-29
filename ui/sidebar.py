@@ -1,8 +1,9 @@
-import os
 from datetime import datetime
+from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QCursor, QPixmap
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QCursor, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.modules import module_catalog, sidebar_modules
 from core.settings import get_settings
 from ui.components.base import SearchInput
 from ui.icons import icon
@@ -48,7 +50,7 @@ class ConversationItem(QListWidgetItem):
 
 
 class Sidebar(QWidget):
-    """Light sidebar with conversation history, memory toggle, and settings."""
+    """Light sidebar with conversation history, memory access, and suppliers."""
 
     new_chat_requested = Signal()
     conversation_selected = Signal(str)
@@ -57,6 +59,9 @@ class Sidebar(QWidget):
     toggle_memories = Signal(bool)
     open_memories = Signal()
     settings_requested = Signal()
+    suppliers_requested = Signal()
+    mobile_pair_requested = Signal()
+    module_selected = Signal(str)
     tab_changed = Signal(str)  # "conversas" | "estoque"
 
     def __init__(self, parent=None):
@@ -65,7 +70,8 @@ class Sidebar(QWidget):
         self._conversations: dict[str, ConversationItem] = {}
         self._memories_enabled = True
         self._scheme = None
-        self._active_tab = "conversas"
+        self._active_tab = "chat"
+        self._module_buttons: dict[str, QPushButton] = {}
         self._setup_ui()
 
     def set_scheme(self, scheme):
@@ -86,6 +92,79 @@ class Sidebar(QWidget):
                 border-right: 1px solid {s.border_default};
             }}
         """)
+        self._header.setStyleSheet(
+            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+        )
+        self._title_label.setStyleSheet(
+            f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_xl}px; "
+            f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
+        )
+        self._set_brand_logo()
+        self.new_chat_btn.setIcon(icon("plus", s.accent_primary))
+        self.new_chat_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none; border-radius: {RADIUS.radius_md}px;
+            }}
+            QPushButton:hover {{
+                background: {s.bg_hover};
+            }}
+        """)
+        self._tab_bar.setStyleSheet(
+            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+        )
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+                padding: {SPACING.space_1}px {SPACING.space_2}px;
+            }}
+            QListWidget::item {{
+                background: transparent;
+                border-radius: {RADIUS.radius_md}px;
+                padding: {SPACING.space_3}px {SPACING.space_3}px;
+                margin: {SPACING.space_1}px {SPACING.space_1}px;
+                color: {s.text_primary};
+                font-size: {TYPOGRAPHY.text_sm}px;
+            }}
+            QListWidget::item:hover {{
+                background: {s.bg_hover};
+            }}
+            QListWidget::item:selected {{
+                background: {s.bg_active};
+            }}
+        """)
+        self._bottom.setStyleSheet(
+            f"border-top: 1px solid {s.border_default}; background: {s.bg_primary};"
+        )
+        for button in self._module_buttons.values():
+            module_id = button.property("module_id")
+            module = next((m for m in module_catalog() if m.id == module_id), None)
+            if module:
+                button.setIcon(icon(module.icon, s.text_muted))
+            button.setStyleSheet(self._module_button_style(s))
+
+        for button, icon_name in (
+            (self.memory_btn, "brain"),
+            (self.mobile_btn, "smartphone"),
+        ):
+            button.setIcon(icon(icon_name, s.text_muted))
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: 1px solid {s.border_default};
+                    border-radius: {RADIUS.radius_md}px;
+                    color: {s.text_secondary};
+                    padding: {SPACING.space_2}px {SPACING.space_3}px;
+                    text-align: left;
+                    font-size: {TYPOGRAPHY.text_sm}px;
+                }}
+                QPushButton:hover {{
+                    background: {s.bg_hover};
+                    border-color: {s.accent_primary};
+                    color: {s.text_primary};
+                }}
+            """)
 
     def _setup_ui(self):
         s = self._scheme or get_scheme()
@@ -101,28 +180,18 @@ class Sidebar(QWidget):
         layout.setSpacing(0)
 
         # Header
-        header = QWidget()
-        header.setFixedHeight(56)
-        header.setStyleSheet(
+        self._header = QWidget()
+        self._header.setFixedHeight(56)
+        self._header.setStyleSheet(
             f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
         )
-        header_layout = QHBoxLayout(header)
+        header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(SPACING.space_4, 0, SPACING.space_4, 0)
 
-        title = QLabel()
-        title.setStyleSheet("background: transparent; border: none;")
-        settings = get_settings()
-        logo_path = os.path.join(settings.base_dir, "logo", "logo.png")
-        pixmap = QPixmap(logo_path)
-        if not pixmap.isNull():
-            title.setPixmap(pixmap.scaledToHeight(32, Qt.SmoothTransformation))
-        else:
-            title.setText("Celsius")
-            title.setStyleSheet(
-                f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_xl}px; font-weight: {TYPOGRAPHY.weight_bold};"
-                " background: transparent; border: none;"
-            )
-        header_layout.addWidget(title)
+        self._title_label = QLabel()
+        self._title_label.setStyleSheet("background: transparent; border: none;")
+        self._set_brand_logo()
+        header_layout.addWidget(self._title_label)
         header_layout.addStretch()
 
         self.new_chat_btn = QPushButton()
@@ -141,48 +210,20 @@ class Sidebar(QWidget):
         self.new_chat_btn.clicked.connect(self.new_chat_requested.emit)
         header_layout.addWidget(self.new_chat_btn)
 
-        layout.addWidget(header)
+        layout.addWidget(self._header)
 
         # Tab bar
-        tab_bar = QWidget()
-        tab_bar.setFixedHeight(40)
-        tab_bar.setStyleSheet(
+        self._tab_bar = QWidget()
+        self._tab_bar.setStyleSheet(
             f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
         )
-        tab_layout = QHBoxLayout(tab_bar)
-        tab_layout.setContentsMargins(SPACING.space_3, 0, SPACING.space_3, 0)
-        tab_layout.setSpacing(0)
-
-        self._tab_conversas = QPushButton("Conversas")
-        self._tab_conversas.setCheckable(True)
-        self._tab_conversas.setChecked(True)
-        self._tab_conversas.setCursor(Qt.PointingHandCursor)
-        self._tab_estoque = QPushButton("Estoque")
-        self._tab_estoque.setCheckable(True)
-        self._tab_estoque.setCursor(Qt.PointingHandCursor)
-
-        tab_buttons = [self._tab_conversas, self._tab_estoque]
-
-        for btn in tab_buttons:
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent; border: none;
-                    color: {s.text_muted}; font-size: {TYPOGRAPHY.text_sm}px; font-weight: {TYPOGRAPHY.weight_semibold};
-                    padding: {SPACING.space_2}px {SPACING.space_3}px; border-bottom: 2px solid transparent;
-                }}
-                QPushButton:hover {{
-                    color: {s.text_primary};
-                }}
-                QPushButton:checked {{
-                    color: {s.text_primary};
-                    border-bottom: 2px solid {s.accent_primary};
-                }}
-            """)
-            tab_layout.addWidget(btn)
-
-        self._tab_conversas.clicked.connect(lambda: self._switch_tab("conversas"))
-        self._tab_estoque.clicked.connect(lambda: self._switch_tab("estoque"))
-        layout.addWidget(tab_bar)
+        self._module_bar_layout = QVBoxLayout(self._tab_bar)
+        self._module_bar_layout.setContentsMargins(
+            SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2
+        )
+        self._module_bar_layout.setSpacing(SPACING.space_1)
+        self.configure_modules(sidebar_modules(get_settings().modules.enabled))
+        layout.addWidget(self._tab_bar)
 
         # Search
         self.search_input = SearchInput(placeholder="Buscar conversas...", icon_name="search")
@@ -232,11 +273,11 @@ class Sidebar(QWidget):
         layout.addWidget(self.inventory_container, 1)
 
         # Bottom section
-        bottom = QWidget()
-        bottom.setStyleSheet(
+        self._bottom = QWidget()
+        self._bottom.setStyleSheet(
             f"border-top: 1px solid {s.border_default}; background: {s.bg_primary};"
         )
-        bottom_layout = QVBoxLayout(bottom)
+        bottom_layout = QVBoxLayout(self._bottom)
         bottom_layout.setContentsMargins(
             SPACING.space_3, SPACING.space_3, SPACING.space_3, SPACING.space_3
         )
@@ -267,12 +308,12 @@ class Sidebar(QWidget):
         self.memory_btn.clicked.connect(self.open_memories.emit)
         bottom_layout.addWidget(self.memory_btn)
 
-        # Settings button
-        self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(icon("cog", s.text_muted))
-        self.settings_btn.setText("Configuracoes")
-        self.settings_btn.setCursor(Qt.PointingHandCursor)
-        self.settings_btn.setStyleSheet(f"""
+        self.mobile_btn = QPushButton()
+        self.mobile_btn.setIcon(icon("smartphone", s.text_muted))
+        self.mobile_btn.setText("Celular / QR Code")
+        self.mobile_btn.setToolTip("Abrir QR Code para conectar ou reconectar o celular")
+        self.mobile_btn.setCursor(Qt.PointingHandCursor)
+        self.mobile_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 border: 1px solid {s.border_default};
@@ -288,47 +329,162 @@ class Sidebar(QWidget):
                 color: {s.text_primary};
             }}
         """)
-        self.settings_btn.clicked.connect(self.settings_requested.emit)
-        bottom_layout.addWidget(self.settings_btn)
+        self.mobile_btn.clicked.connect(self.mobile_pair_requested.emit)
+        bottom_layout.addWidget(self.mobile_btn)
 
-        layout.addWidget(bottom)
+        self.suppliers_btn = self._module_buttons.get("suppliers", QPushButton())
+        self.settings_btn = self._module_buttons.get("settings", QPushButton())
+
+        layout.addWidget(self._bottom)
+
+    def _set_brand_logo(self):
+        s = self._scheme or get_scheme()
+        pixmap = self._render_brand_svg(s)
+        if pixmap.isNull():
+            settings = get_settings()
+            png_path = Path(settings.base_dir) / "logo" / "logo.png"
+            pixmap = QPixmap(str(png_path))
+            if not pixmap.isNull():
+                pixmap = pixmap.scaledToHeight(32, Qt.SmoothTransformation)
+
+        if not pixmap.isNull():
+            self._title_label.setText("")
+            self._title_label.setPixmap(pixmap)
+            self._title_label.setFixedSize(pixmap.size())
+            self._title_label.setStyleSheet("background: transparent; border: none;")
+            return
+
+        self._title_label.setPixmap(QPixmap())
+        self._title_label.setMinimumSize(0, 0)
+        self._title_label.setMaximumSize(16777215, 16777215)
+        self._title_label.setText("Celsius")
+        self._title_label.setStyleSheet(
+            f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_xl}px; "
+            f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
+        )
+
+    def _render_brand_svg(self, scheme) -> QPixmap:
+        settings = get_settings()
+        svg_path = Path(settings.base_dir) / "logo" / "celsius-logo.svg"
+        if not svg_path.exists():
+            return QPixmap()
+        try:
+            svg = svg_path.read_text(encoding="utf-8")
+        except OSError:
+            return QPixmap()
+
+        accent_2 = getattr(scheme, "accent_hover", scheme.accent_primary)
+        svg = (
+            svg.replace("__TEXT__", scheme.text_primary)
+            .replace("__MUTED__", scheme.text_secondary)
+            .replace("__ACCENT_2__", accent_2)
+            .replace("__ACCENT__", scheme.accent_primary)
+        )
+        renderer = QSvgRenderer(bytearray(svg.encode("utf-8")))
+        if not renderer.isValid():
+            return QPixmap()
+
+        pixmap = QPixmap(QSize(176, 32))
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
 
     def _switch_tab(self, tab: str):
         if tab == self._active_tab:
+            if tab == "suppliers":
+                self.suppliers_requested.emit()
+            elif tab == "settings":
+                self.settings_requested.emit()
+            elif tab not in {"chat", "inventory"}:
+                self.module_selected.emit(tab)
+                self.tab_changed.emit(tab)
             return
         self._active_tab = tab
 
-        self._tab_conversas.setChecked(tab == "conversas")
-        self._tab_estoque.setChecked(tab == "estoque")
+        for module_id, button in self._module_buttons.items():
+            button.setChecked(module_id == tab)
 
-        is_conversas = tab == "conversas"
-        self.search_input.setPlaceholderText(
-            "Buscar conversas..." if is_conversas else "Buscar itens..."
-        )
-        self.search_input.setVisible(is_conversas)
-        self.list_widget.setVisible(is_conversas)
-        self.new_chat_btn.setVisible(is_conversas)
-        self.inventory_container.setVisible(tab == "estoque")
+        if hasattr(self, "search_input"):
+            is_conversas = tab == "chat"
+            self.search_input.setPlaceholderText(
+                "Buscar conversas..." if is_conversas else "Buscar itens..."
+            )
+            self.search_input.setVisible(is_conversas)
+            self.list_widget.setVisible(is_conversas)
+            self.new_chat_btn.setVisible(is_conversas)
+            self.inventory_container.setVisible(tab == "inventory")
 
+        self.module_selected.emit(tab)
+        if tab == "suppliers":
+            self.suppliers_requested.emit()
+        elif tab == "settings":
+            self.settings_requested.emit()
         self.tab_changed.emit(tab)
 
     def _update_tab_styles(self):
-        tab_buttons = [self._tab_conversas, self._tab_estoque]
-        for btn in tab_buttons:
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent; border: none;
-                    color: {self._scheme.text_muted}; font-size: {TYPOGRAPHY.text_sm}px; font-weight: {TYPOGRAPHY.weight_semibold};
-                    padding: {SPACING.space_2}px {SPACING.space_3}px; border-bottom: 2px solid transparent;
-                }}
-                QPushButton:hover {{
-                    color: {self._scheme.text_primary};
-                }}
-                QPushButton:checked {{
-                    color: {self._scheme.text_primary};
-                    border-bottom: 2px solid {self._scheme.accent_primary};
-                }}
-            """)
+        if not self._scheme:
+            return
+        for btn in self._module_buttons.values():
+            btn.setStyleSheet(self._module_button_style(self._scheme))
+
+    def _module_button_style(self, scheme):
+        return f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: {RADIUS.radius_md}px;
+                color: {scheme.text_muted};
+                font-size: {TYPOGRAPHY.text_sm}px;
+                font-weight: {TYPOGRAPHY.weight_semibold};
+                padding: {SPACING.space_2}px {SPACING.space_3}px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background: {scheme.bg_hover};
+                color: {scheme.text_primary};
+            }}
+            QPushButton:checked {{
+                background: {scheme.bg_active};
+                border-color: {scheme.accent_primary};
+                color: {scheme.text_primary};
+            }}
+        """
+
+    def configure_modules(self, modules):
+        while self._module_bar_layout.count():
+            item = self._module_bar_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        s = self._scheme or get_scheme()
+        self._module_buttons = {}
+        for module in modules:
+            button = QPushButton(module.name)
+            button.setProperty("module_id", module.id)
+            button.setIcon(icon(module.icon, s.text_muted))
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setToolTip(module.description)
+            button.setStyleSheet(self._module_button_style(s))
+            button.clicked.connect(lambda checked=False, mid=module.id: self._switch_tab(mid))
+            self._module_buttons[module.id] = button
+            self._module_bar_layout.addWidget(button)
+
+        self.suppliers_btn = self._module_buttons.get("suppliers", QPushButton())
+        self.settings_btn = self._module_buttons.get("settings", QPushButton())
+        self._module_bar_layout.addStretch()
+        if self._active_tab not in self._module_buttons:
+            self._active_tab = "chat"
+        for module_id, button in self._module_buttons.items():
+            button.setChecked(module_id == self._active_tab)
+
+    def set_active_tab(self, tab: str):
+        self._active_tab = ""
+        self._switch_tab(tab)
 
     def install_inventory_panel(self, panel: QWidget):
         """Replace inventory container with actual panel widget."""

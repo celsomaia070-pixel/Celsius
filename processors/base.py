@@ -8,7 +8,13 @@ class SecurityError(Exception):
     pass
 
 
-def validate_path(path: str | Path, base_dir: Path | None = None) -> Path:
+def validate_path(
+    path: str | Path,
+    base_dir: Path | None = None,
+    *,
+    enforce_size_limit: bool = True,
+    max_size_mb: int | None = None,
+) -> Path:
     path = Path(path).resolve()
 
     if base_dir is not None:
@@ -24,14 +30,15 @@ def validate_path(path: str | Path, base_dir: Path | None = None) -> Path:
     if not path.is_file():
         raise SecurityError(f"Not a file: {path}")
 
-    max_file_size_bytes = get_settings().max_file_size_mb * 1024 * 1024
-    file_size = path.stat().st_size
-    if file_size > max_file_size_bytes:
-        size_mb = file_size / (1024 * 1024)
-        limit_mb = max_file_size_bytes / (1024 * 1024)
-        raise SecurityError(
-            f"File too large: {size_mb:.1f} MB exceeds limit of {limit_mb:.0f} MB: {path}"
-        )
+    if enforce_size_limit:
+        limit_mb = max_size_mb or get_settings().max_file_size_mb
+        max_file_size_bytes = limit_mb * 1024 * 1024
+        file_size = path.stat().st_size
+        if file_size > max_file_size_bytes:
+            size_mb = file_size / (1024 * 1024)
+            raise SecurityError(
+                f"File too large: {size_mb:.1f} MB exceeds limit of {limit_mb:.0f} MB: {path}"
+            )
 
     return path
 
@@ -45,8 +52,20 @@ class ProcessadorArquivo(ABC):
         pass
 
     @classmethod
-    def _validar_caminho(cls, caminho: str, base_dir: Path | None = None) -> Path:
-        return validate_path(caminho, base_dir)
+    def _validar_caminho(
+        cls,
+        caminho: str,
+        base_dir: Path | None = None,
+        *,
+        enforce_size_limit: bool = True,
+        max_size_mb: int | None = None,
+    ) -> Path:
+        return validate_path(
+            caminho,
+            base_dir,
+            enforce_size_limit=enforce_size_limit,
+            max_size_mb=max_size_mb,
+        )
 
     @classmethod
     def suporta_extensao(cls, extensao: str) -> bool:

@@ -28,6 +28,10 @@ _S = {
         'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
         '<line x1="12" y1="19" x2="12" y2="23" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
     ),
+    "smartphone": (
+        '<rect x="7" y="2" width="10" height="20" rx="2" fill="none" stroke="{c}" stroke-width="1.8"/>'
+        '<line x1="11" y1="18" x2="13" y2="18" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'
+    ),
     "volume-up": (
         '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="none" stroke="{c}" stroke-width="1.8" stroke-linejoin="round"/>'
         '<path d="M15.54 8.46a5 5 0 0 1 0 7.07" fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round"/>'

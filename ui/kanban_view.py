@@ -166,9 +166,7 @@ class KanbanCard(QWidget):
 
     def _build_ui(self):
         s = self._scheme or get_scheme()
-        cores = _column_config(self._scheme).get(
-            self.item.coluna, _column_config(self._scheme)[ColunaKanban.EM_ESTOQUE]
-        )
+        cores = _column_config(s).get(self.item.coluna, _column_config(s)[ColunaKanban.EM_ESTOQUE])
 
         self.setStyleSheet(f"""
             KanbanCard {{
@@ -266,12 +264,12 @@ class KanbanCard(QWidget):
         btn_in = QPushButton("+ Entrada")
         btn_in.setFixedHeight(26)
         btn_in.setCursor(Qt.PointingHandCursor)
-        btn_in.setStyleSheet("""
-            QPushButton {
-                background: #E8F5E9; color: #1B5E20; border: 1px solid #C8E6C9;
+        btn_in.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.success_bg}; color: {s.success_text}; border: 1px solid {s.success};
                 border-radius: 6px; font-size: 10px; font-weight: 600; padding: 0 8px;
-            }
-            QPushButton:hover { background: #C8E6C9; }
+            }}
+            QPushButton:hover {{ background: {s.bg_hover}; }}
         """)
         btn_in.clicked.connect(lambda: self.entrada_clicked.emit(self.item.id))
         actions_row.addWidget(btn_in)
@@ -279,12 +277,12 @@ class KanbanCard(QWidget):
         btn_out = QPushButton("- Saida")
         btn_out.setFixedHeight(26)
         btn_out.setCursor(Qt.PointingHandCursor)
-        btn_out.setStyleSheet("""
-            QPushButton {
-                background: #FFF0F0; color: #C62828; border: 1px solid #FFCDD2;
+        btn_out.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.error_bg}; color: {s.error_text}; border: 1px solid {s.border_error};
                 border-radius: 6px; font-size: 10px; font-weight: 600; padding: 0 8px;
-            }
-            QPushButton:hover { background: #FFCDD2; }
+            }}
+            QPushButton:hover {{ background: {s.bg_hover}; }}
         """)
         btn_out.clicked.connect(lambda: self.saida_clicked.emit(self.item.id))
         actions_row.addWidget(btn_out)
@@ -368,9 +366,8 @@ class KanbanColumnWidget(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        cores = _column_config(self._scheme).get(
-            self.coluna, _column_config(self._scheme)[ColunaKanban.EM_ESTOQUE]
-        )
+        s = self._scheme or get_scheme()
+        cores = _column_config(s).get(self.coluna, _column_config(s)[ColunaKanban.EM_ESTOQUE])
 
         self.setStyleSheet(f"""
             KanbanColumnWidget {{
@@ -478,9 +475,8 @@ class KanbanColumnWidget(QWidget):
 
     def set_drag_highlight(self, active: bool):
         self._drag_active = active
-        cores = _column_config(self._scheme).get(
-            self.coluna, _column_config(self._scheme)[ColunaKanban.EM_ESTOQUE]
-        )
+        s = self._scheme or get_scheme()
+        cores = _column_config(s).get(self.coluna, _column_config(s)[ColunaKanban.EM_ESTOQUE])
         if active:
             self.setStyleSheet(f"""
                 KanbanColumnWidget {{

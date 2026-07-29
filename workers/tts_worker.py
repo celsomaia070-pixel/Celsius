@@ -3,74 +3,105 @@ import contextlib
 import gc
 import logging
 import os
-import re
 import tempfile
-
-try:
-    import edge_tts
-except ImportError:
-    edge_tts = None
+from pathlib import Path
 
 import pygame
 from PySide6.QtCore import QThread, Signal
+
+from core.settings import get_settings
+from core.tts import (
+    EDGE_TTS_SINGLE_PASS_LIMIT,
+    EdgeTTSProvider,
+    TTSVoiceConfig,
+    friendly_tts_error,
+    naturalize_tts_text,
+    split_tts_text,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class VozWorker(QThread):
     erro_tts = Signal(str)
+    audio_ready = Signal(bytes, str)
     finished = Signal()
 
-    def __init__(self, texto: str):
+    def __init__(self, texto: str, *, force_enabled: bool = False):
         super().__init__()
-        self.texto = re.sub(r"[*`#_]", "", texto).strip()
+        settings = get_settings().voice
+        self.texto = naturalize_tts_text(texto)
+        self._provider = EdgeTTSProvider(
+            TTSVoiceConfig(
+                voice=settings.voice,
+                rate=settings.rate,
+                pitch=settings.pitch,
+                volume=settings.volume,
+            )
+        )
         self._arquivo_voz: str | None = None
         self._should_stop = False
-        self._max_playback_ms = 120000  # 2 minute max playback
+        self._voice_enabled = settings.enabled or force_enabled
+        self._max_playback_ms = settings.max_playback_ms
 
     def run(self):
         gc.disable()
         try:
-            if not self.texto or self._should_stop:
-                return
-            if edge_tts is None:
-                if not self._should_stop:
-                    self.erro_tts.emit("edge_tts nao esta instalado")
-                self.finished.emit()
+            if not self.texto or self._should_stop or not self._voice_enabled:
                 return
 
+            loop = None
             try:
                 logger.debug("Starting TTS for: %s", self.texto[:50])
 
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
-                    self._arquivo_voz = temp.name
-
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-
-                async def _gerar():
-                    communicate = edge_tts.Communicate(self.texto, "pt-BR-AntonioNeural")
-                    await communicate.save(self._arquivo_voz)
-
-                loop.run_until_complete(_gerar())
-                loop.close()
-                logger.debug("Audio TTS salvo em: %s", self._arquivo_voz)
-
-                if not self._should_stop:
-                    self._reproduzir()
+                loop.run_until_complete(self._generate_and_play_segments())
+                self.finished.emit()
             except Exception as e:
                 logger.exception("Erro ao gerar TTS: %s", e)
                 self._cleanup()
                 if not self._should_stop:
-                    self.erro_tts.emit(str(e))
+                    self.erro_tts.emit(friendly_tts_error(e))
                 self.finished.emit()
+            finally:
+                if loop and not loop.is_closed():
+                    loop.close()
         finally:
             gc.enable()
             self._cleanup()
 
+    async def _generate_and_play_segments(self):
+        segments = self._speech_segments()
+        if not segments:
+            return
+        generated_any = False
+        for segment in segments:
+            if self._should_stop:
+                break
+            audio = await self._provider.synthesize(segment)
+            if self._should_stop:
+                break
+            generated_any = True
+            self.audio_ready.emit(audio, "audio/mpeg")
+            self._write_segment_audio(audio)
+            self._reproduzir()
+        if not generated_any and not self._should_stop:
+            raise RuntimeError("O TTS nao retornou audio para esta resposta.")
+
+    def _speech_segments(self) -> list[str]:
+        if len(self.texto) <= EDGE_TTS_SINGLE_PASS_LIMIT:
+            return [self.texto]
+        return split_tts_text(self.texto)
+
+    def _write_segment_audio(self, audio: bytes):
+        self._cleanup()
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
+            self._arquivo_voz = temp.name
+        Path(self._arquivo_voz).write_bytes(audio)
+
     def _reproduzir(self):
         if self._should_stop or not self._arquivo_voz or not os.path.exists(self._arquivo_voz):
-            self.finished.emit()
             return
 
         try:
@@ -92,7 +123,6 @@ class VozWorker(QThread):
                 self.erro_tts.emit(str(e))
         finally:
             self._cleanup()
-            self.finished.emit()
 
     def _cleanup(self):
         if self._arquivo_voz and os.path.exists(self._arquivo_voz):

@@ -34,6 +34,7 @@ class ModernInputArea(QWidget):
         self._scheme = scheme or LIGHT_SCHEME
         self._attachments = []  # list of filenames (for backwards compatibility)
         self._attachment_paths = {}  # filename -> filepath
+        self._busy = False
         self._setup_ui()
 
     def _setup_ui(self):
@@ -202,10 +203,26 @@ class ModernInputArea(QWidget):
         self.toggle_voice.emit()
 
     def _on_send(self):
+        if self._busy:
+            return
         text = self.input.text().strip()
         if text:
             self.send_message.emit(text)
             self.input.clear()
+
+    def set_busy(self, busy: bool):
+        """Block new sends while the local model is generating a response."""
+        self._busy = busy
+        self.input.setEnabled(not busy)
+        self.btn_attach.setEnabled(not busy)
+        self.btn_mic.setEnabled(not busy)
+        self.btn_voice.setEnabled(not busy)
+        self.model_combo.setEnabled(not busy)
+        if busy:
+            self.input.setPlaceholderText("Celsius esta respondendo...")
+        else:
+            self.input.setPlaceholderText("Mensagem...")
+            self.input.setFocus()
 
     def add_attachment(self, file_path: str, file_name: str = None):
         from pathlib import Path

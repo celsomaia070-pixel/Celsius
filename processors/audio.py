@@ -8,7 +8,7 @@ from processors.base import ProcessadorArquivo
 
 
 class ProcessadorAudio(ProcessadorArquivo):
-    extensoes_suportadas = [".mp3", ".wav", ".ogg", ".m4a", ".flac"]
+    extensoes_suportadas = [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".webm"]
 
     _modelo_whisper = None
 

@@ -28,14 +28,26 @@ from core.inventory import ColunaKanban, ItemEstoque, Movimentacao, get_inventor
 from ui.theme.schemes import get_scheme
 
 
-def _stock_health_color(item: ItemEstoque) -> tuple[str, str]:
+def _stock_health_color(item: ItemEstoque, scheme=None) -> tuple[str, str]:
+    coluna = item.coluna
+    if scheme and scheme.bg_primary.startswith("#0"):
+        if coluna == ColunaKanban.CRITICO:
+            return scheme.error_bg, scheme.error_text
+        if coluna == ColunaKanban.A_COMPRAR:
+            return scheme.warning_bg, scheme.warning_text
+        if coluna == ColunaKanban.EM_ESTOQUE:
+            return scheme.success_bg, scheme.success_text
+        if coluna == ColunaKanban.EM_USO:
+            return scheme.info_bg, scheme.info_text
+        return scheme.bg_tertiary, scheme.text_muted
+
     cores = {
         ColunaKanban.CRITICO: ("#FFF0F0", "#C62828"),
         ColunaKanban.A_COMPRAR: ("#FFF8E1", "#E65100"),
         ColunaKanban.EM_ESTOQUE: ("#E8F5E9", "#1B5E20"),
         ColunaKanban.EM_USO: ("#E3F2FD", "#1565C0"),
     }
-    return cores.get(item.coluna, ("#F5F5F5", "#757575"))
+    return cores.get(coluna, ("#F5F5F5", "#757575"))
 
 
 def _stock_bar_color(item: ItemEstoque) -> str:
@@ -63,8 +75,8 @@ class MovimentacaoItem(QWidget):
 
         is_entrada = mov.tipo == "entrada"
         sinal = "+" if is_entrada else "-"
-        cor = "#1B5E20" if is_entrada else "#C62828"
-        bg = "#E8F5E9" if is_entrada else "#FFF0F0"
+        cor = s.success_text if is_entrada else s.error_text
+        bg = s.success_bg if is_entrada else s.error_bg
 
         tag = QLabel(sinal)
         tag.setFixedSize(28, 28)
@@ -301,7 +313,7 @@ class InventoryPanel(QWidget):
 
     def __init__(self, scheme=None, parent=None):
         super().__init__(parent)
-        self._scheme = scheme
+        self._scheme = scheme or get_scheme()
         self._service = get_inventory_service()
         self._selected_item_id = None
         self._setup_ui()
@@ -313,42 +325,42 @@ class InventoryPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QWidget()
-        header.setFixedHeight(48)
-        header.setStyleSheet(
+        self._header = QWidget()
+        self._header.setFixedHeight(48)
+        self._header.setStyleSheet(
             f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
         )
-        header_layout = QHBoxLayout(header)
+        header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(16, 0, 16, 0)
 
-        title = QLabel("Estoque")
-        title.setStyleSheet(
+        self._title_label = QLabel("Estoque")
+        self._title_label.setStyleSheet(
             f"color: {s.text_primary}; font-size: 18px; font-weight: 700; "
             f"background: transparent; border: none;"
         )
-        header_layout.addWidget(title)
+        header_layout.addWidget(self._title_label)
         header_layout.addStretch()
 
-        btn_add = QPushButton("+ Novo Item")
-        btn_add.setFixedHeight(32)
-        btn_add.setCursor(Qt.PointingHandCursor)
-        btn_add.setStyleSheet(f"""
+        self._btn_add = QPushButton("+ Novo Item")
+        self._btn_add.setFixedHeight(32)
+        self._btn_add.setCursor(Qt.PointingHandCursor)
+        self._btn_add.setStyleSheet(f"""
             QPushButton {{
                 background: {s.accent_primary}; color: #FFFFFF; border: none;
                 border-radius: 8px; font-size: 12px; font-weight: 600; padding: 0 16px;
             }}
             QPushButton:hover {{ opacity: 0.9; }}
         """)
-        btn_add.clicked.connect(self._show_add_dialog)
-        header_layout.addWidget(btn_add)
+        self._btn_add.clicked.connect(self._show_add_dialog)
+        header_layout.addWidget(self._btn_add)
 
-        layout.addWidget(header)
+        layout.addWidget(self._header)
 
-        search_container = QWidget()
-        search_container.setStyleSheet(
+        self._search_container = QWidget()
+        self._search_container.setStyleSheet(
             f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
         )
-        search_layout = QHBoxLayout(search_container)
+        search_layout = QHBoxLayout(self._search_container)
         search_layout.setContentsMargins(16, 8, 16, 8)
 
         self.search_input = QLineEdit()
@@ -379,7 +391,7 @@ class InventoryPanel(QWidget):
         self.filter_combo.currentTextChanged.connect(self._filter_items)
         search_layout.addWidget(self.filter_combo)
 
-        layout.addWidget(search_container)
+        layout.addWidget(self._search_container)
 
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(f"""
@@ -457,20 +469,99 @@ class InventoryPanel(QWidget):
         stats_layout.addWidget(self._stats_label)
         stats_layout.addStretch()
 
-        alertas_btn = QPushButton("Alertas")
-        alertas_btn.setFixedHeight(26)
-        alertas_btn.setCursor(Qt.PointingHandCursor)
-        alertas_btn.setStyleSheet("""
-            QPushButton {
-                background: #FFF0F0; color: #C62828; border: 1px solid #FFCDD2;
+        self._alertas_btn = QPushButton("Alertas")
+        self._alertas_btn.setFixedHeight(26)
+        self._alertas_btn.setCursor(Qt.PointingHandCursor)
+        self._alertas_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.error_bg}; color: {s.error_text}; border: 1px solid {s.border_error};
                 border-radius: 6px; font-size: 11px; font-weight: 600; padding: 0 12px;
-            }
-            QPushButton:hover { background: #FFCDD2; }
+            }}
+            QPushButton:hover {{ background: {s.bg_hover}; }}
         """)
-        alertas_btn.clicked.connect(self._show_alertas)
-        stats_layout.addWidget(alertas_btn)
+        self._alertas_btn.clicked.connect(self._show_alertas)
+        stats_layout.addWidget(self._alertas_btn)
 
         layout.addWidget(self._stats_bar)
+
+    def _apply_static_styles(self):
+        s = self._scheme
+        self.setStyleSheet(f"background: {s.bg_primary};")
+        self._header.setStyleSheet(
+            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+        )
+        self._title_label.setStyleSheet(
+            f"color: {s.text_primary}; font-size: 18px; font-weight: 700; "
+            f"background: transparent; border: none;"
+        )
+        self._btn_add.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.accent_primary}; color: #FFFFFF; border: none;
+                border-radius: 8px; font-size: 12px; font-weight: 600; padding: 0 16px;
+            }}
+            QPushButton:hover {{ opacity: 0.9; }}
+        """)
+        self._search_container.setStyleSheet(
+            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+        )
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {s.bg_secondary}; border: 1px solid {s.border_default};
+                border-radius: 8px; padding: 0 12px; font-size: 13px; color: {s.text_primary};
+            }}
+            QLineEdit:focus {{ border-color: {s.accent_primary}; }}
+        """)
+        self.filter_combo.setStyleSheet(f"""
+            QComboBox {{
+                background: {s.bg_secondary}; border: 1px solid {s.border_default};
+                border-radius: 8px; padding: 0 12px; font-size: 12px; color: {s.text_primary};
+            }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox::down-arrow {{ image: none; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid {s.text_muted}; }}
+        """)
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: none; }}
+            QTabBar::tab {{
+                background: transparent; border: none; padding: 10px 20px;
+                font-size: 13px; font-weight: 600; color: {s.text_muted};
+            }}
+            QTabBar::tab:selected {{
+                color: {s.text_primary}; border-bottom: 2px solid {s.accent_primary};
+            }}
+        """)
+        self.items_table.setStyleSheet(f"""
+            QTableWidget {{
+                background: transparent; border: none; outline: none;
+                gridline-color: transparent;
+            }}
+            QTableWidget::item {{
+                background: transparent; border: none; padding: 2px 8px;
+            }}
+            QHeaderView::section {{
+                background: transparent; border: none;
+                color: {s.text_muted}; font-size: 11px; font-weight: 600;
+                padding: 8px; text-align: left;
+                border-bottom: 1px solid {s.border_default};
+            }}
+        """)
+        self.history_list.setStyleSheet(
+            "QListWidget { background: transparent; border: none; outline: none; padding: 4px 8px; } "
+            "QListWidget::item { background: transparent; border: none; padding: 0; margin: 0; } "
+            "QListWidget::item:selected { background: transparent; }"
+        )
+        self._stats_bar.setStyleSheet(
+            f"background: {s.bg_primary}; border-top: 1px solid {s.border_default};"
+        )
+        self._stats_label.setStyleSheet(
+            f"color: {s.text_muted}; font-size: 12px; background: transparent; border: none;"
+        )
+        self._alertas_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.error_bg}; color: {s.error_text}; border: 1px solid {s.border_error};
+                border-radius: 6px; font-size: 11px; font-weight: 600; padding: 0 12px;
+            }}
+            QPushButton:hover {{ background: {s.bg_hover}; }}
+        """)
 
     def _show_add_dialog(self):
         dialog = ItemDialog(scheme=self._scheme, parent=self)
@@ -553,7 +644,7 @@ class InventoryPanel(QWidget):
 
     def _populate_row(self, row: int, item: ItemEstoque):
         s = self._scheme
-        bg, fg = _stock_health_color(item)
+        bg, fg = _stock_health_color(item, s)
 
         name_widget = QWidget()
         name_layout = QHBoxLayout(name_widget)
@@ -610,9 +701,9 @@ class InventoryPanel(QWidget):
         btn_in.setFixedSize(28, 24)
         btn_in.setCursor(Qt.PointingHandCursor)
         btn_in.setToolTip("Entrada")
-        btn_in.setStyleSheet("""
-            QPushButton { background: #E8F5E9; color: #1B5E20; border: 1px solid #C8E6C9; border-radius: 6px; font-size: 12px; font-weight: bold; }
-            QPushButton:hover { background: #C8E6C9; }
+        btn_in.setStyleSheet(f"""
+            QPushButton {{ background: {s.success_bg}; color: {s.success_text}; border: 1px solid {s.success}; border-radius: 6px; font-size: 12px; font-weight: bold; }}
+            QPushButton:hover {{ background: {s.bg_hover}; }}
         """)
         btn_in.clicked.connect(lambda _, iid=item.id: self._on_entrada(iid))
         btn_layout.addWidget(btn_in)
@@ -621,9 +712,9 @@ class InventoryPanel(QWidget):
         btn_out.setFixedSize(28, 24)
         btn_out.setCursor(Qt.PointingHandCursor)
         btn_out.setToolTip("Saida")
-        btn_out.setStyleSheet("""
-            QPushButton { background: #FFF0F0; color: #C62828; border: 1px solid #FFCDD2; border-radius: 6px; font-size: 12px; font-weight: bold; }
-            QPushButton:hover { background: #FFCDD2; }
+        btn_out.setStyleSheet(f"""
+            QPushButton {{ background: {s.error_bg}; color: {s.error_text}; border: 1px solid {s.border_error}; border-radius: 6px; font-size: 12px; font-weight: bold; }}
+            QPushButton:hover {{ background: {s.bg_hover}; }}
         """)
         btn_out.clicked.connect(lambda _, iid=item.id: self._on_saida(iid))
         btn_layout.addWidget(btn_out)
@@ -670,7 +761,6 @@ class InventoryPanel(QWidget):
 
     def set_scheme(self, scheme):
         self._scheme = scheme
-        s = scheme
-        if s:
-            self.setStyleSheet(f"background: {s.bg_primary};")
+        if self._scheme:
+            self._apply_static_styles()
             self.refresh()

@@ -85,14 +85,21 @@ class MessageBubble(QWidget):
             f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_base}px; "
             f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
         )
-        if not self.is_user and self.is_streaming:
-            self.name_label.hide()
         name_row = QHBoxLayout()
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(SPACING.space_2)
         name_row.addWidget(self.name_label)
         name_row.addStretch()
         msg_layout.addLayout(name_row)
+
+        self.status_label = QLabel()
+        self.status_label.setStyleSheet(
+            f"color: {s.text_muted}; font-size: {TYPOGRAPHY.text_sm}px; "
+            f"font-style: italic; background: transparent; border: none;"
+        )
+        self.status_label.hide()
+        if not self.is_user:
+            msg_layout.addWidget(self.status_label)
 
         # Attachments
         if self.attachments:
@@ -406,9 +413,23 @@ class MessageBubble(QWidget):
         self.content_label.setHtml(self._markdown_to_html(display))
         self._adjust_height()
 
+    def set_status(self, text: str):
+        if self.is_user:
+            return
+        cleaned = text.strip()
+        self.status_label.setText(cleaned)
+        self.status_label.setVisible(bool(cleaned))
+
+    def clear_status(self):
+        if self.is_user:
+            return
+        self.status_label.clear()
+        self.status_label.hide()
+
     def finish_streaming(self):
         self.is_streaming = False
         self._cursor_timer.stop()
+        self.clear_status()
         if hasattr(self, "name_label"):
             self.name_label.show()
         self.update_content(self._full_content)
@@ -434,6 +455,10 @@ class MessageBubble(QWidget):
                 selection-background-color: {s.accent_primary}40;
             }}
         """)
+        self.status_label.setStyleSheet(
+            f"color: {s.text_muted}; font-size: {TYPOGRAPHY.text_sm}px; "
+            f"font-style: italic; background: transparent; border: none;"
+        )
         if hasattr(self, "actions_widget"):
             # Recreate actions with new scheme
             self.actions_widget.deleteLater()

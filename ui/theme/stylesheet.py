@@ -36,12 +36,22 @@ def generate_base_stylesheet(scheme: ColorScheme) -> str:
    ============================================================ */
 
 /* ----- Global ----- */
-QMainWindow, QWidget {{
+QMainWindow, QWidget, QFrame {{
     background-color: {s.bg_primary};
     color: {s.text_primary};
     font-family: '{typo.font_sans}', {typo.font_fallback_sans};
     font-size: {px(typo.text_base)};
     font-weight: {typo.weight_normal};
+}}
+
+QAbstractScrollArea,
+QAbstractScrollArea::viewport,
+QScrollArea,
+QScrollArea > QWidget,
+QScrollArea > QWidget > QWidget {{
+    background-color: {s.bg_primary};
+    color: {s.text_primary};
+    border: none;
 }}
 
 QLabel {{

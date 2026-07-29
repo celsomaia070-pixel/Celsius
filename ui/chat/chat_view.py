@@ -123,6 +123,18 @@ class ModernChatView(QWidget):
         self.messages.clear()
 
     def show_thinking(self, text: str):
+        if self._streaming_bubble:
+            self._streaming_bubble.set_status(text)
+            if self._auto_scroll:
+                self._scroll_to_bottom()
+            return
+
+        if hasattr(self, "_thinking_widget") and self._thinking_widget:
+            self._thinking_widget.set_text(text)
+            if self._auto_scroll:
+                self._scroll_to_bottom()
+            return
+
         self.hide_thinking()
         self._saved_stretch = self.content_layout.takeAt(self.content_layout.count() - 1)
         self.content_layout.addStretch()
@@ -132,12 +144,19 @@ class ModernChatView(QWidget):
         self._scroll_to_bottom()
 
     def update_thinking(self, text: str):
+        if self._streaming_bubble:
+            self._streaming_bubble.set_status(text)
+            return
+
         if hasattr(self, "_thinking_widget") and isinstance(
             self._thinking_widget, ThinkingIndicator
         ):
             self._thinking_widget.set_text(text)
 
     def hide_thinking(self):
+        if self._streaming_bubble:
+            self._streaming_bubble.clear_status()
+
         if hasattr(self, "_thinking_widget") and self._thinking_widget:
             for i in range(self.content_layout.count() - 1, -1, -1):
                 item = self.content_layout.itemAt(i)

@@ -1,5 +1,6 @@
 """Application settings with pydantic-settings for external configuration."""
 
+import json
 import sys
 from enum import Enum
 from pathlib import Path
@@ -7,6 +8,55 @@ from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from core.modules import default_enabled_module_ids, normalize_module_ids
+
+ASSISTANT_NAME = "Celsius"
+ASSISTANT_PROFILE = "Agente Multimodal Local de IA"
+CUSTOMER_PROFILE_FIELDS = (
+    "user_name",
+    "company_name",
+    "company_sector",
+    "company_size",
+    "company_description",
+    "user_role",
+    "preferred_tone",
+    "business_context",
+    "main_needs",
+    "timezone",
+    "local_offline_required",
+)
+MODULES_FIELDS = (
+    "enabled",
+    "sidebar_visible",
+    "first_setup_completed",
+    "module_configs",
+)
+RESPONSE_STYLE_FIELDS = (
+    "mode",
+    "temperature",
+    "top_p",
+    "short_answer_max_chars",
+    "max_simple_sentences",
+)
+VOICE_FIELDS = (
+    "enabled",
+    "provider",
+    "voice",
+    "rate",
+    "pitch",
+    "volume",
+    "max_playback_ms",
+)
+MOBILE_ACCESS_FIELDS = (
+    "enabled",
+    "host",
+    "port",
+    "pairing_token",
+    "allow_lan",
+    "voice_commands_enabled",
+    "use_https",
+)
 
 
 def _get_base_dir() -> Path:
@@ -35,9 +85,137 @@ class AssistantSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="CELSIUS_ASSISTANT_")
 
-    name: str = "Celsius"
     owner_name: str = ""
-    profile: str = "agente multimodal de IA local"
+
+    @property
+    def name(self) -> str:
+        return ASSISTANT_NAME
+
+    @property
+    def profile(self) -> str:
+        return ASSISTANT_PROFILE
+
+
+class CustomerSettings(BaseSettings):
+    """Customer/company context for this local Celsius installation."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_CUSTOMER_")
+
+    user_name: str = ""
+    company_name: str = ""
+    company_sector: str = ""
+    company_size: str = ""
+    company_description: str = ""
+    user_role: str = ""
+    preferred_tone: str = "profissional e direto"
+    business_context: str = ""
+    main_needs: str = ""
+    timezone: str = "America/Sao_Paulo"
+    local_offline_required: bool = True
+
+    def is_configured(self) -> bool:
+        return any(
+            (
+                self.user_name.strip(),
+                self.company_name.strip(),
+                self.company_sector.strip(),
+                self.company_description.strip(),
+                self.user_role.strip(),
+                self.business_context.strip(),
+                self.main_needs.strip(),
+            )
+        )
+
+    def to_storage(self) -> dict[str, str | bool]:
+        return {field: getattr(self, field) for field in CUSTOMER_PROFILE_FIELDS}
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in CUSTOMER_PROFILE_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field in data:
+                setattr(self, field, data[field])
+
+    def prompt_context(self) -> str:
+        if not self.is_configured():
+            return ""
+
+        lines = [
+            "## Perfil do Cliente/Empresa",
+            "O Celsius esta trabalhando para este usuario ou empresa nesta instalacao local.",
+        ]
+        if self.user_name.strip():
+            lines.append(f"- Usuario principal: {self.user_name.strip()}")
+        if self.company_name.strip():
+            lines.append(f"- Empresa: {self.company_name.strip()}")
+        if self.company_sector.strip():
+            lines.append(f"- Setor/atividade: {self.company_sector.strip()}")
+        if self.company_size.strip():
+            lines.append(f"- Porte da empresa: {self.company_size.strip()}")
+        if self.company_description.strip():
+            lines.append(f"- Descricao da empresa: {self.company_description.strip()}")
+        if self.user_role.strip():
+            lines.append(f"- Papel do usuario: {self.user_role.strip()}")
+        if self.preferred_tone.strip():
+            lines.append(f"- Tom preferido: {self.preferred_tone.strip()}")
+        if self.timezone.strip():
+            lines.append(f"- Fuso horario local: {self.timezone.strip()}")
+        if self.local_offline_required:
+            lines.append(
+                "- Privacidade: priorize processamento local/offline e nao exponha dados da empresa."
+            )
+        if self.business_context.strip():
+            lines.append("- Contexto de negocio:")
+            lines.append(self.business_context.strip())
+        if self.main_needs.strip():
+            lines.append("- Necessidades principais:")
+            lines.append(self.main_needs.strip())
+        lines.append(
+            "Use esse perfil como contexto preferencial para exemplos, prioridades e dados da empresa, "
+            "mas nao limite o escopo do Celsius ao setor cadastrado."
+        )
+        lines.append(
+            "Quando o usuario pedir assuntos gerais, estudos, redacao, tecnologia, cultura, "
+            "programacao ou explicacoes fora do negocio, responda normalmente sem recusar por nao ser "
+            "o segmento da empresa."
+        )
+        lines.append(
+            "Nao trate o setor da empresa como regra fixa de permissao; ele apenas orienta contexto."
+        )
+        return "\n".join(lines)
+
+
+class CompanyModulesSettings(BaseSettings):
+    """Enabled modules for the current company profile."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_MODULES_")
+
+    enabled: list[str] = Field(default_factory=default_enabled_module_ids)
+    sidebar_visible: dict[str, bool] = Field(default_factory=dict)
+    first_setup_completed: bool = False
+    module_configs: dict[str, dict] = Field(default_factory=dict)
+
+    def model_post_init(self, __context) -> None:
+        self.enabled = normalize_module_ids(self.enabled)
+
+    def to_storage(self) -> dict:
+        return {field: getattr(self, field) for field in MODULES_FIELDS}
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in MODULES_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field in data:
+                setattr(self, field, data[field])
+        self.enabled = normalize_module_ids(self.enabled)
+
+    def set_enabled(self, module_ids) -> None:
+        self.enabled = normalize_module_ids(module_ids)
+
+    def is_enabled(self, module_id: str) -> bool:
+        return module_id in set(normalize_module_ids(self.enabled))
 
 
 class HardwareSettings(BaseSettings):
@@ -71,6 +249,63 @@ class ModelSettings(BaseSettings):
     offload_kqv: bool = True
     flash_attn: bool = True
     auto_configured: bool = False
+
+
+class ResponseStyleSettings(BaseSettings):
+    """Response tone and sampling settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_RESPONSE_")
+
+    mode: Literal["natural", "tecnico", "relatorio"] = "natural"
+    temperature: float = 0.45
+    top_p: float = 0.9
+    short_answer_max_chars: int = 180
+    max_simple_sentences: int = 3
+
+    def prompt_context(self) -> str:
+        lines = [
+            "## Estilo de Conversa",
+            "- Fale de forma natural, como um parceiro de trabalho competente.",
+            "- Para perguntas simples, responda em 1 a 3 frases, sem estrutura desnecessaria.",
+            "- Para tarefas tecnicas, use passos claros e exemplos curtos quando ajudarem.",
+            "- Para relatorios, analises e documentos, use topicos, tabelas e conclusoes praticas.",
+            "- Evite soar como manual, contrato ou texto engessado.",
+            "- Nao comece toda resposta com confirmacoes genericas.",
+            "- Use o historico recente para manter continuidade de conversa.",
+        ]
+        if self.mode == "tecnico":
+            lines.extend(
+                [
+                    "- Modo atual: tecnico.",
+                    "- Priorize precisao, criterios, riscos e verificacao.",
+                ]
+            )
+        elif self.mode == "relatorio":
+            lines.extend(
+                [
+                    "- Modo atual: relatorio.",
+                    "- Priorize estrutura executiva, comparativos, indicadores e proximas acoes.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "- Modo atual: natural.",
+                    "- Priorize respostas humanas, diretas e proporcionais ao tamanho da pergunta.",
+                ]
+            )
+        return "\n".join(lines)
+
+    def to_storage(self) -> dict[str, str | int | float]:
+        return {field: getattr(self, field) for field in RESPONSE_STYLE_FIELDS}
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in RESPONSE_STYLE_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field in data:
+                setattr(self, field, data[field])
 
 
 class RagSettings(BaseSettings):
@@ -108,10 +343,12 @@ class FileSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CELSIUS_FILE_")
 
     max_file_size_mb: int = 50
+    max_pdf_size_mb: int = 300
+    large_pdf_page_limit: int = 80
     doc_text_limit: int = 12000
     doc_extensions: tuple[str, ...] = (".pdf", ".docx", ".odt", ".ods", ".odp")
     image_extensions: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
-    audio_extensions: tuple[str, ...] = (".mp3", ".wav", ".ogg", ".m4a", ".flac")
+    audio_extensions: tuple[str, ...] = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".webm")
 
 
 class InventorySettings(BaseSettings):
@@ -206,7 +443,7 @@ class UiSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="CELSIUS_UI_")
 
-    theme: Literal["light", "dark", "system"] = "system"
+    theme: Literal["light", "dark", "system"] = "light"
     language: str = "pt-BR"
     font_size: int = 10
     show_sidebar: bool = True
@@ -214,7 +451,57 @@ class UiSettings(BaseSettings):
     command_palette_enabled: bool = True
     jarvis_enabled: bool = True
     jarvis_particle_count: int = 800
-    jarvis_fps: int = 30
+    jarvis_fps: int = 60
+
+
+class VoiceSettings(BaseSettings):
+    """Voice output settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_VOICE_")
+
+    enabled: bool = True
+    provider: str = "edge-tts"
+    voice: str = "pt-BR-AntonioNeural"
+    rate: str = "+5%"
+    pitch: str = "-2Hz"
+    volume: str = "+0%"
+    max_playback_ms: int = 120000
+
+    def to_storage(self) -> dict[str, str | int | bool]:
+        return {field: getattr(self, field) for field in VOICE_FIELDS}
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in VOICE_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field in data:
+                setattr(self, field, data[field])
+
+
+class MobileAccessSettings(BaseSettings):
+    """Local mobile access settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_MOBILE_")
+
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8787
+    pairing_token: str = ""
+    allow_lan: bool = False
+    voice_commands_enabled: bool = True
+    use_https: bool = True
+
+    def to_storage(self) -> dict[str, str | int | bool]:
+        return {field: getattr(self, field) for field in MOBILE_ACCESS_FIELDS}
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in MOBILE_ACCESS_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field in data:
+                setattr(self, field, data[field])
 
 
 class FeatureFlags(BaseSettings):
@@ -255,7 +542,10 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default_factory=lambda: _get_base_dir() / "logs")
 
     assistant: AssistantSettings = Field(default_factory=AssistantSettings)
+    customer: CustomerSettings = Field(default_factory=CustomerSettings)
+    modules: CompanyModulesSettings = Field(default_factory=CompanyModulesSettings)
     model: ModelSettings = Field(default_factory=ModelSettings)
+    response: ResponseStyleSettings = Field(default_factory=ResponseStyleSettings)
     hardware: HardwareSettings = Field(default_factory=HardwareSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
@@ -264,6 +554,8 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     ui: UiSettings = Field(default_factory=UiSettings)
+    voice: VoiceSettings = Field(default_factory=VoiceSettings)
+    mobile: MobileAccessSettings = Field(default_factory=MobileAccessSettings)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
 
     memorias_file: Path = Field(default_factory=lambda: _get_base_dir() / "memorias.json")
@@ -275,6 +567,86 @@ class Settings(BaseSettings):
     def model_post_init(self, __context) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self._load_customer_profile()
+        self._load_local_preferences()
+        self._sync_legacy_owner_name()
+
+    @property
+    def customer_profile_file(self) -> Path:
+        return self.data_dir / "customer_profile.json"
+
+    @property
+    def local_preferences_file(self) -> Path:
+        return self.data_dir / "celsius_settings.json"
+
+    def _load_customer_profile(self) -> None:
+        path = self.customer_profile_file
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if isinstance(data, dict):
+            self.customer.apply_storage(data, preserve_explicit=True)
+
+    def _load_local_preferences(self) -> None:
+        path = self.local_preferences_file
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(data, dict):
+            return
+        if isinstance(data.get("customer"), dict):
+            self.customer.apply_storage(data["customer"], preserve_explicit=True)
+        if isinstance(data.get("response"), dict):
+            self.response.apply_storage(data["response"], preserve_explicit=True)
+        if isinstance(data.get("voice"), dict):
+            self.voice.apply_storage(data["voice"], preserve_explicit=True)
+        if isinstance(data.get("modules"), dict):
+            self.modules.apply_storage(data["modules"], preserve_explicit=True)
+        if isinstance(data.get("mobile"), dict):
+            self.mobile.apply_storage(data["mobile"], preserve_explicit=True)
+
+    def _sync_legacy_owner_name(self) -> None:
+        if self.assistant.owner_name and not self.customer.user_name:
+            self.customer.user_name = self.assistant.owner_name
+        elif self.customer.user_name and not self.assistant.owner_name:
+            self.assistant.owner_name = self.customer.user_name
+
+    def save_customer_profile(self) -> Path:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.assistant.owner_name = self.customer.user_name
+        path = self.customer_profile_file
+        path.write_text(
+            json.dumps(self.customer.to_storage(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        self.save_local_preferences()
+        return path
+
+    def save_local_preferences(self) -> Path:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.assistant.owner_name = self.customer.user_name
+        path = self.local_preferences_file
+        path.write_text(
+            json.dumps(
+                {
+                    "customer": self.customer.to_storage(),
+                    "modules": self.modules.to_storage(),
+                    "response": self.response.to_storage(),
+                    "voice": self.voice.to_storage(),
+                    "mobile": self.mobile.to_storage(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return path
 
     @property
     def default_llm_model(self) -> str:
@@ -363,6 +735,14 @@ class Settings(BaseSettings):
     @property
     def assistant_profile(self) -> str:
         return self.assistant.profile
+
+    @property
+    def customer_prompt_context(self) -> str:
+        return self.customer.prompt_context()
+
+    @property
+    def response_style_prompt_context(self) -> str:
+        return self.response.prompt_context()
 
     def is_module_enabled(self, module: str) -> bool:
         return bool(getattr(self.features, module, False))

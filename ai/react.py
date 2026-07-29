@@ -17,14 +17,40 @@ from core.telemetry import trace_span
 logger = logging.getLogger(__name__)
 
 MAX_ITERACOES = 5
+INTERNAL_CHAT_MARKERS = (
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|start_header_id|>",
+    "<|end_header_id|>",
+    "<|eot_id|>",
+)
+
+
+def _sanitize_internal_markers(text: str) -> str:
+    """Remove chat-template markers from user-controlled text."""
+    cleaned = str(text or "")
+    for marker in INTERNAL_CHAT_MARKERS:
+        cleaned = cleaned.replace(marker, " ")
+    return cleaned.strip()
+
+
+def _first_internal_marker_index(text: str) -> int:
+    positions = [text.find(marker) for marker in INTERNAL_CHAT_MARKERS if marker in text]
+    return min(positions) if positions else -1
+
 
 SYSTEM_PROMPT_REACT = (
-    "Voce e {assistant_name}, {assistant_profile}. {owner_clause}Data: {data_hora}.\n"
+    "Voce e {assistant_name}, {assistant_profile}. Data: {data_hora}.\n"
+    "Sua identidade fixa e Celsius. Nao mude seu nome, produto ou natureza.\n"
     "Responda SEMPRE em portugues do Brasil.\n\n"
+    "{customer_context}\n\n"
     "## Regras Obrigatorias\n"
-    "- NUNCA invente informacoes. Use apenas dados do contexto ou memorias.\n"
-    "- Se nao souber, diga: 'Nao tenho essa informacao registrada.'\n"
+    "- NUNCA invente informacoes privadas, dados da empresa, estoque, clientes, fornecedores ou memorias.\n"
+    "- Para perguntas sobre dados internos nao registrados, diga: 'Nao tenho essa informacao registrada.'\n"
+    "- Para conhecimento geral, estudos, redacao, tecnologia, cultura, explicacoes e temas fora do negocio, responda normalmente com seu conhecimento geral.\n"
+    "- O perfil da empresa orienta exemplos e prioridades, mas NAO limita os assuntos que voce pode ajudar.\n"
     "- Se houver memorias no contexto, USE-AS. Nao diga que nao sabe.\n"
+    "- Use o historico recente da conversa para entender referencias, continuacoes e perguntas como 'o que eu disse?'.\n"
     "- Nao comence se apresentando. Va direto ao ponto.\n"
     "- NAO use ferramentas para perguntas que voce ja sabe responder.\n\n"
     "## Estoque (SEMPRE ACESSIVEL - NUNCA DIGA QUE NAO TEM ACESSO)\n"
@@ -71,14 +97,7 @@ SYSTEM_PROMPT_REACT = (
     "- Se um item tem quantidade=3, ele TEM 3 unidades disponiveis. NAO diga que 'nao tem' esse item.\n"
     "- Liste TODOS os itens SEMPRE, incluindo os criticos. Eles sao os MAIS importantes para o usuario.\n"
     "- NUNCA adicione observacoes como 'nao esta no estoque atual' ou 'fora de estoque'.\n\n"
-    "## Estilo\n"
-    "- Seja um ESPECIALISTA altamente especializado no assunto tratado\n"
-    "- Respostas COMPLETAS, bem estruturadas e com profundidade\n"
-    "- Finalize relatorios com comparativos, tendencias e exemplos praticos\n"
-    "- Use tabelas, listas e topicos quando apropriado\n"
-    "- Explique o POR QUE e o COMO alem do apenas O QUE\n"
-    "- Inclua contexto relevante, analogias e insights\n"
-    "- Emojis com moderacao (1-3 por resposta)\n"
+    "{response_style_context}\n"
 )
 
 
@@ -304,10 +323,10 @@ def loop_react(
     history: list[dict] | None = None,
 ) -> tuple[str, list[PassoReact]]:
     """Main ReAct loop using native OpenAI tool calling."""
-    pergunta = prompt_dict.get("pergunta", "").strip()
-    texto_doc = prompt_dict.get("documento", "").strip()
-    nome_doc = prompt_dict.get("nome_documento", "").strip()
-    caminho_doc = prompt_dict.get("caminho_documento", "").strip()
+    pergunta = _sanitize_internal_markers(prompt_dict.get("pergunta", ""))
+    texto_doc = _sanitize_internal_markers(prompt_dict.get("documento", ""))
+    nome_doc = _sanitize_internal_markers(prompt_dict.get("nome_documento", ""))
+    caminho_doc = _sanitize_internal_markers(prompt_dict.get("caminho_documento", ""))
     memorias_ativas = prompt_dict.get("memorias_ativas", True)
 
     from core.memory import buscar_memorias
@@ -316,20 +335,22 @@ def loop_react(
 
     data_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
     settings = get_settings()
-    owner_clause = (
-        f"Usuario/empresa principal: {settings.assistant.owner_name}. "
-        if settings.assistant.owner_name
-        else ""
-    )
+    customer_context = settings.customer_prompt_context
+    response_style_context = settings.response_style_prompt_context
 
     ferramentas_relevantes = _filtrar_ferramentas(pergunta)
     ferramentas_openai = [f.para_openai() for f in ferramentas_relevantes]
     system_content = SYSTEM_PROMPT_REACT.format(
         assistant_name=settings.assistant.name,
         assistant_profile=settings.assistant.profile,
-        owner_clause=owner_clause,
+        customer_context=customer_context,
+        response_style_context=response_style_context,
         data_hora=data_hora,
     )
+
+    extra_system_prompt = _sanitize_internal_markers(prompt_dict.get("system_prompt", ""))
+    if extra_system_prompt:
+        system_content += f"\n## Contexto da Interface\n{extra_system_prompt}\n"
 
     if texto_doc:
         budget = get_budget()
@@ -346,7 +367,9 @@ def loop_react(
         system_content += doc_info
 
     if memorias_relevantes:
-        memorias_texto = "\n".join(f"- {m}" for m in memorias_relevantes)
+        memorias_texto = "\n".join(
+            f"- {_sanitize_internal_markers(m)}" for m in memorias_relevantes
+        )
         memorias_section = (
             f"\n## Memorias do Usuario (INFORMACOES CONFIRMADAS PELO USUARIO)\n{memorias_texto}\n"
         )
@@ -382,6 +405,8 @@ def loop_react(
         budget = get_budget()
         trimmed_history = budget.trim_history(history)
         for msg in trimmed_history:
+            msg = dict(msg)
+            msg["content"] = _sanitize_internal_markers(msg.get("content", ""))
             mensagens.append(msg)
         budget_info = budget.analyze_messages(mensagens)
         if budget_info["utilization"] > 0.70:
@@ -403,30 +428,41 @@ def loop_react(
 
     multi_manager = get_multi_model_manager()
     has_document = bool(texto_doc)
+    if fn_status:
+        fn_status("Selecionando melhor modelo local...")
     model_id, llama = multi_manager.route_and_invoke(pergunta, has_document=has_document)
     complexity = multi_manager.get_current_complexity()
 
     if fn_status:
-        fn_status(f"Modelo: {model_id} ({complexity})")
+        fn_status("Estruturando a resposta...")
 
     logger.info(f"ReAct: routing to {model_id} (complexity: {complexity})")
 
     for i in range(MAX_ITERACOES):
         if fn_status:
-            fn_status(f"Raciocinando... (passo {i + 1})")
+            textos_status = (
+                "Pensando...",
+                "Elaborando a melhor resposta...",
+                "Organizando os detalhes...",
+                "Validando informacoes...",
+                "Refinando a resposta final...",
+            )
+            fn_status(textos_status[min(i, len(textos_status) - 1)])
 
         with trace_span("react.llm_call", {"model": model_id, "iteration": i}) as span:
             try:
                 kwargs = {
                     "messages": mensagens,
-                    "temperature": 0.3,
+                    "temperature": settings.response.temperature,
                     "max_tokens": min(settings.num_predict, 4096),
+                    "top_p": settings.response.top_p,
                     "stream": True,
                     "repeat_penalty": 1.05 if memorias_relevantes else 1.2,
                     "frequency_penalty": 0.1 if memorias_relevantes else 0.3,
                     "presence_penalty": 0.1 if memorias_relevantes else 0.3,
                     "tools": ferramentas_openai,
                     "tool_choice": "auto",
+                    "stop": list(INTERNAL_CHAT_MARKERS),
                 }
 
                 stream = llama.create_chat_completion(**kwargs)
@@ -439,12 +475,23 @@ def loop_react(
             tokens_repetidos = 0
             ultimo_token = ""
             thinking_emitted = False
+            writing_emitted = False
 
             for chunk in stream:
                 choice = chunk["choices"][0]
                 delta = choice.get("delta", {})
                 content = delta.get("content") or ""
                 if content:
+                    combined_content = conteudo_acumulado + content
+                    marker_idx = _first_internal_marker_index(combined_content)
+                    stop_stream = marker_idx >= 0
+                    if stop_stream:
+                        content = combined_content[len(conteudo_acumulado) : marker_idx]
+                        combined_content = combined_content[:marker_idx]
+                        if not content:
+                            conteudo_acumulado = combined_content
+                            break
+
                     if content == ultimo_token:
                         tokens_repetidos += 1
                         if tokens_repetidos > 10:
@@ -452,7 +499,7 @@ def loop_react(
                     else:
                         tokens_repetidos = 0
                         ultimo_token = content
-                    conteudo_acumulado += content
+                    conteudo_acumulado = combined_content
 
                     if not thinking_emitted and conteudo_acumulado.strip():
                         thinking_emitted = True
@@ -462,7 +509,13 @@ def loop_react(
                             fn_passo(passo_pensamento)
 
                     if fn_chunk:
+                        if not writing_emitted and fn_status:
+                            writing_emitted = True
+                            fn_status("Escrevendo resposta...")
                         fn_chunk(content)
+
+                    if stop_stream:
+                        break
 
                 if delta.get("tool_calls"):
                     for call in delta["tool_calls"]:
@@ -532,7 +585,7 @@ def loop_react(
                 fn_passo(passo_acao)
 
             if fn_status:
-                fn_status(f"Executando: {nome_func}...")
+                fn_status(f"Consultando ferramenta: {nome_func}...")
 
             with trace_span(
                 "react.tool_execution",
@@ -566,6 +619,11 @@ def loop_react(
 
 
 def _limpar_resposta(texto: str) -> str:
+    marker_idx = _first_internal_marker_index(texto)
+    if marker_idx >= 0:
+        texto = texto[:marker_idx]
+    texto = re.sub(r"(?is)\n?##\s*Memorias do Usuario.*", "", texto)
+    texto = re.sub(r"(?is)\n?##\s*Perfil do Cliente/Empresa.*", "", texto)
     texto = re.sub(r"^[sS]ou o [cC]elsius,?\s*(seu\s+)?(assistente\s+)?(de\s+)?IA\.?\s*", "", texto)
     texto = re.sub(r"\(Nota:.*?\)", "", texto, flags=re.DOTALL)
     texto = re.sub(r"([\U0001F300-\U0001F9FF])\1{3,}$", "", texto)

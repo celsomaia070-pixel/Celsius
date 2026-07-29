@@ -1,5 +1,7 @@
 """Tests for hardware detection and model selection."""
 
+import builtins
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.hardware import (
@@ -51,6 +53,47 @@ class TestRamDetection:
     def test_detect_ram_reasonable_range(self):
         ram = detect_ram_mb()
         assert 4096 <= ram <= 1048576  # 4GB to 1TB
+
+    def test_detect_ram_windows_powershell_fallback(self):
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "psutil":
+                raise ImportError
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch("builtins.__import__", side_effect=fake_import),
+            patch("core.hardware.platform.system", return_value="Windows"),
+            patch(
+                "core.hardware.subprocess.run",
+                return_value=SimpleNamespace(stdout=str(32 * 1024 * 1024 * 1024), returncode=0),
+            ),
+        ):
+            assert detect_ram_mb() == 32768
+
+    def test_detect_ram_windows_wmic_fallback(self):
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "psutil":
+                raise ImportError
+            return original_import(name, *args, **kwargs)
+
+        command_results = [
+            SimpleNamespace(stdout="", returncode=1),
+            SimpleNamespace(
+                stdout=("Capacity\n17179869184\n17179869184\n"),
+                returncode=0,
+            ),
+        ]
+
+        with (
+            patch("builtins.__import__", side_effect=fake_import),
+            patch("core.hardware.platform.system", return_value="Windows"),
+            patch("core.hardware.subprocess.run", side_effect=command_results),
+        ):
+            assert detect_ram_mb() == 32768
 
 
 class TestGpuDetection:

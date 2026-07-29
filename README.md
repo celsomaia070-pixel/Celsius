@@ -12,6 +12,7 @@ quando disponivel e fallback para CPU.
 - Testes automatizados com `pytest`.
 - Lint e formatacao com `ruff`.
 - Configuracao centralizada em `core/settings.py` e `.env`.
+- Perfil empresarial local com modulos configuraveis por cliente.
 - Modelos GGUF baixados sob demanda para reduzir o tamanho do instalador padrao.
 
 ## Principais Recursos
@@ -25,8 +26,39 @@ quando disponivel e fallback para CPU.
 - Pesquisa e navegacao web.
 - Execucao controlada de codigo em sandbox.
 - Gerenciamento de estoque com interface Kanban.
+- Cadastro local de fornecedores.
+- Sidebar dinamica por modulos da empresa.
+- Base de acesso local pelo celular, com token e comandos por texto/voz.
 - Geracao de relatorios em PDF/DOCX.
 - Licenciamento com trial e chave de ativacao.
+
+## Modulos por Empresa
+
+O Celsius pode ser configurado por perfil de empresa. Em `Configuracoes`, a area
+`Modulos da empresa` permite ativar apenas os recursos relevantes para cada
+cliente. `Chat` e `Configuracoes` permanecem sempre ativos; os demais modulos
+podem ser ligados ou desligados sem alterar codigo.
+
+No primeiro uso, o assistente de configuracao pergunta nome, segmento, descricao
+e necessidades principais da empresa, sugere uma selecao inicial de modulos e
+salva tudo localmente em `data/customer_profile.json` e
+`data/celsius_settings.json`.
+
+## Acesso Pelo Celular
+
+O Celsius pode expor uma interface local para celulares na mesma rede Wi-Fi. O
+recurso fica desligado por padrao e usa token de pareamento. Em `Configuracoes`,
+use a secao `Celular` para ativar o acesso e clique em `Parear celular`. O
+Celsius inicia o acesso local e abre uma janela com QR Code e link de pareamento.
+O botao `Regenerar token` invalida links antigos e cria um novo pareamento.
+
+O painel mobile aceita comandos digitados e gravacao de voz enviada ao PC para
+transcricao local pelo Celsius. O audio e otimizado no navegador como WAV mono em
+16 kHz antes do envio. A resposta do Celsius volta para o celular em texto e pode
+ser reproduzida pela voz nativa do navegador. Por padrao, o acesso usa HTTPS
+local com certificado autoassinado gerado em `data/mobile_access`. No primeiro
+acesso, o celular pode pedir confirmacao de seguranca para esse certificado
+local. Se HTTPS for desligado, alguns navegadores podem bloquear o microfone.
 
 ## Requisitos
 

@@ -5,18 +5,23 @@ from unittest.mock import patch
 
 from core.settings import (
     AssistantSettings,
+    CompanyModulesSettings,
+    CustomerSettings,
     Environment,
     FeatureFlags,
     FileSettings,
     InventorySettings,
     LogLevel,
     MemorySettings,
+    MobileAccessSettings,
     ModelSettings,
     RagSettings,
+    ResponseStyleSettings,
     SecuritySettings,
     Settings,
     TelemetrySettings,
     UiSettings,
+    VoiceSettings,
     _get_base_dir,
     get_feature_flags,
     get_settings,
@@ -82,17 +87,98 @@ class TestModelSettingsDefaults:
         assert s.flash_attn is True
 
 
+class TestResponseStyleSettingsDefaults:
+    def test_defaults_are_natural(self):
+        s = ResponseStyleSettings()
+        assert s.mode == "natural"
+        assert s.temperature == 0.45
+        assert s.top_p == 0.9
+
+    def test_prompt_context_encourages_natural_answers(self):
+        context = ResponseStyleSettings().prompt_context()
+        assert "Estilo de Conversa" in context
+        assert "perguntas simples" in context
+        assert "Modo atual: natural" in context
+
+
 class TestAssistantSettingsDefaults:
     def test_identity_defaults(self):
         s = AssistantSettings()
         assert s.name == "Celsius"
         assert s.owner_name == ""
-        assert "IA local" in s.profile
+        assert s.profile == "Agente Multimodal Local de IA"
 
-    def test_env_override(self, monkeypatch):
+    def test_identity_is_fixed(self, monkeypatch):
         monkeypatch.setenv("CELSIUS_ASSISTANT_NAME", "EmpresaBot")
+        monkeypatch.setenv("CELSIUS_ASSISTANT_PROFILE", "Outro perfil")
         s = AssistantSettings()
-        assert s.name == "EmpresaBot"
+        assert s.name == "Celsius"
+        assert s.profile == "Agente Multimodal Local de IA"
+
+
+class TestCustomerSettingsDefaults:
+    def test_defaults(self):
+        s = CustomerSettings()
+        assert s.user_name == ""
+        assert s.company_name == ""
+        assert s.company_description == ""
+        assert s.main_needs == ""
+        assert s.preferred_tone == "profissional e direto"
+        assert s.timezone == "America/Sao_Paulo"
+        assert s.local_offline_required is True
+        assert s.is_configured() is False
+
+    def test_prompt_context_when_configured(self):
+        s = CustomerSettings(
+            user_name="Celso",
+            company_name="Celsius Sistemas",
+            company_sector="Gestao empresarial",
+            user_role="Proprietario",
+            business_context="Controla estoque, fornecedores e financeiro.",
+        )
+
+        context = s.prompt_context()
+
+        assert "Perfil do Cliente/Empresa" in context
+        assert "Usuario principal: Celso" in context
+        assert "Empresa: Celsius Sistemas" in context
+        assert "Controla estoque" in context
+        assert "nao limite o escopo do Celsius ao setor cadastrado" in context
+        assert "assuntos gerais" in context
+
+    def test_prompt_context_does_not_restrict_general_topics(self):
+        s = CustomerSettings(
+            company_name="Maia Servicos Automotivos",
+            company_sector="Oficina mecanica",
+            main_needs="Gerenciar estoque e fornecedores.",
+        )
+
+        context = s.prompt_context()
+
+        assert "Oficina mecanica" in context
+        assert "Nao trate o setor da empresa como regra fixa" in context
+        assert "redacao" in context
+
+
+class TestCompanyModulesSettingsDefaults:
+    def test_mandatory_modules_stay_enabled(self):
+        from core.modules import MODULE_CHAT, MODULE_SETTINGS
+
+        s = CompanyModulesSettings(enabled=[])
+
+        assert MODULE_CHAT in s.enabled
+        assert MODULE_SETTINGS in s.enabled
+
+    def test_set_enabled_ignores_unknown_modules(self):
+        from core.modules import MODULE_CHAT, MODULE_SETTINGS, MODULE_SUPPLIERS
+
+        s = CompanyModulesSettings()
+        s.set_enabled(["unknown", MODULE_SUPPLIERS])
+
+        assert "unknown" not in s.enabled
+        assert MODULE_SUPPLIERS in s.enabled
+        assert MODULE_CHAT in s.enabled
+        assert MODULE_SETTINGS in s.enabled
 
 
 class TestFeatureFlagsDefaults:
@@ -207,6 +293,11 @@ class TestFileSettingsDefaults:
         s = FileSettings()
         assert s.max_file_size_mb == 50
 
+    def test_large_pdf_defaults(self):
+        s = FileSettings()
+        assert s.max_pdf_size_mb == 300
+        assert s.large_pdf_page_limit == 80
+
     def test_doc_text_limit(self):
         s = FileSettings()
         assert s.doc_text_limit == 12000
@@ -225,6 +316,7 @@ class TestFileSettingsDefaults:
         s = FileSettings()
         assert ".mp3" in s.audio_extensions
         assert ".wav" in s.audio_extensions
+        assert ".webm" in s.audio_extensions
 
 
 class TestInventorySettingsDefaults:
@@ -273,11 +365,20 @@ class TestTelemetrySettingsDefaults:
         assert s.metrics_enabled is True
         assert s.metrics_port == 9090
 
+    def test_init_telemetry_disabled_uses_noop(self):
+        import core.telemetry as telemetry
+
+        telemetry.shutdown_telemetry()
+        tracer, meter = telemetry.init_telemetry(enabled=False)
+
+        assert type(tracer).__name__ == "_NoOpTracer"
+        assert type(meter).__name__ == "_NoOpMeter"
+
 
 class TestUiSettingsDefaults:
     def test_theme(self):
         s = UiSettings()
-        assert s.theme == "system"
+        assert s.theme == "light"
 
     def test_language(self):
         s = UiSettings()
@@ -295,7 +396,29 @@ class TestUiSettingsDefaults:
         s = UiSettings()
         assert s.jarvis_enabled is True
         assert s.jarvis_particle_count == 800
-        assert s.jarvis_fps == 30
+        assert s.jarvis_fps == 60
+
+
+class TestVoiceSettingsDefaults:
+    def test_voice_defaults(self):
+        s = VoiceSettings()
+        assert s.enabled is True
+        assert s.provider == "edge-tts"
+        assert s.voice == "pt-BR-AntonioNeural"
+        assert s.rate == "+5%"
+        assert s.pitch == "-2Hz"
+        assert s.volume == "+0%"
+
+
+class TestMobileAccessSettingsDefaults:
+    def test_mobile_access_is_disabled_by_default(self):
+        s = MobileAccessSettings()
+
+        assert s.enabled is False
+        assert s.port == 8787
+        assert s.allow_lan is False
+        assert s.voice_commands_enabled is True
+        assert s.use_https is True
 
 
 class TestEnums:
@@ -322,6 +445,16 @@ class TestSettingsMain:
         s = Settings()
         assert isinstance(s.model, ModelSettings)
         assert s.model.llm_model == "qwen2.5-vl-7b-q4km"
+
+    def test_nested_customer_settings(self):
+        s = Settings()
+        assert isinstance(s.customer, CustomerSettings)
+
+    def test_nested_response_and_voice_settings(self):
+        s = Settings()
+        assert isinstance(s.response, ResponseStyleSettings)
+        assert isinstance(s.voice, VoiceSettings)
+        assert isinstance(s.mobile, MobileAccessSettings)
 
     def test_nested_rag_settings(self):
         s = Settings()
@@ -389,6 +522,122 @@ class TestSettingsMain:
         assert isinstance(flags, FeatureFlags)
         assert flags.conversations is True
 
+    def test_loads_customer_profile_file(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "customer_profile.json").write_text(
+            '{"user_name":"Celso","company_name":"Celsius Sistemas"}',
+            encoding="utf-8",
+        )
+
+        s = Settings(data_dir=data_dir)
+
+        assert s.customer.user_name == "Celso"
+        assert s.customer.company_name == "Celsius Sistemas"
+        assert s.assistant.owner_name == "Celso"
+
+    def test_loads_legacy_customer_profile_with_new_defaults(self, tmp_path):
+        from core.modules import MODULE_CHAT, MODULE_SETTINGS
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "customer_profile.json").write_text(
+            '{"company_name":"Empresa antiga"}',
+            encoding="utf-8",
+        )
+
+        s = Settings(data_dir=data_dir)
+
+        assert s.customer.company_name == "Empresa antiga"
+        assert s.customer.company_description == ""
+        assert s.customer.main_needs == ""
+        assert MODULE_CHAT in s.modules.enabled
+        assert MODULE_SETTINGS in s.modules.enabled
+
+    def test_customer_env_wins_over_profile_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CELSIUS_CUSTOMER_USER_NAME", "Nome via env")
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "customer_profile.json").write_text(
+            '{"user_name":"Nome salvo","company_name":"Empresa salva"}',
+            encoding="utf-8",
+        )
+
+        s = Settings(data_dir=data_dir)
+
+        assert s.customer.user_name == "Nome via env"
+        assert s.customer.company_name == "Empresa salva"
+
+    def test_loads_local_response_and_voice_preferences(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "celsius_settings.json").write_text(
+            """
+            {
+              "response": {"mode": "tecnico", "temperature": 0.35, "top_p": 0.85},
+              "voice": {"voice": "pt-BR-FranciscaNeural", "rate": "+8%", "pitch": "+0Hz"},
+              "mobile": {
+                "enabled": true,
+                "allow_lan": true,
+                "pairing_token": "abc123",
+                "use_https": false
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        s = Settings(data_dir=data_dir)
+
+        assert s.response.mode == "tecnico"
+        assert s.response.temperature == 0.35
+        assert s.voice.voice == "pt-BR-FranciscaNeural"
+        assert s.voice.rate == "+8%"
+        assert s.mobile.enabled is True
+        assert s.mobile.allow_lan is True
+        assert s.mobile.pairing_token == "abc123"
+        assert s.mobile.use_https is False
+
+    def test_save_local_preferences(self, tmp_path):
+        s = Settings(data_dir=tmp_path)
+        s.response.mode = "relatorio"
+        s.voice.voice = "pt-BR-FranciscaNeural"
+        s.modules.set_enabled(["suppliers"])
+
+        path = s.save_local_preferences()
+
+        data = path.read_text(encoding="utf-8")
+        assert "relatorio" in data
+        assert "pt-BR-FranciscaNeural" in data
+        assert "suppliers" in data
+        assert "modules" in data
+        assert "mobile" in data
+
+    def test_loads_module_preferences(self, tmp_path):
+        from core.modules import MODULE_CHAT, MODULE_SETTINGS, MODULE_SUPPLIERS
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "celsius_settings.json").write_text(
+            """
+            {
+              "modules": {
+                "enabled": ["suppliers", "unknown"],
+                "first_setup_completed": true
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        s = Settings(data_dir=data_dir)
+
+        assert MODULE_SUPPLIERS in s.modules.enabled
+        assert MODULE_CHAT in s.modules.enabled
+        assert MODULE_SETTINGS in s.modules.enabled
+        assert "unknown" not in s.modules.enabled
+        assert s.modules.first_setup_completed is True
+
 
 class TestEnvVarOverride:
     def test_model_settings_env_override(self, monkeypatch):
@@ -410,3 +659,18 @@ class TestEnvVarOverride:
         monkeypatch.setenv("CELSIUS_SECURITY_SANDBOX_ENABLED", "false")
         s = SecuritySettings()
         assert s.sandbox_enabled is False
+
+    def test_customer_env_override(self, monkeypatch):
+        monkeypatch.setenv("CELSIUS_CUSTOMER_COMPANY_NAME", "Empresa Teste")
+        s = CustomerSettings()
+        assert s.company_name == "Empresa Teste"
+
+    def test_response_env_override(self, monkeypatch):
+        monkeypatch.setenv("CELSIUS_RESPONSE_MODE", "tecnico")
+        s = ResponseStyleSettings()
+        assert s.mode == "tecnico"
+
+    def test_voice_env_override(self, monkeypatch):
+        monkeypatch.setenv("CELSIUS_VOICE_VOICE", "pt-BR-FranciscaNeural")
+        s = VoiceSettings()
+        assert s.voice == "pt-BR-FranciscaNeural"

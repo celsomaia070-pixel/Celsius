@@ -126,14 +126,34 @@ _noop_tracer = _NoOpTracer()
 _noop_meter = _NoOpMeter()
 
 
+def _telemetry_enabled_by_settings() -> bool:
+    env_value = os.getenv("CELSIUS_TELEMETRY_ENABLED")
+    if env_value is not None:
+        return env_value.strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        from core.settings import get_settings
+
+        return bool(get_settings().telemetry.enabled)
+    except Exception:
+        return False
+
+
 def init_telemetry(
     service_name: str = "celsius",
     service_version: str = "1.0.0",
     otlp_endpoint: str = "http://localhost:4317",
     sample_rate: float = 1.0,
     log_level: str = "INFO",
+    enabled: bool | None = None,
 ) -> tuple:
     global _tracer_provider, _meter_provider, _tracer, _meter
+
+    if enabled is None:
+        enabled = _telemetry_enabled_by_settings()
+    if not enabled:
+        _tracer = _noop_tracer
+        _meter = _noop_meter
+        return _tracer, _meter
 
     if _tracer is not None and not isinstance(_tracer, _NoOpTracer):
         return _tracer, _meter

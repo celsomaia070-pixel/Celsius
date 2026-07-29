@@ -1,11 +1,14 @@
 import contextlib
 import gc
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from ai.engine import gerar_resposta, gerar_resposta_com_imagem
+
+_AI_GENERATION_LOCK = threading.Lock()
 
 
 class WorkerSignals(QObject):
@@ -46,8 +49,16 @@ class AIWorker(QRunnable):
 
     @Slot()
     def run(self):
+        if not _AI_GENERATION_LOCK.acquire(blocking=False):
+            with contextlib.suppress(RuntimeError):
+                self.signals.error.emit(
+                    "Ja existe uma resposta em andamento. Aguarde ela terminar antes de enviar outra pergunta."
+                )
+            return
+
         gc.disable()
         try:
+            self.signals.status.emit("Preparando sua mensagem...")
             self._prepare_attachments()
             if self.prompt_dict.get("caminho_imagem"):
                 resposta = gerar_resposta_com_imagem(
@@ -71,6 +82,7 @@ class AIWorker(QRunnable):
                 self.signals.finished.emit(f"Erro: {e}")
         finally:
             gc.enable()
+            _AI_GENERATION_LOCK.release()
 
     def _prepare_attachments(self) -> None:
         attachments = self.prompt_dict.pop("anexos", []) or []
@@ -92,10 +104,12 @@ class AIWorker(QRunnable):
             path = Path(file_path)
             suffix = path.suffix.lower()
             if suffix in settings.image_extensions and not first_image:
+                self.signals.status.emit(f"Preparando imagem anexada: {file_name}...")
                 first_image = str(path)
                 continue
 
             try:
+                self.signals.status.emit(f"Extraindo conteudo do arquivo: {file_name}...")
                 processed = processar_arquivo(str(path), base_dir=path.parent)
             except Exception as exc:
                 processed = f"Erro ao processar anexo '{file_name}': {exc}"
@@ -108,6 +122,7 @@ class AIWorker(QRunnable):
             doc_parts.append(f"### Imagem anexada\nCaminho: {first_image}")
 
         if doc_parts:
+            self.signals.status.emit("Organizando conteudo extraido...")
             self.prompt_dict["documento"] = "\n\n".join(doc_parts)
             if doc_names:
                 self.prompt_dict["nome_documento"] = ", ".join(doc_names)
@@ -120,10 +135,13 @@ class AIWorker(QRunnable):
 class WorkerManager:
     """Manages thread pool and workers."""
 
-    def __init__(self, max_threads: int = 4):
-        self.pool = QThreadPool.globalInstance()
+    def __init__(self, max_threads: int = 1):
+        self.pool = QThreadPool()
         self.pool.setMaxThreadCount(max_threads)
         self._active_workers: list[AIWorker] = []
+
+    def is_busy(self) -> bool:
+        return bool(self._active_workers)
 
     def submit_ai_task(
         self,
@@ -135,6 +153,9 @@ class WorkerManager:
         on_error: Callable[[str], None] | None = None,
     ) -> AIWorker:
         """Submit an AI task to the thread pool."""
+        if self.is_busy():
+            raise RuntimeError("Ja existe uma resposta de IA em andamento.")
+
         worker = AIWorker(
             prompt_dict,
             fn_status=on_status,
@@ -145,6 +166,7 @@ class WorkerManager:
         if on_error:
             worker.signals.error.connect(on_error)
         worker.signals.finished.connect(lambda _: self._cleanup_worker(worker))
+        worker.signals.error.connect(lambda _: self._cleanup_worker(worker))
 
         self._active_workers.append(worker)
         self.pool.start(worker)
