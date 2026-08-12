@@ -160,16 +160,16 @@ class TestModeDetermination:
 
 class TestModelRequirements:
     def test_model_requirements_exist(self):
-        for model_id in ["qwen2.5-vl-7b-q4km", "llama3.2-3b-q5km", "gemma3-4b-q4km"]:
+        for model_id in ["qwen3-8b-q4km", "qwen3-4b-q4km", "qwen2.5-vl-7b-q4km"]:
             reqs = get_model_requirements(model_id)
             assert reqs is not None
             assert reqs.min_ram_gb > 0
             assert reqs.recommended_ram_gb >= reqs.min_ram_gb
 
     def test_7b_needs_more_ram_than_3b(self):
-        reqs_7b = get_model_requirements("qwen2.5-vl-7b-q4km")
-        reqs_3b = get_model_requirements("llama3.2-3b-q5km")
-        assert reqs_7b.min_ram_gb > reqs_3b.min_ram_gb
+        reqs_8b = get_model_requirements("qwen3-8b-q4km")
+        reqs_4b = get_model_requirements("qwen3-4b-q4km")
+        assert reqs_8b.min_ram_gb > reqs_4b.min_ram_gb
 
 
 class TestEstimateTokensPerSec:
@@ -178,7 +178,7 @@ class TestEstimateTokensPerSec:
         gpu = GpuInfo(name="RX 7600", vram_mb=8192, api="vulkan")
         profile = HardwareProfile(cpu=cpu, ram_mb=32768, gpu=gpu, mode=PerformanceMode.COMPLETO)
 
-        tps = estimate_tokens_per_sec("qwen2.5-vl-7b-q4km", profile)
+        tps = estimate_tokens_per_sec("qwen3-8b-q4km", profile)
         assert tps > 0
         assert tps >= 10  # Should be reasonably fast with GPU
 
@@ -187,7 +187,7 @@ class TestEstimateTokensPerSec:
         gpu = GpuInfo(name="Nenhum", vram_mb=0, api="none")
         profile = HardwareProfile(cpu=cpu, ram_mb=16384, gpu=gpu, mode=PerformanceMode.LEVE)
 
-        tps = estimate_tokens_per_sec("llama3.2-3b-q5km", profile)
+        tps = estimate_tokens_per_sec("qwen3-4b-q4km", profile)
         assert tps > 0
         assert tps >= 3  # Should be usable on CPU
 
@@ -236,7 +236,7 @@ class TestModelSelection:
         rec = select_optimal_model(profile)
         assert isinstance(rec, ModelRecommendation)
         assert rec.n_gpu_layers == 0  # CPU only
-        assert "3b" in rec.main_model_id or "llama" in rec.main_model_id
+        assert "4b" in rec.main_model_id or "qwen3" in rec.main_model_id
 
     def test_select_optimal_model_force(self):
         cpu = CpuInfo(physical_cores=4, logical_cores=8, architecture="x86_64", brand="Test CPU")

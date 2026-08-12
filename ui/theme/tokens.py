@@ -74,6 +74,20 @@ class ColorTokens:
     info_600: str = "#2563EB"
     info_700: str = "#1D4ED8"
 
+    # Celsius Project AI - identidade compartilhada com o site
+    celsius_page: str = "#F4F7F6"
+    celsius_surface: str = "#FFFFFF"
+    celsius_surface_soft: str = "#EAF1EF"
+    celsius_ink: str = "#14211F"
+    celsius_muted: str = "#52615E"
+    celsius_line: str = "#CFDBD7"
+    celsius_primary: str = "#087E72"
+    celsius_primary_strong: str = "#05645B"
+    celsius_green: str = "#237B4B"
+    celsius_coral: str = "#C9463C"
+    celsius_gold: str = "#9A6B13"
+    celsius_blue: str = "#286FA1"
+
 
 @dataclass(frozen=True)
 class SpacingTokens:
@@ -100,10 +114,10 @@ class RadiusTokens:
 
     radius_none: int = 0
     radius_sm: int = 4
-    radius_md: int = 8
-    radius_lg: int = 12
-    radius_xl: int = 16
-    radius_2xl: int = 24
+    radius_md: int = 6
+    radius_lg: int = 8
+    radius_xl: int = 8
+    radius_2xl: int = 8
     radius_full: int = 9999
 
 
@@ -112,7 +126,7 @@ class TypographyTokens:
     """Tokens de tipografia."""
 
     # Font families
-    font_sans: str = "Inter"
+    font_sans: str = "Segoe UI"
     font_mono: str = "JetBrains Mono"
     font_fallback_sans: str = "Segoe UI, system-ui, -apple-system, sans-serif"
     font_fallback_mono: str = "Consolas, 'Courier New', monospace"

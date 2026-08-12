@@ -45,6 +45,8 @@ Areas sensiveis do Celsius:
 ## Sandbox
 
 O Celsius executa codigo Python fornecido pelo usuario em ambiente restrito.
+Toda execucao solicitada pelo LLM exige uma segunda confirmacao do usuario,
+vinculada aos argumentos exibidos e com codigo de uso unico.
 
 Camadas atuais:
 
@@ -59,7 +61,8 @@ Camadas atuais:
 
 ## Known Limitations
 
-- Analise estatica nao cobre todos os ataques de runtime.
+- A analise estatica e apenas uma camada; o subprocesso recebe builtins e imports
+  reduzidos, e a execucao falha se os limites do Job Object nao forem aplicados.
 - Windows nao oferece o mesmo isolamento de filesystem que containers dedicados.
 - O sandbox reduz risco, mas nao deve ser tratado como ambiente seguro para
   codigo hostil de alta confianca.
@@ -74,11 +77,20 @@ Controles usados no repositorio:
 - `bandit` para varredura de seguranca em Python.
 - `pip-audit` para vulnerabilidades conhecidas em dependencias.
 - Dependabot para dependencias Python e GitHub Actions.
+- `pylock.toml` (PEP 751) com versoes e hashes para builds reproduziveis.
 
 Algumas vulnerabilidades transitivas podem ser aceitas temporariamente no CI
 quando nao houver correcao compativel ou quando o pacote afetado nao for usado em
 modo servidor/exposto. Essas excecoes devem ficar explicitas no workflow e ser
 revisadas quando Dependabot abrir atualizacoes.
+
+Excecao temporaria atual: `PYSEC-2026-2447` em `diskcache`, dependencia de
+`llama-cpp-python`. Nao existe versao corrigida publicada; o Celsius nao fornece
+caminhos de cache nao confiaveis a essa biblioteca.
+
+`PYSEC-2026-311` em `chromadb` tambem e acompanhada: a vulnerabilidade exige o
+servidor HTTP Chroma e seu endpoint de criacao de colecoes. O Celsius usa somente
+o cliente persistente incorporado e nao inicia nem publica esse servidor.
 
 Antes de distribuir builds:
 
@@ -86,4 +98,5 @@ Antes de distribuir builds:
 python -m ruff check .
 python -m pytest -q
 python scripts\security_scan.py
+python tools\lock_requirements.py --check
 ```

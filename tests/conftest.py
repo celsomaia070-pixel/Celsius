@@ -106,14 +106,6 @@ _st.SentenceTransformer = MagicMock(return_value=_mock_encoder)
 _core_rag = sys.modules["core.rag"]
 _core_rag.RAGService = type("RAGService", (), {})
 
-_inventory_mod = sys.modules.get("core.inventory")
-if _inventory_mod is not None and hasattr(_inventory_mod, "InventoryService"):
-    pass
-else:
-    _inventory_mod = MagicMock()
-    _inventory_mod.InventoryService = type("InventoryService", (), {})
-    sys.modules["core.inventory"] = _inventory_mod
-
 _container_mod = sys.modules.get("core.container")
 if _container_mod is not None and hasattr(_container_mod, "get_container"):
     pass

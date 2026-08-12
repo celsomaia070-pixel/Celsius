@@ -28,123 +28,137 @@ COLUMN_SPACING = 14
 BOARD_PADDING = 16
 
 
+def _is_dark_color(color: str) -> bool:
+    """Detect dark backgrounds without depending on a specific palette value."""
+    value = color.lstrip("#")
+    if len(value) != 6:
+        return False
+    try:
+        red, green, blue = (int(value[index : index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return False
+    luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
+    return luminance < 128
+
+
 def _column_config(scheme: ColorScheme | None = None) -> dict:
-    """Configuracao visual das colunas por status."""
-    is_dark = scheme and scheme.bg_primary.startswith("#0")
+    """Configuracao visual das colunas usando a identidade Celsius."""
+    is_dark = bool(scheme and _is_dark_color(scheme.bg_primary))
     if is_dark:
         return {
             ColunaKanban.A_COMPRAR: {
-                "header": "#DA3633",
-                "header_text": "#FFFFFF",
-                "bg": "#1C1214",
-                "card_bg": "#2D1A1E",
-                "border": "#4A2525",
-                "accent": "#FF6B6B",
-                "badge_bg": "#3D1A1A",
-                "badge_text": "#FF8A8A",
-                "empty": "#6B4040",
+                "header": "#E8B759",
+                "header_text": "#101715",
+                "bg": "#2C271A",
+                "card_bg": "#18211F",
+                "border": "#594A28",
+                "accent": "#E8B759",
+                "badge_bg": "#453819",
+                "badge_text": "#F2CC80",
+                "empty": "#8E7748",
                 "icon": "!",
             },
             ColunaKanban.EM_ESTOQUE: {
-                "header": "#1A7F4B",
-                "header_text": "#FFFFFF",
-                "bg": "#0F1F16",
-                "card_bg": "#163D2A",
-                "border": "#2A5E3F",
-                "accent": "#3FB68B",
-                "badge_bg": "#1A3D2A",
-                "badge_text": "#5CDB95",
-                "empty": "#3A6B5A",
+                "header": "#69C58D",
+                "header_text": "#101715",
+                "bg": "#17281E",
+                "card_bg": "#18211F",
+                "border": "#315942",
+                "accent": "#69C58D",
+                "badge_bg": "#1D3D2A",
+                "badge_text": "#8DDBAA",
+                "empty": "#4E8061",
                 "icon": "v",
             },
             ColunaKanban.EM_USO: {
-                "header": "#1F6FEB",
-                "header_text": "#FFFFFF",
-                "bg": "#0F1A2D",
-                "card_bg": "#1A3A5C",
-                "border": "#2A5A8C",
-                "accent": "#58A6FF",
-                "badge_bg": "#1A3050",
-                "badge_text": "#79C0FF",
-                "empty": "#3A5A7A",
+                "header": "#73B8E3",
+                "header_text": "#101715",
+                "bg": "#17252D",
+                "card_bg": "#18211F",
+                "border": "#315468",
+                "accent": "#73B8E3",
+                "badge_bg": "#1D3545",
+                "badge_text": "#9BCFEE",
+                "empty": "#52798F",
                 "icon": "~",
             },
             ColunaKanban.CRITICO: {
-                "header": "#CF222E",
-                "header_text": "#FFFFFF",
-                "bg": "#2D1215",
-                "card_bg": "#3D1A1E",
-                "border": "#6E2A2A",
-                "accent": "#FF7B7B",
-                "badge_bg": "#4D1A1A",
-                "badge_text": "#FFA0A0",
-                "empty": "#7A4040",
+                "header": "#FF8178",
+                "header_text": "#101715",
+                "bg": "#2D1D1B",
+                "card_bg": "#18211F",
+                "border": "#653834",
+                "accent": "#FF8178",
+                "badge_bg": "#4A2623",
+                "badge_text": "#FFAAA4",
+                "empty": "#9B5A54",
                 "icon": "!",
             },
         }
     return {
         ColunaKanban.A_COMPRAR: {
-            "header": "#E85D5D",
+            "header": "#9A6B13",
             "header_text": "#FFFFFF",
-            "bg": "#FEF7F7",
+            "bg": "#F7EDD7",
             "card_bg": "#FFFFFF",
-            "border": "#F5D0D0",
-            "accent": "#E85D5D",
-            "badge_bg": "#FFF0F0",
-            "badge_text": "#C62828",
-            "empty": "#D4A0A0",
+            "border": "#E1C993",
+            "accent": "#9A6B13",
+            "badge_bg": "#F4E6C7",
+            "badge_text": "#76500D",
+            "empty": "#B59B6A",
             "icon": "!",
         },
         ColunaKanban.EM_ESTOQUE: {
-            "header": "#2E9E5E",
+            "header": "#237B4B",
             "header_text": "#FFFFFF",
-            "bg": "#F2FBF6",
+            "bg": "#E2F1E8",
             "card_bg": "#FFFFFF",
-            "border": "#C8E6CB",
-            "accent": "#2E9E5E",
-            "badge_bg": "#EDF7ED",
-            "badge_text": "#1B5E20",
-            "empty": "#A0C8A8",
+            "border": "#B8D9C5",
+            "accent": "#237B4B",
+            "badge_bg": "#D5EADB",
+            "badge_text": "#185E39",
+            "empty": "#82AE92",
             "icon": "v",
         },
         ColunaKanban.EM_USO: {
-            "header": "#3578D8",
+            "header": "#286FA1",
             "header_text": "#FFFFFF",
-            "bg": "#F2F7FE",
+            "bg": "#E0ECF4",
             "card_bg": "#FFFFFF",
-            "border": "#B8D4F0",
-            "accent": "#3578D8",
-            "badge_bg": "#EBF3FE",
-            "badge_text": "#1565C0",
-            "empty": "#A0B8D4",
+            "border": "#B5D0E1",
+            "accent": "#286FA1",
+            "badge_bg": "#D5E5EF",
+            "badge_text": "#1F587F",
+            "empty": "#83A9C1",
             "icon": "~",
         },
         ColunaKanban.CRITICO: {
-            "header": "#D32F2F",
+            "header": "#C9463C",
             "header_text": "#FFFFFF",
-            "bg": "#FEF7F7",
+            "bg": "#F8E3E1",
             "card_bg": "#FFFFFF",
-            "border": "#F5D0D0",
-            "accent": "#D32F2F",
-            "badge_bg": "#FFF0F0",
-            "badge_text": "#B71C1C",
-            "empty": "#D4A0A0",
+            "border": "#E8B6B2",
+            "accent": "#C9463C",
+            "badge_bg": "#F2D3D0",
+            "badge_text": "#94332C",
+            "empty": "#C58A85",
             "icon": "!",
         },
     }
 
 
-def _stock_color(item: ItemEstoque) -> str:
+def _stock_color(item: ItemEstoque, scheme: ColorScheme | None = None) -> str:
+    s = scheme or get_scheme()
     if item.quantidade <= 0:
-        return "#D32F2F"
+        return s.error
     if item.quantidade <= item.estoque_min:
-        return "#E85D5D"
+        return s.error
     pct = item.quantidade / max(item.estoque_max, 1)
     if pct < 0.3:
-        return "#F57C00"
+        return s.warning
     if pct < 0.7:
-        return "#FBC02D"
-    return "#2E9E5E"
+        return s.info
+    return s.success
 
 
 class KanbanCard(QWidget):
@@ -172,7 +186,7 @@ class KanbanCard(QWidget):
             KanbanCard {{
                 background: {cores["card_bg"]};
                 border: 1px solid {cores["border"]};
-                border-radius: 10px;
+                border-radius: 7px;
             }}
             KanbanCard:hover {{
                 border: 2px solid {cores["accent"]};
@@ -217,7 +231,7 @@ class KanbanCard(QWidget):
 
         qty_row = QHBoxLayout()
         qty_row.setSpacing(4)
-        health = _stock_color(self.item)
+        health = _stock_color(self.item, s)
         qty = QLabel(str(self.item.quantidade))
         qty.setStyleSheet(
             f"color: {health}; font-size: 28px; font-weight: 800; "
@@ -373,7 +387,7 @@ class KanbanColumnWidget(QWidget):
             KanbanColumnWidget {{
                 background: {cores["bg"]};
                 border: 1px solid {cores["border"]};
-                border-radius: 12px;
+                border-radius: 8px;
             }}
         """)
 
@@ -381,29 +395,29 @@ class KanbanColumnWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QWidget()
-        header.setFixedHeight(COLUMN_HEADER_HEIGHT)
-        header.setStyleSheet(f"""
+        self._header = QWidget()
+        self._header.setFixedHeight(COLUMN_HEADER_HEIGHT)
+        self._header.setStyleSheet(f"""
             background: {cores["header"]};
-            border-top-left-radius: 12px; border-top-right-radius: 12px;
+            border-top-left-radius: 7px; border-top-right-radius: 7px;
             border: none;
         """)
-        header_layout = QHBoxLayout(header)
+        header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(14, 0, 14, 0)
 
-        icon_label = QLabel(cores["icon"])
-        icon_label.setStyleSheet(
+        self._icon_label = QLabel(cores["icon"])
+        self._icon_label.setStyleSheet(
             f"color: {cores['header_text']}; font-size: 16px; font-weight: 900; "
             f"background: transparent; border: none;"
         )
-        header_layout.addWidget(icon_label)
+        header_layout.addWidget(self._icon_label)
 
-        title = QLabel(self.coluna.label)
-        title.setStyleSheet(
+        self._column_title = QLabel(self.coluna.label)
+        self._column_title.setStyleSheet(
             f"color: {cores['header_text']}; font-size: 13px; font-weight: 700; "
             f"background: transparent; border: none;"
         )
-        header_layout.addWidget(title)
+        header_layout.addWidget(self._column_title)
 
         header_layout.addStretch()
 
@@ -416,7 +430,7 @@ class KanbanColumnWidget(QWidget):
         )
         header_layout.addWidget(self._count_badge)
 
-        layout.addWidget(header)
+        layout.addWidget(self._header)
 
         self._cards_area = QWidget()
         self._cards_area.setStyleSheet("background: transparent; border: none;")
@@ -482,7 +496,7 @@ class KanbanColumnWidget(QWidget):
                 KanbanColumnWidget {{
                     background: {cores["bg"]};
                     border: 2px dashed {cores["accent"]};
-                    border-radius: 12px;
+                    border-radius: 8px;
                 }}
             """)
         else:
@@ -490,7 +504,7 @@ class KanbanColumnWidget(QWidget):
                 KanbanColumnWidget {{
                     background: {cores["bg"]};
                     border: 1px solid {cores["border"]};
-                    border-radius: 12px;
+                    border-radius: 8px;
                 }}
             """)
 
@@ -529,6 +543,34 @@ class KanbanColumnWidget(QWidget):
 
     def set_scheme(self, scheme):
         self._scheme = scheme
+        s = scheme or get_scheme()
+        cores = _column_config(s).get(self.coluna, _column_config(s)[ColunaKanban.EM_ESTOQUE])
+        self.setStyleSheet(f"""
+            KanbanColumnWidget {{
+                background: {cores["bg"]};
+                border: 1px solid {cores["border"]};
+                border-radius: 8px;
+            }}
+        """)
+        self._header.setStyleSheet(f"""
+            background: {cores["header"]};
+            border-top-left-radius: 7px;
+            border-top-right-radius: 7px;
+            border: none;
+        """)
+        self._icon_label.setText(cores["icon"])
+        self._icon_label.setStyleSheet(
+            f"color: {cores['header_text']}; font-size: 16px; font-weight: 900; "
+            "background: transparent; border: none;"
+        )
+        self._column_title.setStyleSheet(
+            f"color: {cores['header_text']}; font-size: 13px; font-weight: 700; "
+            "background: transparent; border: none;"
+        )
+        self._empty_label.setStyleSheet(
+            f"color: {cores['empty']}; font-size: 12px; padding: 40px 20px; "
+            "background: transparent; border: none;"
+        )
         for card in self._cards:
             card._scheme = scheme
             card._rebuild()
@@ -550,7 +592,7 @@ class KanbanView(QWidget):
 
     def _setup_ui(self):
         s = self._scheme or get_scheme()
-        self.setStyleSheet(f"background: {s.bg_secondary}; border: none;")
+        self.setStyleSheet(f"background: {s.bg_primary}; border: none;")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(BOARD_PADDING, BOARD_PADDING, BOARD_PADDING, BOARD_PADDING)
@@ -595,7 +637,7 @@ class KanbanView(QWidget):
     def set_scheme(self, scheme):
         self._scheme = scheme
         s = scheme or get_scheme()
-        self.setStyleSheet(f"background: {s.bg_secondary}; border: none;")
+        self.setStyleSheet(f"background: {s.bg_primary}; border: none;")
         for col in self._columns.values():
             col.set_scheme(scheme)
 
@@ -612,7 +654,7 @@ class KPIBar(QWidget):
     def _setup_ui(self):
         s = self._scheme or get_scheme()
         self.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
 
         layout = QHBoxLayout(self)
@@ -622,14 +664,15 @@ class KPIBar(QWidget):
         self._kpis: list[dict] = []
 
         kpi_defs = [
-            ("total", "Total Itens", "#3578D8", "📦"),
-            ("em_estoque", "Em Estoque", "#2E9E5E", "✅"),
-            ("criticos", "Criticos", "#D32F2F", "🔴"),
-            ("a_comprar", "A Comprar", "#E85D5D", "🛒"),
-            ("total_un", "Total Unidades", "#7C4DFF", "📊"),
+            ("total", "Total de itens", "info"),
+            ("em_estoque", "Em estoque", "success"),
+            ("criticos", "Criticos", "error"),
+            ("a_comprar", "A comprar", "warning"),
+            ("total_un", "Total de unidades", "accent_primary"),
         ]
 
-        for key, label, color, icon in kpi_defs:
+        for key, label, color_role in kpi_defs:
+            color = getattr(s, color_role)
             card = QWidget()
             card.setStyleSheet(f"""
                 background: {s.bg_secondary}; border: 1px solid {s.border_default};
@@ -646,14 +689,22 @@ class KPIBar(QWidget):
             )
             card_layout.addWidget(val)
 
-            lbl = QLabel(f"{icon} {label}")
+            lbl = QLabel(label)
             lbl.setStyleSheet(
                 f"color: {s.text_muted}; font-size: 11px; font-weight: 500; "
                 f"background: transparent; border: none;"
             )
             card_layout.addWidget(lbl)
 
-            self._kpis.append({"key": key, "value": val})
+            self._kpis.append(
+                {
+                    "key": key,
+                    "value": val,
+                    "label": lbl,
+                    "card": card,
+                    "color_role": color_role,
+                }
+            )
             layout.addWidget(card)
 
         layout.addStretch()
@@ -681,8 +732,24 @@ class KPIBar(QWidget):
         self._scheme = scheme
         s = scheme or get_scheme()
         self.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
+        for kpi in self._kpis:
+            color = getattr(s, kpi["color_role"])
+            kpi["card"].setStyleSheet(f"""
+                background: {s.bg_secondary};
+                border: 1px solid {s.border_default};
+                border-radius: 8px;
+                padding: 8px 16px;
+            """)
+            kpi["value"].setStyleSheet(
+                f"color: {color}; font-size: 22px; font-weight: 800; "
+                "background: transparent; border: none;"
+            )
+            kpi["label"].setStyleSheet(
+                f"color: {s.text_muted}; font-size: 11px; font-weight: 500; "
+                "background: transparent; border: none;"
+            )
 
 
 class KanbanContainer(QWidget):

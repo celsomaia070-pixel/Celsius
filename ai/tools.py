@@ -14,6 +14,7 @@ from core.circuit_breaker import (
 )
 from core.metrics import MetricNames, get_metrics
 from core.settings import get_settings
+from core.tool_approval import SENSITIVE_TOOLS, approval_message, get_tool_approval_store
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +25,6 @@ class Ferramenta:
         self.descricao = descricao
         self.schema = schema
         self.funcao = funcao
-
-    def para_ollama(self):
-        return {
-            "type": "function",
-            "function": {
-                "name": self.nome,
-                "description": self.descricao,
-                "parameters": self.schema,
-            },
-        }
 
     def para_openai(self):
         return {
@@ -267,15 +258,11 @@ def _tool_executar_codigo(codigo: str) -> str:
 
 
 def _tool_indexar_documento(caminho: str) -> str:
-    from ai.rag import get_rag_service
-    from processors import processar_arquivo
+    from core.documents import get_document_library_service
 
     path = _validate_path(caminho)
-    texto = processar_arquivo(str(path), base_dir=path.parent)
-    nome = path.name
-    service = get_rag_service()
-    n_chunks = service.index_document(texto, nome)
-    return f"Documento '{nome}' indexado: {n_chunks} chunks criados."
+    item = get_document_library_service().import_path(path, origin="Ferramenta do Celsius")
+    return f"Documento '{item['filename']}' indexado: {item['chunk_count']} trechos criados."
 
 
 def _tool_navegar_web(url: str) -> str:
@@ -285,17 +272,20 @@ def _tool_navegar_web(url: str) -> str:
 
 
 def _tool_listar_documentos_rag() -> str:
-    from ai.rag import get_rag_service
+    from core.documents import get_document_library_service
 
-    service = get_rag_service()
-    return service.list_documents()
+    return get_document_library_service().list_text()
 
 
 def _tool_remover_documento(nome_doc: str) -> str:
-    from ai.rag import get_rag_service
+    from core.documents import get_document_library_service
 
-    service = get_rag_service()
-    return service.remove_document(nome_doc)
+    removed = get_document_library_service().delete_by_name(nome_doc)
+    return (
+        f"Documento '{nome_doc}' removido da biblioteca local."
+        if removed
+        else f"Documento '{nome_doc}' nao encontrado."
+    )
 
 
 def _tool_abrir_no_navegador(url: str) -> str:
@@ -363,39 +353,325 @@ def _tool_abrir_no_navegador(url: str) -> str:
 
 
 def _abrir_url(target_url: str) -> str:
-    """Abre URL no navegador do sistema."""
-    import os
-    import subprocess
-    import sys
+    """Abre URL no navegador padrao do sistema."""
+    import webbrowser
 
     try:
-        if sys.platform == "win32":
-            browsers = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            ]
-
-            opened = False
-            for browser in browsers:
-                if os.path.exists(browser):
-                    subprocess.Popen([browser, target_url])
-                    opened = True
-                    break
-
-            if not opened:
-                os.startfile(target_url)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", target_url])
-        else:
-            subprocess.Popen(["xdg-open", target_url])
+        webbrowser.open(target_url)
         return f"Abrindo {target_url} no navegador..."
     except Exception as e:
         return f"Erro ao abrir navegador: {e}"
 
 
 # ── Estoque tool functions ────────────────────────────────────
+
+
+def _tool_listar_clientes(filtro: str = "", limite: int = 50) -> str:
+    from core.relationships import get_relationship_service
+
+    return get_relationship_service().format_customers(filtro, limite)
+
+
+def _tool_cadastrar_cliente(
+    nome: str,
+    documento: str = "",
+    contato: str = "",
+    telefone: str = "",
+    email: str = "",
+    segmento: str = "",
+    observacoes: str = "",
+) -> str:
+    from core.relationships import RelationshipError, get_relationship_service
+
+    try:
+        item = get_relationship_service().save_customer(
+            {
+                "nome": nome,
+                "documento": documento,
+                "contato": contato,
+                "telefone": telefone,
+                "email": email,
+                "segmento": segmento,
+                "observacoes": observacoes,
+            }
+        )
+    except RelationshipError as exc:
+        return f"Nao foi possivel cadastrar o cliente: {exc}"
+    return f"Cliente cadastrado com sucesso. ID: {item['id']} | Nome: {item['name']}"
+
+
+def _tool_listar_fornecedores(filtro: str = "", limite: int = 50) -> str:
+    from core.relationships import get_relationship_service
+
+    return get_relationship_service().format_suppliers(filtro, limite)
+
+
+def _tool_cadastrar_fornecedor(
+    nome: str,
+    documento: str = "",
+    contato: str = "",
+    telefone: str = "",
+    email: str = "",
+    categoria: str = "",
+    produtos: str = "",
+    prazo_pagamento: str = "",
+    lead_time_dias: str = "",
+    observacoes: str = "",
+) -> str:
+    from core.relationships import RelationshipError, get_relationship_service
+
+    try:
+        item = get_relationship_service().save_supplier(
+            {
+                "nome": nome,
+                "documento": documento,
+                "contato": contato,
+                "telefone": telefone,
+                "email": email,
+                "categoria": categoria,
+                "produtos": produtos,
+                "prazo_pagamento": prazo_pagamento,
+                "lead_time_dias": lead_time_dias,
+                "observacoes": observacoes,
+            }
+        )
+    except RelationshipError as exc:
+        return f"Nao foi possivel cadastrar o fornecedor: {exc}"
+    return f"Fornecedor cadastrado com sucesso. ID: {item['id']} | Nome: {item['name']}"
+
+
+def _tool_listar_produtos_servicos(filtro: str = "", limite: int = 50) -> str:
+    from core.operations import get_operations_service
+
+    return get_operations_service().format_products(filtro, limite)
+
+
+def _tool_cadastrar_produto_servico(
+    nome: str,
+    codigo: str = "",
+    tipo: str = "Produto",
+    categoria: str = "",
+    unidade: str = "",
+    preco: str = "",
+    custo: str = "",
+    fornecedor_padrao: str = "",
+    observacoes: str = "",
+) -> str:
+    from core.operations import OperationsError, get_operations_service
+
+    try:
+        item = get_operations_service().save_product(
+            {
+                "nome": nome,
+                "codigo": codigo,
+                "tipo": tipo,
+                "categoria": categoria,
+                "unidade": unidade,
+                "preco": preco,
+                "custo": custo,
+                "fornecedor_padrao": fornecedor_padrao,
+                "observacoes": observacoes,
+            }
+        )
+    except OperationsError as exc:
+        return f"Nao foi possivel cadastrar no catalogo: {exc}"
+    return f"Cadastro comercial salvo. ID: {item['id']} | Nome: {item['name']}"
+
+
+def _tool_listar_orcamentos(filtro: str = "", limite: int = 50) -> str:
+    from core.workflows import get_workflow_service
+
+    return get_workflow_service().format_quotes(filtro, limite)
+
+
+def _tool_cadastrar_orcamento(
+    titulo: str,
+    cliente: str = "",
+    valor: str = "",
+    validade: str = "",
+    margem: str = "",
+    itens: str = "",
+    observacoes: str = "",
+) -> str:
+    from core.workflows import WorkflowError, get_workflow_service
+
+    try:
+        item = get_workflow_service().save_quote(
+            {
+                "titulo": titulo,
+                "cliente": cliente,
+                "valor": valor,
+                "validade": validade,
+                "margem": margem,
+                "itens": itens,
+                "observacoes": observacoes,
+            }
+        )
+    except WorkflowError as exc:
+        return f"Nao foi possivel cadastrar o orcamento: {exc}"
+    return f"Orcamento salvo. Numero: {item['number']} | ID: {item['id']}"
+
+
+def _tool_listar_processos_prazos(filtro: str = "", limite: int = 50) -> str:
+    from core.workflows import get_workflow_service
+
+    return get_workflow_service().format_cases(filtro, limite)
+
+
+def _tool_cadastrar_processo_prazo(
+    processo: str,
+    cliente: str = "",
+    prazo: str = "",
+    prioridade: str = "Normal",
+    responsavel: str = "",
+    proximo_passo: str = "",
+    observacoes: str = "",
+) -> str:
+    from core.workflows import WorkflowError, get_workflow_service
+
+    try:
+        item = get_workflow_service().save_case(
+            {
+                "processo": processo,
+                "cliente": cliente,
+                "prazo": prazo,
+                "prioridade": prioridade,
+                "responsavel": responsavel,
+                "proximo_passo": proximo_passo,
+                "observacoes": observacoes,
+            }
+        )
+    except WorkflowError as exc:
+        return f"Nao foi possivel cadastrar o processo ou prazo: {exc}"
+    return f"Processo ou prazo salvo. ID: {item['id']} | Nome: {item['title']}"
+
+
+def _tool_gerar_relatorio_local(
+    titulo: str,
+    tipo: str = "Executivo",
+    fonte: str = "Executivo",
+    formato: str = "pdf",
+    periodo: str = "Atual",
+    observacoes: str = "",
+) -> str:
+    from core.workflows import WorkflowError, get_workflow_service
+
+    service = get_workflow_service()
+    try:
+        item = service.generate_report(
+            {
+                "titulo": titulo,
+                "tipo": tipo,
+                "fonte_dados": fonte,
+                "formato": formato,
+                "periodo": periodo,
+                "observacoes": observacoes,
+            }
+        )
+        path = service.report_file(item["id"])
+    except WorkflowError as exc:
+        return f"Nao foi possivel gerar o relatorio: {exc}"
+    return (
+        f"Relatorio gerado localmente. ID: {item['id']} | Arquivo: {path}\n"
+        f"[Baixar relatorio](/api/v1/reports/{item['id']}/download)"
+    )
+
+
+def _tool_listar_agenda(dias: int = 14) -> str:
+    from core.agenda import get_agenda_service
+
+    service = get_agenda_service()
+    dias = max(1, min(int(dias or 14), 365))
+    events = service.upcoming(days=dias)
+    if not events:
+        return "Nenhum compromisso futuro cadastrado na agenda local."
+
+    resultado = f"Agenda local - proximos {dias} dias ({len(events)} compromissos):\n\n"
+    for event in events:
+        details = [
+            event.starts_at.strftime("%d/%m/%Y %H:%M"),
+            event.status or "Agendado",
+        ]
+        if event.customer:
+            details.append(f"cliente: {event.customer}")
+        if event.responsible:
+            details.append(f"responsavel: {event.responsible}")
+        if event.location:
+            details.append(f"local: {event.location}")
+        resultado += f"[{event.id}] {event.title} | {' | '.join(details)}\n"
+    return resultado.strip()
+
+
+def _tool_criar_compromisso_agenda(
+    titulo: str,
+    data_hora: str,
+    cliente: str = "",
+    responsavel: str = "",
+    local: str = "",
+    lembrete_minutos: int = 15,
+    observacoes: str = "",
+) -> str:
+    from core.agenda import parse_agenda_datetime
+    from core.business_records import get_business_record_service
+    from core.modules import MODULE_AGENDA
+
+    starts_at = parse_agenda_datetime(data_hora)
+    if starts_at is None:
+        return (
+            "Nao consegui entender a data/hora do compromisso. "
+            "Use um formato como 31/07/2026 14:30."
+        )
+
+    title = titulo.strip()
+    if not title:
+        return "Titulo do compromisso e obrigatorio."
+
+    reminder = max(0, int(lembrete_minutos or 0))
+    service = get_business_record_service()
+    record = service.save_record(
+        MODULE_AGENDA,
+        title=title,
+        fields={
+            "titulo": title,
+            "tipo": "Outro",
+            "data_hora": starts_at.strftime("%d/%m/%Y %H:%M"),
+            "cliente": cliente,
+            "responsavel": responsavel,
+            "local": local,
+            "lembrete_minutos": str(reminder),
+            "status": "Agendado",
+            "observacoes": observacoes,
+        },
+    )
+    return (
+        "Compromisso cadastrado na agenda local.\n"
+        f"ID: {record.id}\n"
+        f"Titulo: {record.title}\n"
+        f"Quando: {starts_at.strftime('%d/%m/%Y %H:%M')}\n"
+        f"Lembrete: {reminder} minutos antes"
+    )
+
+
+def _tool_marcar_lembrete_agenda(evento_id: str) -> str:
+    from core.agenda import get_agenda_service
+
+    service = get_agenda_service()
+    if service.mark_reminded(evento_id):
+        return "Lembrete da agenda marcado como avisado."
+    return f"Compromisso com ID '{evento_id}' nao encontrado."
+
+
+def _stock_status_label(item) -> str:
+    status = getattr(item, "stock_status", None)
+    if status is not None:
+        return status.label
+    if item.quantidade <= 0:
+        return "Sem Estoque"
+    if item.quantidade <= item.estoque_min:
+        return "Critico"
+    if item.estoque_max > 0 and item.quantidade > item.estoque_max:
+        return "Excesso"
+    return "Normal"
 
 
 def _tool_listar_estoque() -> str:
@@ -419,7 +695,8 @@ def _tool_listar_estoque() -> str:
         for item in itens_col:
             resultado += (
                 f"  [{item.id}] {item.nome} | {item.categoria} | "
-                f"{item.quantidade} un. (min:{item.estoque_min} max:{item.estoque_max})\n"
+                f"{item.quantidade} un. (min:{item.estoque_min} max:{item.estoque_max}) | "
+                f"Saude: {_stock_status_label(item)}\n"
             )
         resultado += "\n"
     return resultado.strip()
@@ -434,7 +711,7 @@ def _tool_buscar_item_estoque(query: str) -> str:
         return f"Nenhum item encontrado para '{query}'."
     resultado = f"Resultados da busca por '{query}' ({len(itens)} itens):\n\n"
     for item in itens:
-        status = "CRITICO" if item.precisa_repor else "OK"
+        status = _stock_status_label(item).upper()
         resultado += (
             f"  [{item.id}] {item.nome} | {item.categoria} | "
             f"{item.quantidade} un. (min:{item.estoque_min} max:{item.estoque_max}) | Status: {status}\n"
@@ -544,6 +821,189 @@ def _tool_historico_movimentacoes(item_id: str = None) -> str:
     return resultado.strip()
 
 
+_CHART_ARGUMENT_NAMES = {
+    "tipo",
+    "titulo",
+    "labels",
+    "valores",
+    "legendas",
+    "xlabel",
+    "ylabel",
+    "cores",
+    "meta",
+    "unidade",
+    "subtitulo",
+}
+_CHART_TYPE_ALIASES = {
+    "barra": "bar",
+    "barras": "bar",
+    "bar": "bar",
+    "barra_horizontal": "barh",
+    "barras_horizontais": "barh",
+    "barh": "barh",
+    "agrupado": "grouped_bar",
+    "barras_agrupadas": "grouped_bar",
+    "grouped_bar": "grouped_bar",
+    "empilhado": "stacked_bar",
+    "barras_empilhadas": "stacked_bar",
+    "stacked_bar": "stacked_bar",
+    "pizza": "pie",
+    "pie": "pie",
+    "rosca": "donut",
+    "donut": "donut",
+    "linha": "line",
+    "linhas": "line",
+    "line": "line",
+    "area": "area",
+    "histograma": "histogram",
+    "histogram": "histogram",
+    "dispersao": "scatter",
+    "dispersão": "scatter",
+    "scatter": "scatter",
+    "radar": "radar",
+    "mapa_de_calor": "heatmap",
+    "heatmap": "heatmap",
+    "cascata": "waterfall",
+    "waterfall": "waterfall",
+    "funil": "funnel",
+    "funnel": "funnel",
+    "caixa": "boxplot",
+    "boxplot": "boxplot",
+    "combinado": "combo",
+    "combo": "combo",
+    "velocimetro": "gauge",
+    "velocímetro": "gauge",
+    "gauge": "gauge",
+    "indicador": "kpi",
+    "kpi": "kpi",
+}
+
+
+def _json_array_argument(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _normalize_chart_arguments(arguments: dict) -> dict:
+    """Accept both the chart schema and common record-list calls from local LLMs."""
+    if not isinstance(arguments, dict):
+        return {}
+
+    normalized = {key: value for key, value in arguments.items() if key in _CHART_ARGUMENT_NAMES}
+    chart_type = (
+        str(normalized.get("tipo", "bar")).strip().lower().replace(" ", "_").replace("-", "_")
+    )
+    normalized["tipo"] = _CHART_TYPE_ALIASES.get(chart_type, chart_type)
+    normalized["titulo"] = str(normalized.get("titulo") or "Grafico")
+    normalized["unidade"] = str(normalized.get("unidade") or arguments.get("unit") or "")
+    normalized["subtitulo"] = str(normalized.get("subtitulo") or arguments.get("descricao") or "")
+    if "meta" not in normalized:
+        normalized["meta"] = arguments.get(
+            "target",
+            arguments.get("objetivo", arguments.get("benchmark", 0)),
+        )
+
+    data = arguments.get("data")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = None
+
+    if isinstance(data, dict):
+        if "labels" not in normalized:
+            normalized["labels"] = data.get("labels", data.get("categorias"))
+        if "valores" not in normalized:
+            normalized["valores"] = data.get(
+                "valores",
+                data.get(
+                    "values",
+                    data.get("valor", data.get("value", data.get("atual"))),
+                ),
+            )
+        if not normalized.get("meta"):
+            normalized["meta"] = data.get(
+                "meta",
+                data.get("target", data.get("objetivo", 0)),
+            )
+        if not normalized.get("unidade"):
+            normalized["unidade"] = str(data.get("unidade", data.get("unit", "")))
+        data = data.get("data", data.get("itens", data.get("items")))
+
+    if (
+        ("labels" not in normalized or "valores" not in normalized)
+        and isinstance(data, list)
+        and data
+        and all(isinstance(record, dict) for record in data)
+    ):
+        first_record = data[0]
+        label_key = next(
+            (
+                key
+                for key in ("nome", "label", "produto", "item", "categoria", "periodo")
+                if key in first_record
+            ),
+            None,
+        )
+        value_key = next(
+            (
+                key
+                for key in ("quantidade", "valor", "total", "value", "saldo", "preco")
+                if key in first_record
+            ),
+            None,
+        )
+        if label_key is None:
+            label_key = next(
+                (key for key, value in first_record.items() if isinstance(value, str)),
+                None,
+            )
+        if value_key is None:
+            value_key = next(
+                (
+                    key
+                    for key, value in first_record.items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                ),
+                None,
+            )
+        if label_key and value_key:
+            normalized["labels"] = [str(record.get(label_key, "")) for record in data]
+            normalized["valores"] = [record.get(value_key, 0) for record in data]
+
+    if "valores" not in normalized and isinstance(data, list):
+        normalized["valores"] = data
+    if "valores" in normalized and not isinstance(
+        normalized["valores"],
+        (list, tuple, str),
+    ):
+        normalized["valores"] = [normalized["valores"]]
+    if "labels" not in normalized and normalized.get("valores") is not None:
+        raw_values = normalized["valores"]
+        value_count = len(raw_values) if isinstance(raw_values, (list, tuple)) else 1
+        normalized["labels"] = [
+            normalized["titulo"] if value_count == 1 else f"Item {index + 1}"
+            for index in range(value_count)
+        ]
+    if "labels" in normalized and not isinstance(
+        normalized["labels"],
+        (list, tuple, str),
+    ):
+        normalized["labels"] = [normalized["labels"]]
+
+    for name in ("labels", "valores", "legendas", "cores"):
+        if name in normalized and normalized[name] is not None:
+            normalized[name] = _json_array_argument(normalized[name])
+
+    try:
+        normalized["meta"] = float(normalized.get("meta") or 0)
+    except (TypeError, ValueError):
+        normalized["meta"] = 0.0
+
+    return normalized
+
+
 def _tool_gerar_grafico(
     tipo: str,
     titulo: str,
@@ -553,219 +1013,34 @@ def _tool_gerar_grafico(
     xlabel: str = "",
     ylabel: str = "",
     cores: str = "",
+    meta: float = 0,
+    unidade: str = "",
+    subtitulo: str = "",
 ) -> str:
-    """Gera um grafico com matplotlib e salva como PNG."""
-    import hashlib
-    import json
-    from pathlib import Path
-
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    """Render a local business chart through the shared chart engine."""
+    from core.charts import ChartError, render_business_chart
 
     try:
         labels_list = json.loads(labels)
-        valores_data = json.loads(valores)
-    except (json.JSONDecodeError, TypeError) as e:
-        return f"Erro ao processar dados: JSON invalido - {e}"
-
-    legendas_list = json.loads(legendas) if legendas else []
-    cores_list = json.loads(cores) if cores else []
-
-    chart_dir = Path(__file__).parent.parent / "cache" / "charts"
-    chart_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = hashlib.md5(f"{tipo}{titulo}{labels}{valores}".encode()).hexdigest()[:12]
-    filepath = chart_dir / f"{filename}.png"
-
-    # Estilo moderno e limpo
-    plt.style.use(
-        "seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default"
-    )
-
-    fig, ax = plt.subplots(figsize=(9, 5.5))
-    fig.patch.set_facecolor("#FAFAFA")
-    ax.set_facecolor("#FAFAFA")
-
-    # Paleta de cores moderna (inspirada em Tailwind/Design Systems)
-    default_colors = [
-        "#3B82F6",
-        "#EF4444",
-        "#22C55E",
-        "#F59E0B",
-        "#8B5CF6",
-        "#06B6D4",
-        "#F97316",
-        "#EC4899",
-        "#14B8A6",
-        "#84CC16",
-    ]
-
-    # Configurações comuns de fonte
-    title_font = {"fontsize": 16, "fontweight": "600", "color": "#111827", "pad": 16}
-    label_font = {"fontsize": 11, "color": "#374151"}
-
-    def _apply_style():
-        """Aplica estilo comum aos eixos."""
-        ax.set_title(titulo, **title_font)
-        if xlabel:
-            ax.set_xlabel(xlabel, **label_font)
-        if ylabel:
-            ax.set_ylabel(ylabel, **label_font)
-        ax.tick_params(axis="both", labelsize=10, colors="#6B7280")
-        # Grid suave
-        ax.grid(True, axis="y", color="#E5E7EB", linewidth=0.8, linestyle="-")
-        ax.grid(False, axis="x")
-        # Remove bordas superiores/direitas
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.spines["left"].set_color("#E5E7EB")
-        ax.spines["bottom"].set_color("#E5E7EB")
-        if legendas_list:
-            ax.legend(frameon=False, fontsize=10, loc="upper right")
-
-    if tipo == "bar":
-        x_pos = range(len(labels_list))
-        if isinstance(valores_data[0], list):  # Múltiplas séries
-            n_series = len(valores_data)
-            width = 0.7 / n_series
-            for i, serie in enumerate(valores_data):
-                cor = (
-                    cores_list[i]
-                    if i < len(cores_list)
-                    else default_colors[i % len(default_colors)]
-                )
-                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i + 1}"
-                bars = ax.bar(
-                    [xi + i * width for xi in x_pos],
-                    serie,
-                    width,
-                    label=nome,
-                    color=cor,
-                    edgecolor="none",
-                    zorder=3,
-                )
-                # Arredondar topo das barras
-                for bar in bars:
-                    bar.set_capstyle("round")
-        else:
-            cor = cores_list[0] if cores_list else default_colors[0]
-            bars = ax.bar(
-                labels_list, valores_data, color=cor, edgecolor="none", width=0.6, zorder=3
-            )
-            for bar in bars:
-                bar.set_capstyle("round")
-
-    elif tipo == "pie":
-        colors_pie = cores_list if cores_list else default_colors[: len(labels_list)]
-        wedges, texts, autotexts = ax.pie(
-            valores_data,
+        values_list = json.loads(valores)
+        legends_list = json.loads(legendas) if legendas else []
+        colors_list = json.loads(cores) if cores else []
+        filepath = render_business_chart(
+            chart_type=tipo,
+            title=titulo,
             labels=labels_list,
-            colors=colors_pie,
-            autopct="%1.1f%%",
-            startangle=90,
-            textprops={"fontsize": 11, "color": "#111827"},
-            pctdistance=0.75,
-            wedgeprops={"edgecolor": "#FAFAFA", "linewidth": 2, "antialiased": True},
+            values=values_list,
+            legends=legends_list,
+            colors=colors_list,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            target=meta,
+            unit=unidade,
+            subtitle=subtitulo,
+            output_dir=get_settings().data_dir / "cache" / "charts",
         )
-        for autotext in autotexts:
-            autotext.set_color("white")
-            autotext.set_fontweight("600")
-            autotext.set_fontsize(10)
-        ax.axis("equal")
-
-    elif tipo == "line":
-        if isinstance(valores_data[0], list):
-            for i, serie in enumerate(valores_data):
-                cor = (
-                    cores_list[i]
-                    if i < len(cores_list)
-                    else default_colors[i % len(default_colors)]
-                )
-                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i + 1}"
-                ax.plot(
-                    labels_list,
-                    serie,
-                    marker="o",
-                    markersize=6,
-                    markerfacecolor="white",
-                    markeredgewidth=2,
-                    color=cor,
-                    label=nome,
-                    linewidth=2.5,
-                    zorder=3,
-                )
-        else:
-            cor = cores_list[0] if cores_list else default_colors[0]
-            ax.plot(
-                labels_list,
-                valores_data,
-                marker="o",
-                markersize=6,
-                markerfacecolor="white",
-                markeredgewidth=2,
-                color=cor,
-                linewidth=2.5,
-                zorder=3,
-            )
-            ax.fill_between(labels_list, valores_data, alpha=0.08, color=cor)
-
-    elif tipo == "area":
-        if isinstance(valores_data[0], list):
-            for i, serie in enumerate(valores_data):
-                cor = (
-                    cores_list[i]
-                    if i < len(cores_list)
-                    else default_colors[i % len(default_colors)]
-                )
-                nome = legendas_list[i] if i < len(legendas_list) else f"Série {i + 1}"
-                ax.fill_between(labels_list, serie, alpha=0.25, color=cor, label=nome)
-                ax.plot(labels_list, serie, color=cor, linewidth=1.5)
-        else:
-            cor = cores_list[0] if cores_list else default_colors[0]
-            ax.fill_between(labels_list, valores_data, alpha=0.3, color=cor)
-            ax.plot(labels_list, valores_data, color=cor, linewidth=1.5)
-
-    elif tipo == "histogram":
-        cor = cores_list[0] if cores_list else default_colors[0]
-        ax.hist(
-            valores_data,
-            bins=max(5, len(labels_list) // 2),
-            color=cor,
-            edgecolor="#FAFAFA",
-            linewidth=1.5,
-            alpha=0.85,
-            zorder=3,
-        )
-
-    elif tipo == "scatter":
-        x_data = (
-            valores_data if not isinstance(valores_data[0], list) else [v[0] for v in valores_data]
-        )
-        y_data = labels_list if not isinstance(labels_list[0], (list, str)) else valores_data
-        if isinstance(valores_data[0], list) and len(valores_data[0]) == 2:
-            x_data = [v[0] for v in valores_data]
-            y_data = [v[1] for v in valores_data]
-        cor = cores_list[0] if cores_list else default_colors[0]
-        ax.scatter(
-            x_data, y_data, c=cor, s=90, alpha=0.7, edgecolors="white", linewidths=1.5, zorder=3
-        )
-
-    else:
-        plt.close(fig)
-        return f"Tipo de grafico '{tipo}' nao suportado. Tipos validos: bar, pie, line, area, histogram, scatter"
-
-    _apply_style()
-    plt.tight_layout()
-    fig.savefig(
-        str(filepath),
-        dpi=180,
-        bbox_inches="tight",
-        facecolor=fig.get_facecolor(),
-        transparent=False,
-    )
-    plt.close(fig)
+    except (ChartError, json.JSONDecodeError, TypeError) as exc:
+        return f"Erro ao gerar grafico: {exc}"
 
     return (
         f"Grafico '{tipo}' gerado com sucesso.\n"
@@ -983,6 +1258,253 @@ REGISTRO_FERRAMENTAS = [
     ),
     # ── Estoque ────────────────────────────────────────────────
     Ferramenta(
+        nome="listar_clientes",
+        descricao="Lista clientes reais cadastrados localmente. Use para consultar clientes sem inventar dados.",
+        schema={
+            "type": "object",
+            "properties": {
+                "filtro": {"type": "string", "description": "Nome, documento ou contato"},
+                "limite": {"type": "integer", "description": "Maximo de resultados"},
+            },
+        },
+        funcao=_tool_listar_clientes,
+    ),
+    Ferramenta(
+        nome="cadastrar_cliente",
+        descricao="Cadastra um cliente na base local quando o usuario pedir explicitamente.",
+        schema={
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string", "description": "Nome ou razao social"},
+                "documento": {"type": "string", "description": "CPF, CNPJ ou documento"},
+                "contato": {"type": "string", "description": "Pessoa de contato"},
+                "telefone": {"type": "string"},
+                "email": {"type": "string"},
+                "segmento": {"type": "string"},
+                "observacoes": {"type": "string"},
+            },
+            "required": ["nome"],
+        },
+        funcao=_tool_cadastrar_cliente,
+    ),
+    Ferramenta(
+        nome="listar_fornecedores",
+        descricao="Lista fornecedores reais cadastrados localmente. Use para consultar fornecedores sem inventar dados.",
+        schema={
+            "type": "object",
+            "properties": {
+                "filtro": {
+                    "type": "string",
+                    "description": "Nome, documento, categoria ou produto",
+                },
+                "limite": {"type": "integer", "description": "Maximo de resultados"},
+            },
+        },
+        funcao=_tool_listar_fornecedores,
+    ),
+    Ferramenta(
+        nome="cadastrar_fornecedor",
+        descricao="Cadastra um fornecedor na base local quando o usuario pedir explicitamente.",
+        schema={
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string", "description": "Nome ou razao social"},
+                "documento": {"type": "string", "description": "CNPJ ou documento"},
+                "contato": {"type": "string"},
+                "telefone": {"type": "string"},
+                "email": {"type": "string"},
+                "categoria": {"type": "string"},
+                "produtos": {"type": "string"},
+                "prazo_pagamento": {"type": "string"},
+                "lead_time_dias": {"type": "string"},
+                "observacoes": {"type": "string"},
+            },
+            "required": ["nome"],
+        },
+        funcao=_tool_cadastrar_fornecedor,
+    ),
+    Ferramenta(
+        nome="listar_produtos_servicos",
+        descricao="Lista produtos, servicos, pacotes e assinaturas do catalogo comercial local com codigo, preco e status.",
+        schema={
+            "type": "object",
+            "properties": {
+                "filtro": {"type": "string", "description": "Nome, codigo ou categoria"},
+                "limite": {"type": "integer", "description": "Maximo de resultados"},
+            },
+        },
+        funcao=_tool_listar_produtos_servicos,
+    ),
+    Ferramenta(
+        nome="cadastrar_produto_servico",
+        descricao="Cadastra um produto ou servico no catalogo comercial local quando o usuario pedir explicitamente.",
+        schema={
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string"},
+                "codigo": {"type": "string", "description": "Codigo ou SKU"},
+                "tipo": {
+                    "type": "string",
+                    "enum": ["Produto", "Servico", "Pacote", "Assinatura"],
+                },
+                "categoria": {"type": "string"},
+                "unidade": {"type": "string"},
+                "preco": {"type": "string", "description": "Preco de venda"},
+                "custo": {"type": "string"},
+                "fornecedor_padrao": {"type": "string"},
+                "observacoes": {"type": "string"},
+            },
+            "required": ["nome"],
+        },
+        funcao=_tool_cadastrar_produto_servico,
+    ),
+    Ferramenta(
+        nome="listar_orcamentos",
+        descricao="Lista orcamentos reais da base local, com numero, cliente, valor e status.",
+        schema={
+            "type": "object",
+            "properties": {
+                "filtro": {"type": "string", "description": "Numero, titulo ou cliente"},
+                "limite": {"type": "integer", "description": "Maximo de resultados"},
+            },
+        },
+        funcao=_tool_listar_orcamentos,
+    ),
+    Ferramenta(
+        nome="cadastrar_orcamento",
+        descricao="Cria um orcamento local quando o usuario pedir explicitamente.",
+        schema={
+            "type": "object",
+            "properties": {
+                "titulo": {"type": "string"},
+                "cliente": {"type": "string"},
+                "valor": {"type": "string", "description": "Valor total"},
+                "validade": {"type": "string", "description": "Data no formato AAAA-MM-DD"},
+                "margem": {"type": "string"},
+                "itens": {"type": "string"},
+                "observacoes": {"type": "string"},
+            },
+            "required": ["titulo"],
+        },
+        funcao=_tool_cadastrar_orcamento,
+    ),
+    Ferramenta(
+        nome="listar_processos_prazos",
+        descricao="Lista processos, casos e prazos reais mantidos localmente, incluindo atrasos.",
+        schema={
+            "type": "object",
+            "properties": {
+                "filtro": {"type": "string", "description": "Processo, cliente ou responsavel"},
+                "limite": {"type": "integer", "description": "Maximo de resultados"},
+            },
+        },
+        funcao=_tool_listar_processos_prazos,
+    ),
+    Ferramenta(
+        nome="cadastrar_processo_prazo",
+        descricao="Cadastra um processo ou prazo local quando o usuario pedir explicitamente.",
+        schema={
+            "type": "object",
+            "properties": {
+                "processo": {"type": "string"},
+                "cliente": {"type": "string"},
+                "prazo": {"type": "string", "description": "Data no formato AAAA-MM-DD"},
+                "prioridade": {
+                    "type": "string",
+                    "enum": ["Baixa", "Normal", "Alta", "Critica"],
+                },
+                "responsavel": {"type": "string"},
+                "proximo_passo": {"type": "string"},
+                "observacoes": {"type": "string"},
+            },
+            "required": ["processo"],
+        },
+        funcao=_tool_cadastrar_processo_prazo,
+    ),
+    Ferramenta(
+        nome="gerar_relatorio_local",
+        descricao="Gera um arquivo PDF, DOCX ou Markdown com dados empresariais locais do Celsius.",
+        schema={
+            "type": "object",
+            "properties": {
+                "titulo": {"type": "string"},
+                "tipo": {
+                    "type": "string",
+                    "enum": ["Executivo", "Operacional", "Estoque", "Vendas", "Clientes"],
+                },
+                "fonte": {
+                    "type": "string",
+                    "enum": [
+                        "Executivo",
+                        "Estoque",
+                        "Clientes",
+                        "Fornecedores",
+                        "Orcamentos",
+                        "Processos e prazos",
+                    ],
+                },
+                "formato": {"type": "string", "enum": ["pdf", "docx", "md"]},
+                "periodo": {"type": "string"},
+                "observacoes": {"type": "string"},
+            },
+            "required": ["titulo"],
+        },
+        funcao=_tool_gerar_relatorio_local,
+    ),
+    Ferramenta(
+        nome="listar_agenda",
+        descricao="Lista compromissos futuros da agenda local do usuario. Use para perguntas sobre agenda, consultas, visitas, prazos, lembretes e proximos compromissos.",
+        schema={
+            "type": "object",
+            "properties": {
+                "dias": {
+                    "type": "integer",
+                    "description": "Quantidade de dias futuros para consultar. Padrao: 14.",
+                }
+            },
+        },
+        funcao=_tool_listar_agenda,
+    ),
+    Ferramenta(
+        nome="criar_compromisso_agenda",
+        descricao="Cria um compromisso ou lembrete na agenda local do usuario. Use quando o usuario pedir para marcar, agendar ou lembrar de algo.",
+        schema={
+            "type": "object",
+            "properties": {
+                "titulo": {"type": "string", "description": "Titulo do compromisso"},
+                "data_hora": {
+                    "type": "string",
+                    "description": "Data e hora. Exemplo: 31/07/2026 14:30.",
+                },
+                "cliente": {"type": "string", "description": "Cliente ou paciente relacionado"},
+                "responsavel": {"type": "string", "description": "Responsavel pelo compromisso"},
+                "local": {"type": "string", "description": "Local do compromisso"},
+                "lembrete_minutos": {
+                    "type": "integer",
+                    "description": "Minutos antes para emitir lembrete. Padrao: 15.",
+                },
+                "observacoes": {"type": "string", "description": "Observacoes adicionais"},
+            },
+            "required": ["titulo", "data_hora"],
+        },
+        funcao=_tool_criar_compromisso_agenda,
+    ),
+    Ferramenta(
+        nome="marcar_lembrete_agenda",
+        descricao="Marca um lembrete de agenda como avisado, evitando repeticao do alerta.",
+        schema={
+            "type": "object",
+            "properties": {
+                "evento_id": {
+                    "type": "string",
+                    "description": "ID do compromisso retornado por listar_agenda.",
+                }
+            },
+            "required": ["evento_id"],
+        },
+        funcao=_tool_marcar_lembrete_agenda,
+    ),
+    Ferramenta(
         nome="listar_estoque",
         descricao="Lista todos os itens do estoque com quantidade, minimo, maximo e coluna Kanban. Use quando o usuario perguntar sobre o estoque, quais itens tem, ou pedir um resumo geral.",
         schema={"type": "object", "properties": {}},
@@ -1095,17 +1617,21 @@ REGISTRO_FERRAMENTAS = [
     Ferramenta(
         nome="gerar_grafico",
         descricao=(
-            "Gera um grafico visual (PNG) e exibe direto no chat. "
-            "Use quando o usuario pedir graficos, chart,Pizza, barras, linhas, area, histograma, ou dispersao. "
-            "Tipos: bar, pie, line, area, histogram, scatter. "
-            "Valores e labels sao arrays JSON."
+            "Gera localmente graficos empresariais, KPIs e indicadores de eficiencia em PNG. "
+            "Tipos: bar, barh, grouped_bar, stacked_bar, pie, donut, line, area, "
+            "histogram, scatter, radar, heatmap, waterfall, funnel, boxplot, "
+            "combo, gauge e kpi. Valores e labels sao arrays JSON."
         ),
         schema={
             "type": "object",
             "properties": {
                 "tipo": {
                     "type": "string",
-                    "description": "Tipo do grafico: bar, pie, line, area, histogram, scatter",
+                    "description": (
+                        "Tipo: bar, barh, grouped_bar, stacked_bar, pie, donut, line, "
+                        "area, histogram, scatter, radar, heatmap, waterfall, funnel, "
+                        "boxplot, combo, gauge ou kpi"
+                    ),
                 },
                 "titulo": {
                     "type": "string",
@@ -1135,16 +1661,24 @@ REGISTRO_FERRAMENTAS = [
                     "type": "string",
                     "description": 'Array JSON de cores hex (opcional, e.g. \'["#3498DB","#E74C3C"]\')',
                 },
+                "meta": {
+                    "type": "number",
+                    "description": "Meta ou valor de referencia para gauge e kpi",
+                },
+                "unidade": {
+                    "type": "string",
+                    "description": "Unidade exibida, por exemplo %, R$ ou un.",
+                },
+                "subtitulo": {
+                    "type": "string",
+                    "description": "Explicacao curta abaixo do titulo",
+                },
             },
             "required": ["tipo", "titulo", "labels", "valores"],
         },
         funcao=_tool_gerar_grafico,
     ),
 ]
-
-
-def obter_schemas_ollama():
-    return [f.para_ollama() for f in REGISTRO_FERRAMENTAS]
 
 
 def obter_schemas_openai():
@@ -1179,7 +1713,7 @@ CIRCUIT_BREAKER_CONFIG = {
 CIRCUIT_PROTECTED_TOOLS = set(CIRCUIT_BREAKER_CONFIG.keys())
 
 # Tool result cache
-_TOOL_CACHE_DIR = Path(__file__).parent.parent / "cache" / "tools"
+_TOOL_CACHE_DIR = get_settings().data_dir / "cache" / "tools"
 _TOOL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Cache TTLs (in seconds)
@@ -1190,6 +1724,12 @@ CACHE_TTL = {
     "informacoes_sistema": 60,  # 1 min
     "listar_documentos_rag": 600,  # 10 min
     "listar_arquivos": 300,  # 5 min
+    "listar_agenda": 30,  # 30 sec
+    "listar_clientes": 30,  # 30 sec
+    "listar_fornecedores": 30,  # 30 sec
+    "listar_produtos_servicos": 30,  # 30 sec
+    "listar_orcamentos": 30,
+    "listar_processos_prazos": 30,
     "listar_estoque": 30,  # 30 sec (dados podem mudar rapido)
     "buscar_item_estoque": 30,  # 30 sec
 }
@@ -1202,6 +1742,14 @@ NON_CACHEABLE_TOOLS = {
     "remover_documento",
     "processar_arquivo",
     "abrir_no_navegador",
+    "criar_compromisso_agenda",
+    "marcar_lembrete_agenda",
+    "cadastrar_cliente",
+    "cadastrar_fornecedor",
+    "cadastrar_produto_servico",
+    "cadastrar_orcamento",
+    "cadastrar_processo_prazo",
+    "gerar_relatorio_local",
     "entrada_estoque",
     "saida_estoque",
     "adicionar_item_estoque",
@@ -1325,12 +1873,24 @@ def _retry_with_backoff(
     raise last_error
 
 
-def executar_ferramenta(nome: str, argumentos: dict) -> str:
+def executar_ferramenta(
+    nome: str,
+    argumentos: dict,
+    *,
+    require_approval: bool = False,
+) -> str:
     """Execute a tool with validation, retry, circuit breaker, metrics, and graceful degradation."""
     metrics = get_metrics()
     ferramenta = obter_ferramenta(nome)
     if not ferramenta:
         return f"Ferramenta '{nome}' nao encontrada."
+
+    if require_approval and nome in SENSITIVE_TOOLS:
+        request = get_tool_approval_store().request(nome, argumentos)
+        return approval_message(request)
+
+    if nome == "gerar_grafico":
+        argumentos = _normalize_chart_arguments(argumentos)
 
     # Validate arguments
     is_valid, error_msg = _validate_tool_args(ferramenta, argumentos)

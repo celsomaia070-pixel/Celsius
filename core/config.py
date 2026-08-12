@@ -1,4 +1,3 @@
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +16,9 @@ class GGUFModel:
     quant: str
     has_mmproj: bool = False
     mmproj_file: str = ""
+    chat_format: str | None = None
+    sha256: str = ""
+    mmproj_sha256: str = ""
 
     @property
     def display_name(self) -> str:
@@ -26,6 +28,71 @@ class GGUFModel:
 # ── Model registry ──────────────────────────────────────────────
 
 GGUF_MODELS: list[GGUFModel] = [
+    # Recomendados para Celsius PME
+    GGUFModel(
+        id="qwen3-4b-q4km",
+        name="Qwen3 4B Instruct",
+        category="fast",
+        filename="qwen3-4b-instruct-q4_k_m.gguf",
+        hf_repo="Qwen/Qwen3-4B-GGUF",
+        hf_file="Qwen3-4B-Q4_K_M.gguf",
+        size_gb=2.8,
+        quant="Q4_K_M",
+    ),
+    GGUFModel(
+        id="qwen3-8b-q4km",
+        name="Qwen3 8B Instruct",
+        category="balanced",
+        filename="qwen3-8b-instruct-q4_k_m.gguf",
+        hf_repo="Qwen/Qwen3-8B-GGUF",
+        hf_file="Qwen3-8B-Q4_K_M.gguf",
+        size_gb=5.2,
+        quant="Q4_K_M",
+        sha256="d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+    ),
+    GGUFModel(
+        id="qwen3-14b-q4km",
+        name="Qwen3 14B Instruct",
+        category="quality",
+        filename="qwen3-14b-instruct-q4_k_m.gguf",
+        hf_repo="Qwen/Qwen3-14B-GGUF",
+        hf_file="Qwen3-14B-Q4_K_M.gguf",
+        size_gb=8.8,
+        quant="Q4_K_M",
+    ),
+    GGUFModel(
+        id="qwen2.5-vl-3b-q4km",
+        name="Qwen2.5 VL 3B",
+        category="multimodal",
+        filename="qwen2.5-vl-3b-q4_k_m.gguf",
+        hf_repo="ggml-org/Qwen2.5-VL-3B-Instruct-GGUF",
+        hf_file="Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+        size_gb=2.7,
+        quant="Q4_K_M",
+        has_mmproj=True,
+        mmproj_file="mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf",
+    ),
+    GGUFModel(
+        id="deepseek-r1-distill-qwen-7b-q4km",
+        name="DeepSeek R1 Distill Qwen 7B",
+        category="reasoning",
+        filename="deepseek-r1-distill-qwen-7b-q4_k_m.gguf",
+        hf_repo="unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+        hf_file="DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+        size_gb=4.7,
+        quant="Q4_K_M",
+        sha256="78272d8d32084548bd450394a560eb2d70de8232ab96a725769b1f9171235c1c",
+    ),
+    GGUFModel(
+        id="deepseek-r1-distill-qwen-14b-q4km",
+        name="DeepSeek R1 Distill Qwen 14B",
+        category="reasoning",
+        filename="deepseek-r1-distill-qwen-14b-q4_k_m.gguf",
+        hf_repo="unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+        hf_file="DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+        size_gb=8.8,
+        quant="Q4_K_M",
+    ),
     # Multimodal (visão + texto)
     GGUFModel(
         id="qwen2.5-vl-7b-q4km",
@@ -38,13 +105,15 @@ GGUF_MODELS: list[GGUFModel] = [
         quant="Q4_K_M",
         has_mmproj=True,
         mmproj_file="mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf",
+        sha256="9258bf05b12686d097ff3b6b18d968ab393649780aa2b3cd67fec43d50554392",
+        mmproj_sha256="c24a7f5fcfc68286f0a217023b6738e73bea4f11787a43e8238d4bb1b8604cde",
     ),
     GGUFModel(
         id="qwen2.5-vl-7b-q5km",
         name="Qwen2.5 VL 7B",
         category="multimodal",
         filename="qwen2.5-vl-7b-q5_k_m.gguf",
-        hf_repo="ggml-org/Qwen2.5-VL-7B-Instruct-GGUF",
+        hf_repo="unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
         hf_file="Qwen2.5-VL-7B-Instruct-Q5_K_M.gguf",
         size_gb=5.4,
         quant="Q5_K_M",
@@ -56,12 +125,13 @@ GGUF_MODELS: list[GGUFModel] = [
         name="Qwen2.5 VL 7B",
         category="multimodal",
         filename="qwen2.5-vl-7b-q6_k.gguf",
-        hf_repo="ggml-org/Qwen2.5-VL-7B-Instruct-GGUF",
+        hf_repo="unsloth/Qwen2.5-VL-7B-Instruct-GGUF",
         hf_file="Qwen2.5-VL-7B-Instruct-Q6_K.gguf",
         size_gb=6.2,
         quant="Q6_K",
         has_mmproj=True,
         mmproj_file="mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf",
+        sha256="15f3ccbef1e7020939d8c32501d66a777df46b1b3ace9ddec37b5d2df102a89f",
     ),
     GGUFModel(
         id="gemma3-4b-q4km",
@@ -81,10 +151,11 @@ GGUF_MODELS: list[GGUFModel] = [
         category="multimodal",
         filename="qwen2.5-omni-7b-q4_k_m.gguf",
         hf_repo="ggml-org/Qwen2.5-Omni-7B-GGUF",
-        hf_file="qwen2.5-omni-7b-q4_k_m.gguf",
+        hf_file="Qwen2.5-Omni-7B-Q4_K_M.gguf",
         size_gb=4.5,
         quant="Q4_K_M",
         has_mmproj=False,
+        sha256="09883dff531dc56923a041c9c99c7c779e26ffde32caa83adeeb7502ec3b50fe",
     ),
     # Código
     GGUFModel(
@@ -162,8 +233,8 @@ class Settings:
 
     default_llm_model: str = "qwen2.5-vl-7b-q4km"
     llm_model: str = "qwen2.5-vl-7b-q4km"
-    fast_llm_model: str = "llama3.2-3b-q5km"  # Small fast model for simple tasks
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    fast_llm_model: str = "qwen3-4b-q4km"  # Small fast model for simple tasks
+    embedding_model: str = "qwen3-embedding-0.6b"
     whisper_model: str = "small"
 
     max_file_size_mb: int = 50
@@ -226,9 +297,9 @@ class Settings:
 
 
 def _get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).parent.parent
+    from core.settings import _get_base_dir as get_runtime_base_dir
+
+    return get_runtime_base_dir()
 
 
 settings = Settings()

@@ -29,6 +29,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             requirements.txt
+            pylock.toml
             requirements-dev.in
       - name: Install tools
         run: |
@@ -36,6 +37,10 @@ jobs:
           python -m pip install ruff
       - name: Ruff lint
         run: python -m ruff check .
+      - name: Dependency manifests
+        run: |
+          python tools/sync_requirements.py --check
+          python tools/lock_requirements.py --check
       - name: Ruff format
         run: python -m ruff format --check .
 
@@ -104,6 +109,8 @@ jobs:
           python -m pip install -r requirements-dev.in
       - name: pip-audit
         run: |
+          # Excecoes temporarias de dependencias transitivas sem correcao compativel.
+          # Revisar em toda atualizacao do Dependabot e remover assim que houver patch.
           python -m pip_audit --strict --desc \
             --ignore-vuln PYSEC-2026-311 \
             --ignore-vuln PYSEC-2026-2447 \

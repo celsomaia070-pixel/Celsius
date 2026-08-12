@@ -15,6 +15,7 @@ MODULE_FINANCE = "finance"
 MODULE_REPORTS = "reports"
 MODULE_AGENDA = "agenda"
 MODULE_CASES_DEADLINES = "cases_deadlines"
+MODULE_NOTIFICATIONS = "notifications"
 MODULE_SETTINGS = "settings"
 
 MANDATORY_MODULE_IDS = (MODULE_CHAT, MODULE_SETTINGS)
@@ -125,6 +126,7 @@ MODULE_CATALOG: tuple[ModuleDefinition, ...] = (
         name="Agenda",
         icon="list",
         description="Compromissos, atendimentos, visitas e lembretes.",
+        default_active=True,
         status="ready",
         route="agenda",
         sensitive_domains=("health", "legal"),
@@ -137,6 +139,18 @@ MODULE_CATALOG: tuple[ModuleDefinition, ...] = (
         status="ready",
         route="cases_deadlines",
         sensitive_domains=("legal",),
+    ),
+    ModuleDefinition(
+        id=MODULE_NOTIFICATIONS,
+        name="Canais e notificacoes",
+        icon="paper-plane",
+        description="Mensagens, avisos e integracoes opcionais com WhatsApp, e-mail e SMS.",
+        status="ready",
+        route="notifications",
+        config={
+            "external_service_notice": "Este recurso usa internet e servico externo quando um canal de envio estiver configurado.",
+            "channels": ("whatsapp", "email", "sms"),
+        },
     ),
     ModuleDefinition(
         id=MODULE_SETTINGS,
@@ -244,6 +258,16 @@ NEED_MODULE_KEYWORDS: dict[str, tuple[str, ...]] = {
     MODULE_AGENDA: ("agenda", "consulta", "prazo", "visita", "horario"),
     MODULE_CASES_DEADLINES: ("processo", "prazo", "juridico", "audiencia"),
     MODULE_PRODUCTS_SERVICES: ("produto", "servico", "catalogo"),
+    MODULE_NOTIFICATIONS: (
+        "whatsapp",
+        "email",
+        "sms",
+        "notificacao",
+        "mensagem",
+        "lembrete",
+        "avisar",
+        "comunicar",
+    ),
 }
 
 SENSITIVE_SEGMENT_KEYWORDS: dict[str, tuple[str, ...]] = {

@@ -23,24 +23,26 @@ python -m pip install pyinstaller
 ## Modelos GGUF
 
 O instalador padrao nao embute modelos. O aplicativo baixa os modelos sob
-demanda no primeiro uso, usando a configuracao de `core/config.py` e
-`core/settings.py`.
+demanda no primeiro uso para `%LOCALAPPDATA%\Celsius\models`, usando a
+configuracao de `core/config.py` e `core/settings.py`.
 
 Isso deixa o instalador menor e evita distribuir arquivos de varios GB pelo Git.
 
 Para um pacote offline com modelos embutidos:
 
 ```powershell
-$env:CELSIUS_BUNDLE_MODELS = "1"
-pyinstaller celsius.spec --clean
+installer\build.bat offline installer
 ```
+
+O pacote offline inclui o Qwen2.5 VL 7B e o projetor visual. Ele e muito maior,
+mas nao depende de download do LLM no computador do cliente.
 
 Arquivos `.gguf`, `resources/`, caches e dados locais devem continuar fora do Git.
 
 ## Gerar Executavel
 
 ```powershell
-pyinstaller celsius.spec --clean
+installer\build.bat thin exe
 ```
 
 Saida esperada:
@@ -52,7 +54,7 @@ dist/Celsius/Celsius.exe
 ## Gerar Instalador Windows
 
 ```powershell
-installer\build.bat
+installer\build.bat thin installer
 ```
 
 Saida esperada:
@@ -69,7 +71,9 @@ Se precisar chamar o Inno Setup manualmente:
 
 ## Licenciamento e Trial
 
-O Celsius inclui trial local de 3 dias e ativacao por chave.
+O codigo de licenciamento esta preparado, mas a ativacao comercial deve ser
+habilitada apenas depois de criar um par de chaves real. A chave privada nunca
+pode entrar no repositorio, no executavel ou no instalador.
 
 Gerar par de chaves:
 
@@ -88,6 +92,10 @@ python tools\generate_license.py license `
   --save licenses.json
 ```
 
+Copie somente `keys\public_key.pem` para
+`resources\license_public_key.pem` antes do build comercial. Guarde
+`private_key.pem` fora do projeto e com backup seguro.
+
 Verificar trials:
 
 ```powershell
@@ -100,7 +108,9 @@ Arquivos como `keys/`, `licenses.json` e `*.pem` nao devem ser commitados.
 
 - `python -m ruff check .`
 - `python -m pytest -q`
+- `python tools\release_preflight.py --flavor thin`
 - Abrir `dist/Celsius/Celsius.exe` localmente.
+- Conferir `%LOCALAPPDATA%\Celsius\logs\self-test.json`.
 - Testar primeira execucao sem modelo baixado.
 - Testar ativacao/trial.
 - Confirmar que nenhum segredo foi incluido no commit.
@@ -114,3 +124,17 @@ Arquivos como `keys/`, `licenses.json` e `*.pem` nao devem ser commitados.
 | Sem memoria | Use modelo menor ou quantizacao menor |
 | Visao nao funciona | Confirme modelo multimodal e `mmproj` correto |
 | Inno Setup nao encontrado | Instale o Inno Setup ou corrija o caminho do `ISCC.exe` |
+
+## Dados do Cliente
+
+Builds instalados gravam configuracoes e dados em `%LOCALAPPDATA%\Celsius`.
+Atualizacoes e desinstalacoes nao removem automaticamente estoque, conversas,
+agenda, documentos indexados ou perfil da empresa.
+
+Principais pastas:
+
+```text
+%LOCALAPPDATA%\Celsius\data
+%LOCALAPPDATA%\Celsius\models
+%LOCALAPPDATA%\Celsius\logs
+```

@@ -12,8 +12,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from core.file_security import restrict_private_file
+
 CommandCallback = Callable[[str, str], tuple[bool, str] | bool | None]
-VoiceCommandCallback = Callable[[bytes, str], tuple[bool, str, str] | str]
+VoiceCommandCallback = Callable[[bytes, str], tuple[bool, str, str] | dict | str]
 
 
 def ensure_mobile_token(current: str = "") -> str:
@@ -42,13 +44,14 @@ def ensure_mobile_certificate(
     cert_dir: str | Path,
     *,
     lan_ip: str | None = None,
-    valid_days: int = 3650,
+    valid_days: int = 365,
 ) -> tuple[Path, Path]:
     """Create or reuse a local self-signed certificate for mobile pairing."""
 
     cert_path = Path(cert_dir) / "celsius-mobile.crt"
     key_path = Path(cert_dir) / "celsius-mobile.key"
     if cert_path.exists() and key_path.exists():
+        restrict_private_file(key_path)
         return cert_path, key_path
 
     cert_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,8 +104,27 @@ def ensure_mobile_certificate(
             serialization.NoEncryption(),
         )
     )
+    restrict_private_file(key_path)
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     return cert_path, key_path
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _create_server_ssl_context():
+    """Create a TLS server context unaffected by client-only truststore injection."""
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    if type(context).__module__.endswith("truststore._api"):
+        context = getattr(context, "_ctx", context)
+    return context
 
 
 class MobileAccessServer:
@@ -128,6 +150,8 @@ class MobileAccessServer:
         self.voice_enabled = voice_enabled
         self.voice_command_callback = voice_command_callback
         self.use_https = use_https
+        if not _is_loopback_host(host) and not use_https:
+            raise ValueError("Acesso movel fora do computador exige HTTPS.")
         self.cert_file = Path(cert_file) if cert_file else None
         self.key_file = Path(key_file) if key_file else None
         self._httpd: ThreadingHTTPServer | None = None
@@ -160,7 +184,7 @@ class MobileAccessServer:
         if self.use_https:
             if self.cert_file is None or self.key_file is None:
                 raise ValueError("HTTPS mobile access requires certificate and key files.")
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context = _create_server_ssl_context()
             context.load_cert_chain(str(self.cert_file), str(self.key_file))
             self._httpd.socket = context.wrap_socket(self._httpd.socket, server_side=True)
         self._thread = threading.Thread(
@@ -409,6 +433,14 @@ class MobileAccessServer:
                         HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
                     return
+                if isinstance(result, dict):
+                    response = dict(result)
+                    response.setdefault("ok", True)
+                    response.setdefault("message", "Voz enviada.")
+                    response.setdefault("transcript", "")
+                    response.setdefault("response_version", server_ref.latest_response()["version"])
+                    self._send_json(response)
+                    return
                 if isinstance(result, tuple):
                     accepted, transcript, detail = result
                 else:
@@ -425,7 +457,8 @@ class MobileAccessServer:
 
             def _authorized(self) -> bool:
                 auth = self.headers.get("Authorization", "")
-                if auth == f"Bearer {server_ref.token}":
+                expected_auth = f"Bearer {server_ref.token}"
+                if secrets.compare_digest(auth, expected_auth):
                     return True
                 token = parse_qs(urlparse(self.path).query).get("token", [""])[0]
                 return secrets.compare_digest(token, server_ref.token)
@@ -442,6 +475,8 @@ class MobileAccessServer:
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -541,6 +576,63 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       line-height: 1.45;
       margin: 0 0 12px;
     }}
+    .voice-stage {{
+      display: grid;
+      place-items: center;
+      gap: 14px;
+      padding: 20px 12px 10px;
+    }}
+    .voice-orb {{
+      --level: 0;
+      width: 176px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      border: 1px solid rgba(88, 166, 255, 0.38);
+      background:
+        radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 0 9%),
+        radial-gradient(circle at 50% 45%, rgba(88, 166, 255, 0.92), rgba(35, 134, 54, 0.72) 40%, rgba(88, 166, 255, 0.14) 72%),
+        #0D1117;
+      box-shadow:
+        0 0 calc(22px + var(--level) * 56px) rgba(88, 166, 255, 0.42),
+        inset 0 0 42px rgba(255, 255, 255, 0.08);
+      transform: scale(calc(1 + var(--level) * 0.12));
+      transition: transform 90ms linear, box-shadow 90ms linear, filter 160ms ease;
+    }}
+    .voice-orb.listening {{
+      animation: orbPulse 2.4s ease-in-out infinite;
+      filter: saturate(1.18);
+    }}
+    .voice-orb.speaking {{
+      border-color: rgba(126, 231, 135, 0.62);
+      filter: hue-rotate(26deg) saturate(1.35);
+    }}
+    .voice-state {{
+      color: #E6EDF3;
+      min-height: 20px;
+      font-size: 14px;
+      font-weight: 760;
+      text-align: center;
+    }}
+    .voice-substate {{
+      color: #8B949E;
+      min-height: 18px;
+      font-size: 12px;
+      text-align: center;
+    }}
+    .voice-primary {{
+      width: min(100%, 280px);
+      background: #1F6FEB;
+      border-color: #58A6FF;
+      color: #FFFFFF;
+    }}
+    .voice-primary.active {{
+      background: #DA3633;
+      border-color: #F85149;
+    }}
+    @keyframes orbPulse {{
+      0%, 100% {{ box-shadow: 0 0 24px rgba(88, 166, 255, 0.36), inset 0 0 42px rgba(255, 255, 255, 0.08); }}
+      50% {{ box-shadow: 0 0 48px rgba(88, 166, 255, 0.58), inset 0 0 48px rgba(255, 255, 255, 0.12); }}
+    }}
     textarea {{
       width: 100%;
       min-height: 132px;
@@ -628,10 +720,640 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       font-size: 13px;
       line-height: 1.35;
     }}
+    .top-actions {{
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }}
+    .theme-toggle {{
+      min-height: 34px;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }}
+    :root {{
+      color-scheme: light;
+      --bg: #FFFFFF;
+      --surface: #FAFAFA;
+      --surface-strong: #F5F5F5;
+      --input: #FFFFFF;
+      --text: #171717;
+      --muted: #525252;
+      --faint: #737373;
+      --border: #E5E5E5;
+      --border-strong: #D4D4D4;
+      --brand: #171717;
+      --brand-soft: #F5F5F5;
+      --accent: #2563EB;
+      --accent-hover: #1D4ED8;
+      --success: #16A34A;
+      --danger: #DC2626;
+      --shadow: rgba(15, 23, 42, 0.08);
+    }}
+    body.dark {{
+      color-scheme: dark;
+      --bg: #0D1117;
+      --surface: #161B22;
+      --surface-strong: #21262D;
+      --input: #0D1117;
+      --text: #E6EDF3;
+      --muted: #8B949E;
+      --faint: #6E7681;
+      --border: #30363D;
+      --border-strong: #484F58;
+      --brand: #58A6FF;
+      --brand-soft: #1A3A5C;
+      --accent: #1F6FEB;
+      --accent-hover: #388BF0;
+      --success: #3FB950;
+      --danger: #F85149;
+      --shadow: rgba(0, 0, 0, 0.22);
+    }}
+    body {{
+      background: var(--bg);
+      color: var(--text);
+    }}
+    .brand strong {{ color: var(--text); }}
+    .brand span {{ color: var(--muted); }}
+    .brand b {{ color: var(--accent); }}
+    .connection-chip,
+    .panel,
+    #status {{
+      border-color: var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      box-shadow: 0 8px 20px var(--shadow);
+    }}
+    .section-title,
+    .voice-state {{
+      color: var(--text);
+    }}
+    .hint,
+    .voice-substate,
+    .toggle {{
+      color: var(--muted);
+    }}
+    textarea,
+    #response {{
+      border-color: var(--border);
+      background: var(--input);
+      color: var(--text);
+    }}
+    textarea:focus {{ border-color: var(--accent); }}
+    button {{
+      border-color: var(--border);
+      background: var(--surface-strong);
+      color: var(--text);
+    }}
+    button.primary {{
+      background: var(--success);
+      border-color: var(--success);
+      color: #FFFFFF;
+    }}
+    button.voice,
+    .voice-primary {{
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #FFFFFF;
+    }}
+    button.subtle,
+    .theme-toggle {{
+      background: var(--surface);
+      color: var(--muted);
+      border-color: var(--border);
+    }}
+    .composer-panel {{
+      padding: 0;
+      overflow: hidden;
+    }}
+    .composer-toggle {{
+      width: 100%;
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 0;
+      border-radius: 0;
+      background: var(--surface);
+      color: var(--text);
+      padding: 16px;
+      text-align: left;
+    }}
+    .composer-toggle span {{
+      font-weight: 800;
+      font-size: 15px;
+    }}
+    .composer-toggle small {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .composer-toggle::after {{
+      content: "+";
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: 20px;
+      line-height: 1;
+      flex: 0 0 auto;
+    }}
+    .composer-toggle[aria-expanded="true"]::after {{
+      content: "-";
+    }}
+    .composer-body {{
+      border-top: 1px solid var(--border);
+      padding: 16px;
+    }}
+    .composer-body[hidden] {{
+      display: none;
+    }}
+    .voice-primary.active {{
+      background: var(--danger);
+      border-color: var(--danger);
+    }}
+    .voice-orb {{
+      position: relative;
+      overflow: hidden;
+      width: 172px;
+      background:
+        radial-gradient(circle at center, var(--input) 0 34%, transparent 35%),
+        conic-gradient(from 180deg, var(--accent), var(--success), var(--accent));
+      border: 1px solid var(--border-strong);
+      box-shadow:
+        0 0 calc(10px + var(--level) * 36px) rgba(37, 99, 235, 0.22),
+        inset 0 0 0 14px color-mix(in srgb, var(--surface) 72%, transparent);
+      transform: scale(calc(1 + var(--level) * 0.08));
+    }}
+    .voice-orb::before,
+    .voice-orb::after {{
+      content: "";
+      position: absolute;
+      inset: 20%;
+      border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+      border-radius: 50%;
+      transform: scale(calc(1 + var(--level) * 0.55));
+      opacity: calc(0.25 + var(--level) * 0.55);
+      transition: transform 90ms linear, opacity 90ms linear;
+    }}
+    .voice-orb::after {{
+      inset: 34%;
+      background: var(--accent);
+      border: 0;
+      box-shadow: 0 0 calc(12px + var(--level) * 28px) rgba(37, 99, 235, 0.38);
+      opacity: calc(0.78 + var(--level) * 0.2);
+    }}
+    .voice-orb.listening {{
+      animation: voiceRing 2.1s ease-in-out infinite;
+      filter: none;
+    }}
+    .voice-orb.speaking {{
+      border-color: color-mix(in srgb, var(--success) 65%, var(--border));
+      filter: none;
+    }}
+    @keyframes voiceRing {{
+      0%, 100% {{ box-shadow: 0 0 18px rgba(37, 99, 235, 0.16), inset 0 0 0 14px color-mix(in srgb, var(--surface) 72%, transparent); }}
+      50% {{ box-shadow: 0 0 42px rgba(37, 99, 235, 0.34), inset 0 0 0 10px color-mix(in srgb, var(--surface) 64%, transparent); }}
+    }}
+    @supports not (color: color-mix(in srgb, white, black)) {{
+      .voice-orb {{ box-shadow: 0 0 24px rgba(37, 99, 235, 0.22); }}
+      .voice-orb::before {{ border-color: rgba(37, 99, 235, 0.28); }}
+    }}
     @media (max-width: 420px) {{
       .app-shell {{ padding: 12px; gap: 12px; }}
       .brand strong {{ font-size: 23px; }}
       .brand span, .brand b {{ font-size: 15px; }}
+      .topbar {{ align-items: flex-start; }}
+      .top-actions {{ flex-direction: column; align-items: flex-end; }}
+      .actions, .secondary-actions {{ grid-template-columns: 1fr; }}
+      button {{ width: 100%; }}
+      .theme-toggle {{ width: auto; }}
+    }}
+
+    /* Celsius mobile - identidade visual compartilhada com o site */
+    :root {{
+      color-scheme: light;
+      --page: #F4F7F6;
+      --surface: #FFFFFF;
+      --surface-soft: #EAF1EF;
+      --ink: #14211F;
+      --muted: #52615E;
+      --faint: #7C8A86;
+      --line: #CFDBD7;
+      --line-strong: #A9BBB5;
+      --primary: #087E72;
+      --primary-strong: #05645B;
+      --primary-soft: #DFF1ED;
+      --green: #237B4B;
+      --green-soft: #E2F1E8;
+      --coral: #C9463C;
+      --focus: #E59B2D;
+      --shadow-soft: 0 8px 24px rgba(20, 33, 31, 0.08);
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--page);
+      color: var(--ink);
+    }}
+    body.dark {{
+      color-scheme: dark;
+      --page: #101715;
+      --surface: #18211F;
+      --surface-soft: #202D2A;
+      --ink: #EDF5F2;
+      --muted: #AABBB5;
+      --faint: #728780;
+      --line: #344440;
+      --line-strong: #52655F;
+      --primary: #42C6B7;
+      --primary-strong: #7ED8CE;
+      --primary-soft: #1D403B;
+      --green: #69C58D;
+      --green-soft: #1D3D2A;
+      --coral: #FF8178;
+      --focus: #FFC267;
+      --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+    }}
+    html {{
+      min-height: 100%;
+      background: var(--page);
+    }}
+    body {{
+      min-width: 320px;
+      min-height: 100svh;
+      background: var(--page);
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.5;
+      letter-spacing: 0;
+    }}
+    button,
+    textarea,
+    input {{
+      font: inherit;
+      letter-spacing: 0;
+    }}
+    button:focus-visible,
+    textarea:focus-visible,
+    input:focus-visible {{
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }}
+    .app-shell {{
+      width: min(100%, 600px);
+      min-height: 100svh;
+      grid-template-rows: auto auto auto auto;
+      align-content: start;
+      gap: 14px;
+      padding: 0 18px 24px;
+    }}
+    .topbar {{
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      min-height: 72px;
+      margin: 0 -18px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      backdrop-filter: blur(14px);
+    }}
+    .brand {{
+      align-items: center;
+      gap: 5px;
+      color: var(--ink);
+    }}
+    .brand strong,
+    .brand span,
+    .brand b {{
+      font-size: 17px;
+      line-height: 1;
+    }}
+    .brand strong {{ color: var(--ink); font-weight: 780; }}
+    .brand span {{ color: var(--muted); font-weight: 650; }}
+    .brand b {{ color: var(--primary); font-weight: 800; }}
+    .top-actions {{
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }}
+    .connection-chip {{
+      min-height: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
+      box-shadow: none;
+      padding: 6px 9px;
+      font-size: 11px;
+      font-weight: 700;
+    }}
+    .connection-chip::before {{
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 3px var(--green-soft);
+    }}
+    .theme-toggle {{
+      width: 68px;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 7px 9px;
+      font-size: 11px;
+      font-weight: 700;
+    }}
+    .theme-toggle:hover {{
+      border-color: var(--primary);
+      color: var(--primary);
+    }}
+    .panel {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow-soft);
+      padding: 18px;
+    }}
+    .voice-panel {{
+      margin-top: 4px;
+      overflow: hidden;
+    }}
+    .panel-heading {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .eyebrow {{
+      display: block;
+      margin-bottom: 4px;
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }}
+    .panel-heading h1 {{
+      margin: 0;
+      color: var(--ink);
+      font-size: 21px;
+      line-height: 1.2;
+      font-weight: 760;
+    }}
+    .privacy-chip {{
+      flex: 0 0 auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      padding: 6px 8px;
+      font-size: 10px;
+      font-weight: 700;
+    }}
+    .voice-stage {{
+      gap: 12px;
+      padding: 26px 8px 4px;
+    }}
+    .voice-orb {{
+      --level: 0;
+      position: relative;
+      width: 156px;
+      aspect-ratio: 1;
+      overflow: visible;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      background: var(--surface-soft);
+      box-shadow:
+        0 0 0 calc(10px + var(--level) * 12px) color-mix(in srgb, var(--primary) 10%, transparent),
+        0 0 calc(18px + var(--level) * 34px) color-mix(in srgb, var(--primary) 30%, transparent);
+      transform: scale(calc(1 + var(--level) * 0.06));
+      transition: transform 90ms linear, box-shadow 90ms linear;
+    }}
+    .voice-orb::before {{
+      content: "";
+      position: absolute;
+      inset: 22px;
+      border: 1px solid color-mix(in srgb, var(--primary) 46%, var(--line));
+      border-radius: 50%;
+      background: var(--surface);
+      transform: scale(calc(1 + var(--level) * 0.18));
+      transition: transform 90ms linear;
+    }}
+    .voice-orb::after {{
+      content: "C";
+      position: absolute;
+      inset: 48px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: var(--primary);
+      color: #FFFFFF;
+      box-shadow: 0 8px 24px color-mix(in srgb, var(--primary) 32%, transparent);
+      font-size: 28px;
+      font-weight: 800;
+      opacity: 1;
+      transform: scale(calc(1 + var(--level) * 0.2));
+      transition: transform 90ms linear, background 160ms ease;
+    }}
+    .voice-orb.listening {{
+      animation: celsiusVoiceRing 1.8s ease-in-out infinite;
+      filter: none;
+    }}
+    .voice-orb.listening::after {{ background: #286FA1; }}
+    .voice-orb.speaking {{ border-color: var(--green); filter: none; }}
+    .voice-orb.speaking::after {{ background: var(--green); }}
+    @keyframes celsiusVoiceRing {{
+      0%, 100% {{
+        box-shadow:
+          0 0 0 10px color-mix(in srgb, var(--primary) 8%, transparent),
+          0 0 18px color-mix(in srgb, var(--primary) 22%, transparent);
+      }}
+      50% {{
+        box-shadow:
+          0 0 0 17px color-mix(in srgb, var(--primary) 13%, transparent),
+          0 0 38px color-mix(in srgb, var(--primary) 34%, transparent);
+      }}
+    }}
+    .voice-state {{
+      min-height: 22px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 760;
+    }}
+    .voice-substate {{
+      max-width: 360px;
+      min-height: 36px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    button {{
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 720;
+      transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+    }}
+    button:hover {{ border-color: var(--primary); }}
+    button:active {{ transform: translateY(1px); }}
+    button:disabled {{ opacity: 0.48; }}
+    .voice-primary,
+    button.primary,
+    button.voice {{
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #FFFFFF;
+    }}
+    .voice-primary:hover,
+    button.primary:hover,
+    button.voice:hover {{
+      border-color: var(--primary-strong);
+      background: var(--primary-strong);
+    }}
+    .voice-primary {{ width: min(100%, 300px); min-height: 48px; }}
+    .voice-primary.active {{
+      border-color: var(--coral);
+      background: var(--coral);
+    }}
+    button.subtle {{
+      border-color: var(--line);
+      background: var(--surface);
+      color: var(--muted);
+    }}
+    button.subtle:hover {{
+      border-color: var(--primary);
+      background: var(--primary-soft);
+      color: var(--primary);
+    }}
+    .composer-panel {{ padding: 0; overflow: hidden; }}
+    .composer-toggle {{
+      width: 100%;
+      min-height: 60px;
+      border: 0;
+      border-radius: 0;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 16px 18px;
+    }}
+    .composer-toggle:hover {{
+      border-color: transparent;
+      background: var(--surface-soft);
+    }}
+    .composer-toggle span {{ font-size: 14px; font-weight: 760; }}
+    .composer-toggle small {{
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }}
+    .composer-toggle::after {{
+      width: 30px;
+      height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--primary);
+    }}
+    .composer-body {{ border-color: var(--line); padding: 18px; }}
+    .hint {{ color: var(--muted); font-size: 12px; }}
+    textarea {{
+      min-height: 120px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--page);
+      color: var(--ink);
+      padding: 13px 14px;
+      font-size: 16px;
+      line-height: 1.5;
+    }}
+    textarea::placeholder {{ color: var(--faint); }}
+    textarea:focus {{ border-color: var(--primary); }}
+    .actions {{ gap: 10px; margin-top: 12px; }}
+    .secondary-actions {{ margin-top: 10px; }}
+    .section-row {{
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }}
+    .section-title {{
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+    }}
+    .toggle {{ color: var(--muted); font-size: 12px; }}
+    .toggle input {{
+      width: 34px;
+      height: 18px;
+      accent-color: var(--primary);
+    }}
+    #response {{
+      min-height: 132px;
+      overflow-wrap: anywhere;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--page);
+      color: var(--ink);
+      padding: 15px;
+      font-size: 14px;
+      line-height: 1.6;
+    }}
+    #status {{
+      position: sticky;
+      bottom: 12px;
+      z-index: 15;
+      min-height: 46px;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--primary);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
+      box-shadow: var(--shadow-soft);
+      padding: 12px 14px;
+      font-size: 12px;
+    }}
+    @media (max-width: 460px) {{
+      .app-shell {{ gap: 12px; padding: 0 12px 20px; }}
+      .topbar {{
+        min-height: 64px;
+        margin: 0 -12px;
+        padding: 0 12px;
+        align-items: center;
+      }}
+      .brand strong, .brand span, .brand b {{ font-size: 15px; }}
+      .top-actions {{ flex-direction: row; }}
+      .connection-chip {{ min-height: 30px; padding: 5px 8px; }}
+      .theme-toggle {{ width: 58px; min-height: 34px; padding: 6px; }}
+      .panel {{ padding: 15px; }}
+      .panel-heading h1 {{ font-size: 19px; }}
+      .privacy-chip {{
+        max-width: 110px;
+        white-space: normal;
+        text-align: right;
+      }}
+      .voice-orb {{ width: 142px; }}
+      .voice-orb::after {{ inset: 43px; }}
+      .actions, .secondary-actions {{ grid-template-columns: 1fr 1fr; }}
+      button {{ width: auto; }}
+    }}
+    @media (max-width: 350px) {{
+      .brand span {{ display: none; }}
       .actions, .secondary-actions {{ grid-template-columns: 1fr; }}
       button {{ width: 100%; }}
     }}
@@ -643,21 +1365,43 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       <div class="brand" aria-label="Celsius Project AI">
         <strong>Celsius</strong><span>Project</span><b>AI</b>
       </div>
-      <div id="connectionChip" class="connection-chip">Local</div>
+      <div class="top-actions">
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Alternar tema">Escuro</button>
+        <div id="connectionChip" class="connection-chip">Local</div>
+      </div>
     </header>
 
-    <section class="panel">
-      <div class="section-row">
-        <div class="section-title">Comando</div>
+    <section class="panel voice-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow">Assistente local</span>
+          <h1>Fale com o Celsius</h1>
+        </div>
+        <span class="privacy-chip">Processado no seu PC</span>
       </div>
-      <p class="hint">Grave sua voz no celular ou digite. O Celsius processa no PC e responde aqui.</p>
-      <textarea id="message" placeholder="Diga ou digite um comando..."></textarea>
-      <div class="actions">
-        <button id="record" class="voice" type="button">Gravar voz</button>
-        <button id="send" class="primary" type="button">Enviar</button>
+      <div class="voice-stage">
+        <div id="voiceOrb" class="voice-orb" aria-hidden="true"></div>
+        <div id="voiceState" class="voice-state">Aguardando "Celsius"</div>
+        <div id="voiceSubstate" class="voice-substate">Diga Celsius para ativar o assistente.</div>
+        <button id="voiceSession" class="voice-primary" type="button">Ativar escuta</button>
       </div>
-      <div class="actions secondary-actions">
-        <button id="test" class="subtle" type="button">Testar conexao</button>
+    </section>
+
+    <section id="textComposerPanel" class="panel composer-panel collapsed">
+      <button id="toggleComposer" class="composer-toggle" type="button" aria-expanded="false" aria-controls="composerBody">
+        <span>Digitar mensagem</span>
+        <small>Opcional</small>
+      </button>
+      <div id="composerBody" class="composer-body" hidden>
+        <p class="hint">Use quando preferir escrever ou revisar a pergunta antes de enviar.</p>
+        <textarea id="message" placeholder="Digite sua mensagem para o Celsius..."></textarea>
+        <div class="actions">
+          <button id="record" class="voice" type="button">Gravar voz</button>
+          <button id="send" class="primary" type="button">Enviar</button>
+        </div>
+        <div class="actions secondary-actions">
+          <button id="test" class="subtle" type="button">Testar conexao</button>
+        </div>
       </div>
     </section>
 
@@ -682,7 +1426,14 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
     const statusEl = document.querySelector("#status");
     const responseEl = document.querySelector("#response");
     const connectionChip = document.querySelector("#connectionChip");
+    const themeToggle = document.querySelector("#themeToggle");
+    const toggleComposerBtn = document.querySelector("#toggleComposer");
+    const composerBody = document.querySelector("#composerBody");
     const recordBtn = document.querySelector("#record");
+    const voiceSessionBtn = document.querySelector("#voiceSession");
+    const voiceOrb = document.querySelector("#voiceOrb");
+    const voiceState = document.querySelector("#voiceState");
+    const voiceSubstate = document.querySelector("#voiceSubstate");
     const autoSpeak = document.querySelector("#autoSpeak");
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const TARGET_SAMPLE_RATE = 16000;
@@ -701,6 +1452,44 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
     let audioChunks = [];
     let recording = false;
     let recordingTimer = null;
+    let voiceConversationActive = false;
+    let autoListening = false;
+    let speechDetected = false;
+    let speechStartedAt = 0;
+    let silenceStartedAt = 0;
+    let autoStopping = false;
+    let voiceActivationInProgress = false;
+    let noiseFloor = 0.006;
+    const MIN_VOICE_THRESHOLD = 0.012;
+    const SILENCE_TO_SEND_MS = 500;
+    const MIN_SPEECH_MS = 220;
+    const AUTO_MAX_RECORDING_MS = 10000;
+
+    function applyMobileTheme(theme) {{
+      const dark = theme === "dark";
+      document.body.classList.toggle("dark", dark);
+      themeToggle.textContent = dark ? "Claro" : "Escuro";
+      localStorage.setItem("celsiusMobileTheme", dark ? "dark" : "light");
+    }}
+
+    themeToggle.addEventListener("click", () => {{
+      applyMobileTheme(document.body.classList.contains("dark") ? "light" : "dark");
+    }});
+    applyMobileTheme(localStorage.getItem("celsiusMobileTheme") || "light");
+
+    function setComposerExpanded(expanded, focusInput = false) {{
+      toggleComposerBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+      toggleComposerBtn.querySelector("span").textContent = expanded ? "Ocultar campo" : "Digitar mensagem";
+      composerBody.hidden = !expanded;
+      if (expanded && focusInput) {{
+        setTimeout(() => message.focus(), 80);
+      }}
+    }}
+
+    toggleComposerBtn.addEventListener("click", () => {{
+      const expanded = toggleComposerBtn.getAttribute("aria-expanded") === "true";
+      setComposerExpanded(!expanded, !expanded);
+    }});
 
     async function fetchJson(path, options = {{}}, timeoutMs = 12000) {{
       const controller = new AbortController();
@@ -740,7 +1529,8 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
     async function sendCommand(source = "phone") {{
       const text = message.value.trim();
       if (!text) {{
-        statusEl.textContent = "Digite ou fale um comando primeiro.";
+        setComposerExpanded(true, true);
+        statusEl.textContent = "Digite uma mensagem ou inicie a conversa por voz.";
         return;
       }}
       statusEl.textContent = "Enviando...";
@@ -757,6 +1547,7 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       if (data.ok) {{
         lastResponseVersion = Number(data.response_version || lastResponseVersion);
         message.value = "";
+        setComposerExpanded(false);
         waitForResponse();
       }}
       document.querySelector("#send").disabled = false;
@@ -867,7 +1658,12 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
           clearResponseAudio();
           responseEl.textContent = data.text;
           statusEl.textContent = data.kind === "error" ? "O Celsius retornou um erro." : "Resposta recebida.";
-          if (autoSpeak.checked && data.kind !== "error") playPcAudio(lastResponseVersion);
+          setVoiceVisualState(data.kind === "error" ? "idle" : "speaking");
+          if (autoSpeak.checked && data.kind !== "error") {{
+            playPcAudio(lastResponseVersion).finally(() => resumeVoiceConversation());
+          }} else {{
+            resumeVoiceConversation();
+          }}
           return;
         }}
         if (Date.now() - started > 120000) {{
@@ -951,9 +1747,9 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       }}
     }}
 
-    async function sendVoiceBlob(blob) {{
-      statusEl.textContent = "Enviando voz otimizada para o PC...";
-      recordBtn.disabled = true;
+    async function sendVoiceBlob(blob, autoMode = false) {{
+      statusEl.textContent = autoMode ? "Enviando sua fala para o Celsius..." : "Enviando voz otimizada para o PC...";
+      if (!autoMode) recordBtn.disabled = true;
       const data = await fetchJson("/api/voice-command", {{
         method: "POST",
         headers: {{
@@ -965,39 +1761,164 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
           mime_type: blob.type || "audio/wav"
         }})
       }}, 45000);
-      recordBtn.disabled = false;
+      recordBtn.disabled = voiceConversationActive;
       if (data.transcript) message.value = data.transcript;
       statusEl.textContent = data.message || (data.ok ? "Voz enviada." : "Erro ao enviar voz.");
-      if (data.ok) {{
+      if (data.ok && data.command_submitted === false) {{
+        if (data.wake_detected && data.acknowledgement) {{
+          setVoiceVisualState("armed");
+          await speakWakeAcknowledgement(data.acknowledgement);
+        }} else {{
+          setVoiceVisualState("listening");
+        }}
+        resumeVoiceConversation(120);
+      }} else if (data.ok) {{
         lastResponseVersion = Number(data.response_version || lastResponseVersion);
+        setVoiceVisualState("thinking");
         waitForResponse();
+      }} else {{
+        resumeVoiceConversation();
       }}
     }}
 
-    async function startLocalRecording() {{
-      audioStream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
+    function speakWakeAcknowledgement(text) {{
+      if (!("speechSynthesis" in window) || !text) return Promise.resolve();
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "pt-BR";
+      utterance.rate = 1.12;
+      utterance.pitch = 0.92;
+      return new Promise(resolve => {{
+        utterance.onend = resolve;
+        utterance.onerror = resolve;
+        window.speechSynthesis.speak(utterance);
+      }});
+    }}
+
+    function calculateRms(samples) {{
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) {{
+        sum += samples[i] * samples[i];
+      }}
+      return Math.sqrt(sum / Math.max(1, samples.length));
+    }}
+
+    function setVoiceVisualState(state) {{
+      voiceOrb.classList.toggle("listening", state === "listening");
+      voiceOrb.classList.toggle("speaking", state === "speaking");
+      if (state === "listening") {{
+        voiceState.textContent = "Aguardando \"Celsius\"";
+        voiceSubstate.textContent = "Diga Celsius para ativar o assistente.";
+      }} else if (state === "armed") {{
+        voiceState.textContent = "Estou ouvindo";
+        voiceSubstate.textContent = "Pode falar seu pedido agora.";
+      }} else if (state === "speaking") {{
+        voiceState.textContent = "Celsius respondendo";
+        voiceSubstate.textContent = "O audio gerado no PC sera reproduzido aqui.";
+      }} else if (state === "thinking") {{
+        voiceState.textContent = "Pensando";
+        voiceSubstate.textContent = "Sua fala foi enviada para o Celsius.";
+      }} else if (state === "needs-gesture") {{
+        voiceState.textContent = "Ative o microfone";
+        voiceSubstate.textContent = "Toque em Ativar escuta e permita o uso do microfone.";
+      }} else {{
+        voiceState.textContent = "Aguardando \"Celsius\"";
+        voiceSubstate.textContent = "Diga Celsius para ativar o assistente.";
+        voiceOrb.style.setProperty("--level", 0);
+      }}
+    }}
+
+    function updateVoiceOrb(level) {{
+      const scaled = Math.min(1, Math.max(0, level * 12));
+      voiceOrb.style.setProperty("--level", scaled.toFixed(3));
+    }}
+
+    function handleAutoVoiceLevel(level) {{
+      const now = Date.now();
+      const threshold = Math.max(MIN_VOICE_THRESHOLD, Math.min(0.034, noiseFloor * 2.8));
+      if (!speechDetected && level <= threshold) {{
+        noiseFloor = Math.min(0.012, noiseFloor * 0.96 + level * 0.04);
+        return;
+      }}
+      if (level > threshold) {{
+        if (mobileAudioPlaying) stopPcAudio();
+        if (!speechDetected) {{
+          speechDetected = true;
+          speechStartedAt = now;
+          voiceState.textContent = "Ouvindo voce";
+        }}
+        silenceStartedAt = 0;
+        return;
+      }}
+      if (!speechDetected) return;
+      if (!silenceStartedAt) silenceStartedAt = now;
+      const speechMs = now - speechStartedAt;
+      const silenceMs = now - silenceStartedAt;
+      if (!autoStopping && speechMs >= MIN_SPEECH_MS && silenceMs >= SILENCE_TO_SEND_MS) {{
+        autoStopping = true;
+        stopLocalRecording(true);
+      }}
+    }}
+
+    async function startLocalRecording(autoMode = false) {{
+      audioStream = await navigator.mediaDevices.getUserMedia({{
+        audio: {{
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        }}
+      }});
       audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") await audioContext.resume();
+      if (audioContext.state !== "running") {{
+        audioStream.getTracks().forEach(track => track.stop());
+        await audioContext.close();
+        audioStream = null;
+        audioContext = null;
+        throw new Error("O navegador exige um toque para iniciar o audio.");
+      }}
       audioSource = audioContext.createMediaStreamSource(audioStream);
       audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
       audioChunks = [];
+      speechDetected = false;
+      speechStartedAt = 0;
+      silenceStartedAt = 0;
+      autoStopping = false;
+      noiseFloor = 0.006;
+      autoListening = autoMode;
       audioProcessor.onaudioprocess = event => {{
+        const samples = new Float32Array(event.inputBuffer.getChannelData(0));
+        const level = calculateRms(samples);
+        updateVoiceOrb(level);
         if (!recording) return;
-        audioChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+        audioChunks.push(samples);
+        if (autoListening) handleAutoVoiceLevel(level);
       }};
       audioSource.connect(audioProcessor);
       audioProcessor.connect(audioContext.destination);
       recording = true;
-      recordBtn.textContent = "Parar e enviar";
-      statusEl.textContent = "Gravando no celular...";
-      recordingTimer = setTimeout(() => stopLocalRecording(), 15000);
+      if (autoMode) {{
+        setVoiceVisualState("listening");
+        statusEl.textContent = "Escuta ativa. Diga Celsius para comecar.";
+        recordingTimer = setTimeout(() => stopLocalRecording(true), AUTO_MAX_RECORDING_MS);
+      }} else {{
+        recordBtn.textContent = "Parar e enviar";
+        statusEl.textContent = "Gravando no celular...";
+        recordingTimer = setTimeout(() => stopLocalRecording(false), 15000);
+      }}
     }}
 
-    async function stopLocalRecording() {{
+    async function stopLocalRecording(autoMode = false) {{
       if (!recording) return;
       recording = false;
       clearTimeout(recordingTimer);
-      recordBtn.textContent = "Preparando envio...";
-      recordBtn.disabled = true;
+      if (!autoMode) {{
+        recordBtn.textContent = "Preparando envio...";
+        recordBtn.disabled = true;
+      }} else {{
+        setVoiceVisualState("thinking");
+      }}
 
       if (audioProcessor) audioProcessor.disconnect();
       if (audioSource) audioSource.disconnect();
@@ -1009,32 +1930,112 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       audioSource = null;
       audioProcessor = null;
 
-      if (!audioChunks.length) {{
-        statusEl.textContent = "Nenhum audio capturado.";
+      if (!audioChunks.length || (autoMode && !speechDetected)) {{
+        statusEl.textContent = autoMode ? "Nenhuma fala detectada." : "Nenhum audio capturado.";
         recordBtn.textContent = "Gravar voz";
-        recordBtn.disabled = false;
+        recordBtn.disabled = voiceConversationActive;
+        resumeVoiceConversation();
         return;
       }}
-      await sendVoiceBlob(encodeWav(audioChunks, sampleRate));
+      await sendVoiceBlob(encodeWav(audioChunks, sampleRate), autoMode);
       recordBtn.textContent = "Gravar voz";
-      recordBtn.disabled = false;
+      recordBtn.disabled = voiceConversationActive;
+    }}
+
+    function stopAudioCaptureOnly() {{
+      recording = false;
+      autoListening = false;
+      clearTimeout(recordingTimer);
+      if (audioProcessor) audioProcessor.disconnect();
+      if (audioSource) audioSource.disconnect();
+      if (audioStream) audioStream.getTracks().forEach(track => track.stop());
+      if (audioContext) audioContext.close();
+      audioContext = null;
+      audioStream = null;
+      audioSource = null;
+      audioProcessor = null;
+      audioChunks = [];
+      updateVoiceOrb(0);
+    }}
+
+    async function startVoiceConversation() {{
+      if (voiceActivationInProgress) return;
+      if (voiceConversationActive) {{
+        voiceConversationActive = false;
+        voiceSessionBtn.classList.remove("active");
+        voiceSessionBtn.textContent = "Ativar escuta";
+        recordBtn.disabled = false;
+        stopAudioCaptureOnly();
+        stopPcAudio();
+        setVoiceVisualState("idle");
+        statusEl.textContent = "Conversa por voz encerrada.";
+        return;
+      }}
+      voiceActivationInProgress = true;
+      voiceConversationActive = true;
+      voiceSessionBtn.classList.add("active");
+      voiceSessionBtn.textContent = "Pausar escuta";
+      recordBtn.disabled = true;
+      try {{
+        await startLocalRecording(true);
+      }} catch (error) {{
+        stopAudioCaptureOnly();
+        voiceConversationActive = false;
+        voiceSessionBtn.classList.remove("active");
+        voiceSessionBtn.textContent = "Ativar escuta";
+        recordBtn.disabled = false;
+        setVoiceVisualState("needs-gesture");
+        statusEl.textContent = "Toque em Ativar escuta e autorize o microfone deste site HTTPS.";
+      }} finally {{
+        voiceActivationInProgress = false;
+      }}
+    }}
+
+    function resumeVoiceConversation(delayMs = 300) {{
+      if (!voiceConversationActive || recording) return;
+      setTimeout(() => {{
+        if (!voiceConversationActive || recording) return;
+        startLocalRecording(true).catch(() => {{
+          voiceConversationActive = false;
+          voiceSessionBtn.classList.remove("active");
+          voiceSessionBtn.textContent = "Ativar escuta";
+          recordBtn.disabled = false;
+          setVoiceVisualState("idle");
+        }});
+      }}, delayMs);
+    }}
+
+    function scheduleAutomaticWakeListening() {{
+      setTimeout(() => {{
+        if (!voiceConversationActive) startVoiceConversation();
+      }}, 250);
+      document.addEventListener("pointerdown", () => {{
+        if (!voiceConversationActive && !voiceActivationInProgress) {{
+          startVoiceConversation();
+        }}
+      }}, {{ once: true, capture: true }});
     }}
 
     if (!voiceEnabled || !navigator.mediaDevices || !AudioContextClass) {{
       recordBtn.disabled = true;
+      voiceSessionBtn.disabled = true;
       recordBtn.textContent = "Gravacao local indisponivel";
+      voiceSessionBtn.textContent = "Voz indisponivel";
     }} else {{
+      voiceSessionBtn.addEventListener("click", startVoiceConversation);
       recordBtn.addEventListener("click", async () => {{
         if (recording) {{
-          await stopLocalRecording();
+          await stopLocalRecording(false);
           return;
         }}
         try {{
-          await startLocalRecording();
+          await startLocalRecording(false);
         }} catch (error) {{
+          stopAudioCaptureOnly();
           statusEl.textContent = "Microfone bloqueado. Use o botao de voz do teclado ou habilite HTTPS.";
         }}
       }});
+      scheduleAutomaticWakeListening();
     }}
   </script>
 </body>

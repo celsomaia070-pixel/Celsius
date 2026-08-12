@@ -83,6 +83,7 @@ def _seed_bm25(service, documents: list[str], doc_name: str = "test_doc"):
     service._bm25_doc_ids = ids
     service._bm25_corpus_tokens = [_tokenize_for_bm25(doc) for doc in documents]
     service._bm25 = BM25Okapi(service._bm25_corpus_tokens)
+    service._bm25_dirty = False
 
 
 # ── BM25 search tests ────────────────────────────────────────────────

@@ -166,6 +166,12 @@ class TestValidateCodeBlockedFunctions:
         assert err is not None
         assert "Blocked" in err
 
+    def test_blocks_reported_getattr_builtins_bypass(self):
+        code = "getattr(__builtins__, 'pr' + 'int')('SANDBOX_BYPASS_OK')"
+        err = validate_code(code)
+        assert err is not None
+        assert "Blocked" in err
+
 
 class TestValidateCodeBlockedMethods:
     @pytest.mark.parametrize(
@@ -402,6 +408,18 @@ class TestSandboxedExecutorBlockedCode:
 
     def test_dunder_globals(self):
         r = self._run("x = (1).__globals__")
+        assert not r.success
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import io; io.open('sandbox_escape.txt', 'w')",
+            "import contextlib; contextlib.os.getcwd()",
+            "import random; random._os.listdir('.')",
+        ],
+    )
+    def test_safe_module_facades_do_not_expose_system_access(self, code):
+        r = self._run(code)
         assert not r.success
 
     def test_dunder_subclasses(self):

@@ -24,43 +24,57 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.inventory import ColunaKanban, ItemEstoque, Movimentacao, get_inventory_service
+from core.inventory import (
+    ColunaKanban,
+    ItemEstoque,
+    Movimentacao,
+    StockStatus,
+    get_inventory_service,
+)
 from ui.theme.schemes import get_scheme
 
 
 def _stock_health_color(item: ItemEstoque, scheme=None) -> tuple[str, str]:
-    coluna = item.coluna
-    if scheme and scheme.bg_primary.startswith("#0"):
-        if coluna == ColunaKanban.CRITICO:
+    status = getattr(item, "stock_status", None)
+    if status is None:
+        status = {
+            ColunaKanban.CRITICO: StockStatus.CRITICO,
+            ColunaKanban.A_COMPRAR: StockStatus.SEM_ESTOQUE,
+            ColunaKanban.EM_ESTOQUE: StockStatus.NORMAL,
+            ColunaKanban.EM_USO: StockStatus.NORMAL,
+        }.get(item.coluna, StockStatus.NORMAL)
+    if scheme:
+        if status in (StockStatus.SEM_ESTOQUE, StockStatus.CRITICO):
             return scheme.error_bg, scheme.error_text
-        if coluna == ColunaKanban.A_COMPRAR:
+        if status == StockStatus.EXCESSO:
             return scheme.warning_bg, scheme.warning_text
-        if coluna == ColunaKanban.EM_ESTOQUE:
+        if status == StockStatus.NORMAL:
             return scheme.success_bg, scheme.success_text
-        if coluna == ColunaKanban.EM_USO:
-            return scheme.info_bg, scheme.info_text
         return scheme.bg_tertiary, scheme.text_muted
 
     cores = {
-        ColunaKanban.CRITICO: ("#FFF0F0", "#C62828"),
-        ColunaKanban.A_COMPRAR: ("#FFF8E1", "#E65100"),
-        ColunaKanban.EM_ESTOQUE: ("#E8F5E9", "#1B5E20"),
-        ColunaKanban.EM_USO: ("#E3F2FD", "#1565C0"),
+        StockStatus.SEM_ESTOQUE: ("#F8E3E1", "#94332C"),
+        StockStatus.CRITICO: ("#F8E3E1", "#94332C"),
+        StockStatus.NORMAL: ("#E2F1E8", "#185E39"),
+        StockStatus.EXCESSO: ("#F7EDD7", "#76500D"),
     }
-    return cores.get(coluna, ("#F5F5F5", "#757575"))
+    return cores.get(status, ("#EAF1EF", "#52615E"))
 
 
-def _stock_bar_color(item: ItemEstoque) -> str:
+def _stock_bar_color(item: ItemEstoque, scheme=None) -> str:
+    s = scheme or get_scheme()
     if item.quantidade <= 0:
-        return "#C62828"
+        return s.error
     if item.quantidade <= item.estoque_min:
-        return "#E85D5D"
+        return s.error
+    if item.excedeu_max:
+        return s.warning
     pct = item.quantidade / max(item.estoque_max, 1)
     if pct < 0.3:
-        return "#F57C00"
+        return s.warning
     if pct < 0.7:
-        return "#FBC02D"
-    return "#2E9E5E"
+        return s.info
+    return s.success
 
 
 class MovimentacaoItem(QWidget):
@@ -172,7 +186,7 @@ class StockHealthBar(QWidget):
         bar_w = width - 35
         pct = min(item.quantidade / max(item.estoque_max, 1), 1.0)
         fill_w = max(int(bar_w * pct), 2)
-        color = _stock_bar_color(item)
+        color = _stock_bar_color(item, s)
 
         bg_bar = QLabel()
         bg_bar.setFixedSize(bar_w, 4)
@@ -205,7 +219,7 @@ class ItemDialog(QDialog):
         self.setWindowTitle("Editar Item" if item else "Novo Item")
         self.setMinimumWidth(380)
         self.setStyleSheet(f"""
-            QDialog {{ background: {s.bg_primary}; }}
+            QDialog {{ background: {s.bg_secondary}; }}
             QLabel {{ color: {s.text_primary}; font-size: 13px; background: transparent; border: none; }}
             QLineEdit, QSpinBox, QComboBox {{
                 background: {s.bg_secondary}; border: 1px solid {s.border_default};
@@ -328,7 +342,7 @@ class InventoryPanel(QWidget):
         self._header = QWidget()
         self._header.setFixedHeight(48)
         self._header.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(16, 0, 16, 0)
@@ -358,7 +372,7 @@ class InventoryPanel(QWidget):
 
         self._search_container = QWidget()
         self._search_container.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         search_layout = QHBoxLayout(self._search_container)
         search_layout.setContentsMargins(16, 8, 16, 8)
@@ -379,7 +393,7 @@ class InventoryPanel(QWidget):
         self.filter_combo = QComboBox()
         self.filter_combo.setFixedHeight(34)
         self.filter_combo.setFixedWidth(140)
-        self.filter_combo.addItems(["Todos", "Criticos", "Estoque", "Em Uso", "A Comprar"])
+        self.filter_combo.addItems(["Todos", "Criticos", "Normal", "Excesso", "Sem Estoque"])
         self.filter_combo.setStyleSheet(f"""
             QComboBox {{
                 background: {s.bg_secondary}; border: 1px solid {s.border_default};
@@ -457,7 +471,7 @@ class InventoryPanel(QWidget):
         self._stats_bar = QWidget()
         self._stats_bar.setFixedHeight(40)
         self._stats_bar.setStyleSheet(
-            f"background: {s.bg_primary}; border-top: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-top: 1px solid {s.border_default};"
         )
         stats_layout = QHBoxLayout(self._stats_bar)
         stats_layout.setContentsMargins(16, 0, 16, 0)
@@ -488,7 +502,7 @@ class InventoryPanel(QWidget):
         s = self._scheme
         self.setStyleSheet(f"background: {s.bg_primary};")
         self._header.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         self._title_label.setStyleSheet(
             f"color: {s.text_primary}; font-size: 18px; font-weight: 700; "
@@ -502,7 +516,7 @@ class InventoryPanel(QWidget):
             QPushButton:hover {{ opacity: 0.9; }}
         """)
         self._search_container.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
@@ -550,7 +564,7 @@ class InventoryPanel(QWidget):
             "QListWidget::item:selected { background: transparent; }"
         )
         self._stats_bar.setStyleSheet(
-            f"background: {s.bg_primary}; border-top: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-top: 1px solid {s.border_default};"
         )
         self._stats_label.setStyleSheet(
             f"color: {s.text_muted}; font-size: 12px; background: transparent; border: none;"
@@ -592,9 +606,9 @@ class InventoryPanel(QWidget):
                     status_text = status_label.text().lower()
                     filter_map = {
                         "criticos": "critico" in status_text or "sem estoque" in status_text,
-                        "estoque": "estoque" in status_text and "critico" not in status_text,
-                        "em uso": "em uso" in status_text,
-                        "a comprar": "a comprar" in status_text,
+                        "normal": "normal" in status_text,
+                        "excesso": "excesso" in status_text,
+                        "sem estoque": "sem estoque" in status_text,
                     }
                     visible = visible and filter_map.get(filter_text.lower(), True)
 
@@ -652,7 +666,7 @@ class InventoryPanel(QWidget):
         name_layout.setSpacing(8)
 
         dot = QLabel()
-        dot_color = _stock_bar_color(item)
+        dot_color = _stock_bar_color(item, s)
         dot.setFixedSize(8, 8)
         dot.setStyleSheet(f"background: {dot_color}; border-radius: 4px; border: none;")
         name_layout.addWidget(dot, 0, Qt.AlignCenter)
@@ -669,7 +683,7 @@ class InventoryPanel(QWidget):
 
         qtd_item = QTableWidgetItem(str(item.quantidade))
         qtd_item.setTextAlignment(Qt.AlignCenter)
-        color = _stock_bar_color(item)
+        color = _stock_bar_color(item, s)
         qtd_item.setForeground(QColor(color))
         font = qtd_item.font()
         font.setBold(True)
@@ -681,7 +695,7 @@ class InventoryPanel(QWidget):
             cell.setTextAlignment(Qt.AlignCenter)
             self.items_table.setItem(row, col, cell)
 
-        status_label = QLabel(item.coluna.value.replace("_", " ").title())
+        status_label = QLabel(item.stock_status.label)
         status_label.setAlignment(Qt.AlignCenter)
         status_label.setStyleSheet(
             f"color: {fg}; background: {bg}; border-radius: 10px; padding: 4px 12px; "

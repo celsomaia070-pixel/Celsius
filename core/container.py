@@ -6,6 +6,7 @@ Uses lazy imports to avoid circular dependencies and missing modules.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -23,13 +24,18 @@ class _LazyContainer:
     def __init__(self):
         self._services: dict[str, Any] = {}
         self._singletons: dict[str, Any] = {}
+        self._factories: dict[str, Any] = {}
         self._initialized = False
+        self._lock = threading.Lock()
 
     def _ensure_initialized(self):
         if self._initialized:
             return
-        self._initialized = True
-        logger.debug("Lazy container initialized")
+        with self._lock:
+            if self._initialized:
+                return
+            self._initialized = True
+            logger.debug("Lazy container initialized")
 
     def get_service(self, name: str) -> Any:
         if name in self._singletons:
@@ -37,7 +43,7 @@ class _LazyContainer:
 
         self._ensure_initialized()
 
-        factory = self._service_factories.get(name)
+        factory = self._factories.get(name)
         if factory is None:
             raise KeyError(f"Service '{name}' not registered")
 
@@ -45,14 +51,13 @@ class _LazyContainer:
         self._singletons[name] = instance
         return instance
 
-    _service_factories: dict[str, Any] = {}
-
     def register(self, name: str, factory) -> None:
-        self._service_factories[name] = factory
+        self._factories[name] = factory
 
     def reset(self) -> None:
-        self._singletons.clear()
-        self._initialized = False
+        with self._lock:
+            self._singletons.clear()
+            self._initialized = False
 
 
 def _create_container() -> _LazyContainer:

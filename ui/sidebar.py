@@ -88,29 +88,32 @@ class Sidebar(QWidget):
         s = self._scheme
         self.setStyleSheet(f"""
             QWidget {{
-                background: {s.bg_primary};
+                background: {s.bg_secondary};
                 border-right: 1px solid {s.border_default};
             }}
         """)
         self._header.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         self._title_label.setStyleSheet(
             f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_xl}px; "
             f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
         )
         self._set_brand_logo()
-        self.new_chat_btn.setIcon(icon("plus", s.accent_primary))
+        self.new_chat_btn.setIcon(icon("plus", s.text_on_accent))
         self.new_chat_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; border: none; border-radius: {RADIUS.radius_md}px;
+                background: {s.accent_primary};
+                border: 1px solid {s.accent_primary};
+                border-radius: {RADIUS.radius_md}px;
             }}
             QPushButton:hover {{
-                background: {s.bg_hover};
+                background: {s.accent_hover};
+                border-color: {s.accent_hover};
             }}
         """)
         self._tab_bar.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         self.list_widget.setStyleSheet(f"""
             QListWidget {{
@@ -131,11 +134,12 @@ class Sidebar(QWidget):
                 background: {s.bg_hover};
             }}
             QListWidget::item:selected {{
-                background: {s.bg_active};
+                background: {s.accent_subtle};
+                color: {s.accent_primary};
             }}
         """)
         self._bottom.setStyleSheet(
-            f"border-top: 1px solid {s.border_default}; background: {s.bg_primary};"
+            f"border-top: 1px solid {s.border_default}; background: {s.bg_secondary};"
         )
         for button in self._module_buttons.values():
             module_id = button.property("module_id")
@@ -152,7 +156,7 @@ class Sidebar(QWidget):
             button.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent;
-                    border: 1px solid {s.border_default};
+                    border: 1px solid transparent;
                     border-radius: {RADIUS.radius_md}px;
                     color: {s.text_secondary};
                     padding: {SPACING.space_2}px {SPACING.space_3}px;
@@ -160,9 +164,9 @@ class Sidebar(QWidget):
                     font-size: {TYPOGRAPHY.text_sm}px;
                 }}
                 QPushButton:hover {{
-                    background: {s.bg_hover};
-                    border-color: {s.accent_primary};
-                    color: {s.text_primary};
+                    background: {s.accent_subtle};
+                    border-color: {s.accent_subtle};
+                    color: {s.accent_primary};
                 }}
             """)
 
@@ -170,7 +174,7 @@ class Sidebar(QWidget):
         s = self._scheme or get_scheme()
         self.setStyleSheet(f"""
             QWidget {{
-                background: {s.bg_primary};
+                background: {s.bg_secondary};
                 border-right: 1px solid {s.border_default};
             }}
         """)
@@ -181,9 +185,9 @@ class Sidebar(QWidget):
 
         # Header
         self._header = QWidget()
-        self._header.setFixedHeight(56)
+        self._header.setFixedHeight(72)
         self._header.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(SPACING.space_4, 0, SPACING.space_4, 0)
@@ -195,16 +199,19 @@ class Sidebar(QWidget):
         header_layout.addStretch()
 
         self.new_chat_btn = QPushButton()
-        self.new_chat_btn.setIcon(icon("plus", s.accent_primary))
+        self.new_chat_btn.setIcon(icon("plus", s.text_on_accent))
         self.new_chat_btn.setToolTip("Nova conversa (Ctrl+N)")
         self.new_chat_btn.setFixedSize(32, 32)
         self.new_chat_btn.setCursor(Qt.PointingHandCursor)
         self.new_chat_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; border: none; border-radius: {RADIUS.radius_md}px;
+                background: {s.accent_primary};
+                border: 1px solid {s.accent_primary};
+                border-radius: {RADIUS.radius_md}px;
             }}
             QPushButton:hover {{
-                background: {s.bg_hover};
+                background: {s.accent_hover};
+                border-color: {s.accent_hover};
             }}
         """)
         self.new_chat_btn.clicked.connect(self.new_chat_requested.emit)
@@ -215,7 +222,7 @@ class Sidebar(QWidget):
         # Tab bar
         self._tab_bar = QWidget()
         self._tab_bar.setStyleSheet(
-            f"background: {s.bg_primary}; border-bottom: 1px solid {s.border_default};"
+            f"background: {s.bg_secondary}; border-bottom: 1px solid {s.border_default};"
         )
         self._module_bar_layout = QVBoxLayout(self._tab_bar)
         self._module_bar_layout.setContentsMargins(
@@ -257,7 +264,8 @@ class Sidebar(QWidget):
                 background: {s.bg_hover};
             }}
             QListWidget::item:selected {{
-                background: {s.bg_active};
+                background: {s.accent_subtle};
+                color: {s.accent_primary};
             }}
         """)
         self.list_widget.itemClicked.connect(self._on_item_clicked)
@@ -275,7 +283,7 @@ class Sidebar(QWidget):
         # Bottom section
         self._bottom = QWidget()
         self._bottom.setStyleSheet(
-            f"border-top: 1px solid {s.border_default}; background: {s.bg_primary};"
+            f"border-top: 1px solid {s.border_default}; background: {s.bg_secondary};"
         )
         bottom_layout = QVBoxLayout(self._bottom)
         bottom_layout.setContentsMargins(
@@ -292,7 +300,7 @@ class Sidebar(QWidget):
         self.memory_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                border: 1px solid {s.border_default};
+                border: 1px solid transparent;
                 border-radius: {RADIUS.radius_md}px;
                 color: {s.text_secondary};
                 padding: {SPACING.space_2}px {SPACING.space_3}px;
@@ -300,9 +308,9 @@ class Sidebar(QWidget):
                 font-size: {TYPOGRAPHY.text_sm}px;
             }}
             QPushButton:hover {{
-                background: {s.bg_hover};
-                border-color: {s.accent_primary};
-                color: {s.text_primary};
+                background: {s.accent_subtle};
+                border-color: {s.accent_subtle};
+                color: {s.accent_primary};
             }}
         """)
         self.memory_btn.clicked.connect(self.open_memories.emit)
@@ -316,7 +324,7 @@ class Sidebar(QWidget):
         self.mobile_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                border: 1px solid {s.border_default};
+                border: 1px solid transparent;
                 border-radius: {RADIUS.radius_md}px;
                 color: {s.text_secondary};
                 padding: {SPACING.space_2}px {SPACING.space_3}px;
@@ -324,9 +332,9 @@ class Sidebar(QWidget):
                 font-size: {TYPOGRAPHY.text_sm}px;
             }}
             QPushButton:hover {{
-                background: {s.bg_hover};
-                border-color: {s.accent_primary};
-                color: {s.text_primary};
+                background: {s.accent_subtle};
+                border-color: {s.accent_subtle};
+                color: {s.accent_primary};
             }}
         """)
         self.mobile_btn.clicked.connect(self.mobile_pair_requested.emit)
@@ -342,7 +350,7 @@ class Sidebar(QWidget):
         pixmap = self._render_brand_svg(s)
         if pixmap.isNull():
             settings = get_settings()
-            png_path = Path(settings.base_dir) / "logo" / "logo.png"
+            png_path = settings.get_asset_path(Path("logo") / "logo.png")
             pixmap = QPixmap(str(png_path))
             if not pixmap.isNull():
                 pixmap = pixmap.scaledToHeight(32, Qt.SmoothTransformation)
@@ -365,7 +373,7 @@ class Sidebar(QWidget):
 
     def _render_brand_svg(self, scheme) -> QPixmap:
         settings = get_settings()
-        svg_path = Path(settings.base_dir) / "logo" / "celsius-logo.svg"
+        svg_path = settings.get_asset_path(Path("logo") / "celsius-logo.svg")
         if not svg_path.exists():
             return QPixmap()
         try:
@@ -436,7 +444,7 @@ class Sidebar(QWidget):
                 background: transparent;
                 border: 1px solid transparent;
                 border-radius: {RADIUS.radius_md}px;
-                color: {scheme.text_muted};
+                color: {scheme.text_secondary};
                 font-size: {TYPOGRAPHY.text_sm}px;
                 font-weight: {TYPOGRAPHY.weight_semibold};
                 padding: {SPACING.space_2}px {SPACING.space_3}px;
@@ -447,9 +455,9 @@ class Sidebar(QWidget):
                 color: {scheme.text_primary};
             }}
             QPushButton:checked {{
-                background: {scheme.bg_active};
-                border-color: {scheme.accent_primary};
-                color: {scheme.text_primary};
+                background: {scheme.accent_subtle};
+                border-color: {scheme.accent_subtle};
+                color: {scheme.accent_primary};
             }}
         """
 
@@ -539,7 +547,7 @@ class Sidebar(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
-                background: {self._scheme.bg_primary};
+                background: {self._scheme.bg_secondary};
                 border: 1px solid {self._scheme.border_default};
                 border-radius: {RADIUS.radius_md}px;
                 padding: {SPACING.space_1}px;

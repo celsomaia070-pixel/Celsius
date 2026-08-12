@@ -1,12 +1,16 @@
 import contextlib
 import gc
+import logging
 import threading
+import time
 from collections.abc import Callable
-from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from ai.engine import gerar_resposta, gerar_resposta_com_imagem
+from core.chat_attachments import prepare_prompt_attachments
+
+logger = logging.getLogger(__name__)
 
 _AI_GENERATION_LOCK = threading.Lock()
 
@@ -49,6 +53,7 @@ class AIWorker(QRunnable):
 
     @Slot()
     def run(self):
+        started_at = time.perf_counter()
         if not _AI_GENERATION_LOCK.acquire(blocking=False):
             with contextlib.suppress(RuntimeError):
                 self.signals.error.emit(
@@ -59,7 +64,10 @@ class AIWorker(QRunnable):
         gc.disable()
         try:
             self.signals.status.emit("Preparando sua mensagem...")
+            attachments_started_at = time.perf_counter()
             self._prepare_attachments()
+            attachments_seconds = time.perf_counter() - attachments_started_at
+            generation_started_at = time.perf_counter()
             if self.prompt_dict.get("caminho_imagem"):
                 resposta = gerar_resposta_com_imagem(
                     self.prompt_dict["caminho_imagem"],
@@ -74,8 +82,19 @@ class AIWorker(QRunnable):
                     fn_passo=self.signals.step.emit,
                     fn_chunk=self.signals.chunk.emit,
                 )
+            generation_seconds = time.perf_counter() - generation_started_at
+            logger.info(
+                "Desempenho da resposta: anexos=%.2fs geracao=%.2fs total=%.2fs",
+                attachments_seconds,
+                generation_seconds,
+                time.perf_counter() - started_at,
+            )
             self.signals.finished.emit(resposta)
         except Exception as e:
+            logger.exception(
+                "Falha na resposta apos %.2fs",
+                time.perf_counter() - started_at,
+            )
             with contextlib.suppress(RuntimeError):
                 self.signals.error.emit(str(e))
             with contextlib.suppress(RuntimeError):
@@ -85,51 +104,13 @@ class AIWorker(QRunnable):
             _AI_GENERATION_LOCK.release()
 
     def _prepare_attachments(self) -> None:
-        attachments = self.prompt_dict.pop("anexos", []) or []
-        if not attachments:
-            return
-
         from core.settings import get_settings
-        from processors import processar_arquivo
 
-        settings = get_settings()
-        doc_parts = []
-        existing_doc = self.prompt_dict.get("documento", "").strip()
-        if existing_doc:
-            doc_parts.append(existing_doc)
-
-        doc_names = []
-        first_image = ""
-        for file_path, file_name in attachments:
-            path = Path(file_path)
-            suffix = path.suffix.lower()
-            if suffix in settings.image_extensions and not first_image:
-                self.signals.status.emit(f"Preparando imagem anexada: {file_name}...")
-                first_image = str(path)
-                continue
-
-            try:
-                self.signals.status.emit(f"Extraindo conteudo do arquivo: {file_name}...")
-                processed = processar_arquivo(str(path), base_dir=path.parent)
-            except Exception as exc:
-                processed = f"Erro ao processar anexo '{file_name}': {exc}"
-            doc_names.append(file_name)
-            doc_parts.append(f"### Anexo: {file_name}\n{processed}")
-
-        if first_image and not doc_parts:
-            self.prompt_dict["caminho_imagem"] = first_image
-        elif first_image:
-            doc_parts.append(f"### Imagem anexada\nCaminho: {first_image}")
-
-        if doc_parts:
-            self.signals.status.emit("Organizando conteudo extraido...")
-            self.prompt_dict["documento"] = "\n\n".join(doc_parts)
-            if doc_names:
-                self.prompt_dict["nome_documento"] = ", ".join(doc_names)
-            if doc_names:
-                self.prompt_dict["caminho_documento"] = "; ".join(
-                    str(Path(path)) for path, _name in attachments
-                )
+        prepare_prompt_attachments(
+            self.prompt_dict,
+            settings=get_settings(),
+            fn_status=self.signals.status.emit,
+        )
 
 
 class WorkerManager:

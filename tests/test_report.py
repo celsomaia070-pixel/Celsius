@@ -56,3 +56,19 @@ class TestGeradorRelatorio:
         finally:
             if os.path.exists(output):
                 os.unlink(output)
+
+    def test_exportar_pdf_with_multiple_lines_resets_cursor(self):
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            output = f.name
+        try:
+            GeradorRelatorio.exportar_pdf(
+                "Relatorio executivo",
+                "## Estoque\n- Itens cadastrados: 10\n- Itens criticos: 2",
+                output,
+                {"Tipo": "Executivo", "Fonte": "Estoque"},
+            )
+            assert os.path.exists(output)
+            assert os.path.getsize(output) > 0
+        finally:
+            if os.path.exists(output):
+                os.unlink(output)

@@ -17,9 +17,10 @@ from typing import Any
 import chromadb
 import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder, SentenceTransformer
+from sentence_transformers import CrossEncoder
 
 from core.circuit_breaker import get_circuit_breaker
+from core.embeddings import create_sentence_transformer
 from core.settings import get_settings
 
 try:
@@ -52,7 +53,7 @@ class RAGService:
 
     def __init__(self, settings=None):
         self.settings = settings or get_settings()
-        self._model: SentenceTransformer | None = None
+        self._model: Any | None = None
         self._cross_encoder: CrossEncoder | None = None
         self._client: chromadb.PersistentClient | None = None
         self._collection: chromadb.Collection | None = None
@@ -64,6 +65,7 @@ class RAGService:
         self._bm25_doc_ids: list[str] = []
         self._bm25_documents_by_id: dict[str, str] = {}
         self._bm25_metadata_by_id: dict[str, dict[str, Any]] = {}
+        self._bm25_dirty = False  # Lazy rebuild flag
 
         rag_settings = getattr(self.settings, "rag", self.settings)
         self.CHUNK_SIZE = getattr(rag_settings, "chunk_size", self.CHUNK_SIZE)
@@ -94,35 +96,53 @@ class RAGService:
 
         self._init_collection()
 
-    def _get_model(self) -> SentenceTransformer:
+    def _get_model(self) -> Any:
         if self._model is None:
-            self._model = SentenceTransformer(self.settings.embedding_model)
+            self._model = create_sentence_transformer(self.settings.embedding_model)
         return self._model
 
-    def _get_cross_encoder(self) -> CrossEncoder:
+    def _get_cross_encoder(self) -> CrossEncoder | None:
         if self._cross_encoder is None:
             logger.info("lazy_loading_cross_encoder model=%s", self._reranker_model_name)
-            self._cross_encoder = CrossEncoder(self._reranker_model_name)
+            local_only = bool(
+                getattr(getattr(self.settings, "customer", None), "local_offline_required", False)
+            )
+            try:
+                self._cross_encoder = CrossEncoder(
+                    self._reranker_model_name,
+                    local_files_only=local_only,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "reranker_unavailable_using_hybrid_order model=%s error=%s",
+                    self._reranker_model_name,
+                    exc,
+                )
+                self._enable_reranking = False
+                return None
         return self._cross_encoder
 
     def _init_collection(self) -> None:
         with self._lock:
             if self._client is None:
-                persist_dir = self.settings.base_dir / "chroma_db"
+                data_dir = getattr(self.settings, "data_dir", self.settings.base_dir)
+                persist_dir = data_dir / "chroma_db"
                 self._client = chromadb.PersistentClient(path=str(persist_dir))
                 self._collection = self._client.get_or_create_collection(
                     name="documentos",
                     metadata={"hnsw:space": "cosine"},
                 )
-                self._rebuild_bm25_index()
+                self._bm25_dirty = True
 
     @property
     def collection(self):
         self._init_collection()
         return self._collection
 
-    def _rebuild_bm25_index(self) -> None:
-        """Rebuild BM25 index from all documents currently in ChromaDB."""
+    def _ensure_bm25_ready(self) -> None:
+        """Lazy rebuild of BM25 index only when dirty."""
+        if not self._bm25_dirty and self._bm25 is not None:
+            return
         try:
             all_data = self.collection.get()
             if not all_data["ids"]:
@@ -131,6 +151,7 @@ class RAGService:
                 self._bm25_doc_ids = []
                 self._bm25_documents_by_id = {}
                 self._bm25_metadata_by_id = {}
+                self._bm25_dirty = False
                 return
 
             self._bm25_doc_ids = all_data["ids"]
@@ -140,6 +161,7 @@ class RAGService:
             self._bm25_documents_by_id = dict(zip(self._bm25_doc_ids, documents, strict=False))
             self._bm25_metadata_by_id = dict(zip(self._bm25_doc_ids, metadatas, strict=False))
             self._bm25 = BM25Okapi(self._bm25_corpus_tokens)
+            self._bm25_dirty = False
             logger.info("bm25_index_rebuilt doc_count=%s", len(self._bm25_doc_ids))
         except Exception as e:
             logger.warning("bm25_rebuild_failed error=%s", e)
@@ -259,6 +281,7 @@ class RAGService:
 
         Returns (doc_ids, bm25_scores).
         """
+        self._ensure_bm25_ready()
         if self._bm25 is None or not self._bm25_doc_ids:
             return [], []
 
@@ -374,6 +397,8 @@ class RAGService:
             return []
 
         ce = self._get_cross_encoder()
+        if ce is None:
+            return candidates[:top_k]
         pairs = [(query, c["document"]) for c in candidates if c["document"]]
         if not pairs:
             return candidates[:top_k]
@@ -431,9 +456,7 @@ class RAGService:
                     metadatas=metadatas,
                 )
                 _rag_index_cb.record_success()
-
-                # Rebuild BM25 index after adding new chunks
-                self._rebuild_bm25_index()
+                self._bm25_dirty = True
 
                 logger.info("document_indexed doc_name=%s chunks=%s", doc_name, len(chunks))
                 return len(chunks)
@@ -526,14 +549,41 @@ class RAGService:
                 result += f"- {name}\n"
             return result
 
+    def document_summaries(self) -> list[dict[str, Any]]:
+        """Return lightweight document metadata without loading embedding models."""
+        with self._lock:
+            if self.collection.count() == 0:
+                return []
+            all_data = self.collection.get()
+            documents = all_data.get("documents") or []
+            metadatas = all_data.get("metadatas") or [{} for _ in documents]
+            grouped: dict[str, dict[str, Any]] = {}
+            for document, metadata in zip(documents, metadatas, strict=False):
+                metadata = metadata or {}
+                name = str(metadata.get("nome_doc", "desconhecido"))
+                summary = grouped.setdefault(
+                    name,
+                    {
+                        "name": name,
+                        "chunk_count": 0,
+                        "char_count": 0,
+                        "metadata": {},
+                    },
+                )
+                summary["chunk_count"] += 1
+                summary["char_count"] += len(document or "")
+                for key, value in metadata.items():
+                    if key not in {"nome_doc", "chunk_index", "char_count"}:
+                        summary["metadata"].setdefault(key, value)
+            return sorted(grouped.values(), key=lambda item: item["name"].casefold())
+
     def remove_document(self, doc_name: str) -> str:
         with self._lock:
             try:
                 existing = self.collection.get(where={"nome_doc": doc_name})
                 if existing["ids"]:
                     self.collection.delete(ids=existing["ids"])
-                    # Rebuild BM25 after removal
-                    self._rebuild_bm25_index()
+                    self._bm25_dirty = True
                     return f"Documento '{doc_name}' removido ({len(existing['ids'])} chunks)."
                 return f"Documento '{doc_name}' nao encontrado."
             except Exception as e:

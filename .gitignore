@@ -41,9 +41,13 @@ cache/
 chroma_db/
 conversations/
 voices/
-resources/
+resources/*
+!resources/license_public_key.pem
 chats.json
 memorias.json
+*.embeddings_cache.npy
+*_embeddings_cache.npy
+*.json.lock
 inventory.json
 temp_audio.wav
 temp_kfu_voice.mp3

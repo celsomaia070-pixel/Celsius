@@ -1,9 +1,11 @@
 """Tests for company module catalog and suggestions."""
 
 from core.modules import (
+    MODULE_AGENDA,
     MODULE_CHAT,
     MODULE_FINANCE,
     MODULE_INVENTORY,
+    MODULE_NOTIFICATIONS,
     MODULE_SETTINGS,
     MODULE_SUPPLIERS,
     default_enabled_module_ids,
@@ -33,6 +35,7 @@ class TestModuleCatalog:
         assert MODULE_CHAT in modules
         assert MODULE_SUPPLIERS in modules
         assert MODULE_INVENTORY in modules
+        assert MODULE_AGENDA in modules
         assert MODULE_SETTINGS in modules
 
     def test_sidebar_returns_enabled_ready_modules(self):
@@ -42,6 +45,12 @@ class TestModuleCatalog:
         assert MODULE_CHAT in module_ids
         assert MODULE_SETTINGS in module_ids
         assert MODULE_FINANCE in module_ids
+
+    def test_notifications_module_is_available_but_optional(self):
+        modules = default_enabled_module_ids()
+
+        assert MODULE_NOTIFICATIONS not in modules
+        assert MODULE_NOTIFICATIONS in normalize_module_ids([MODULE_NOTIFICATIONS])
 
 
 class TestModuleSuggestions:
@@ -57,6 +66,11 @@ class TestModuleSuggestions:
         modules = suggest_modules_for_company("Outro", "organizar contas e financeiro")
 
         assert MODULE_FINANCE in modules
+
+    def test_suggests_notifications_from_needs(self):
+        modules = suggest_modules_for_company("Outro", "enviar lembretes por whatsapp")
+
+        assert MODULE_NOTIFICATIONS in modules
 
     def test_detects_sensitive_segments(self):
         assert "legal" in privacy_domains_for_segment("Escritorio de advocacia")

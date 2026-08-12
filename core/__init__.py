@@ -1,6 +1,7 @@
 """Core module — lazy imports to avoid circular dependencies."""
 
 # Backwards compatibility — these re-export the original config values
+from core.agenda import AgendaService, get_agenda_service, reset_agenda_service
 from core.config import (
     ARQUIVO_AUDIO_TEMP,
     ARQUIVO_MEMORIAS,
@@ -27,6 +28,7 @@ from core.settings import (
     MemorySettings,
     MobileAccessSettings,
     ModelSettings,
+    NotificationSettings,
     RagSettings,
     ResponseStyleSettings,
     SecuritySettings,

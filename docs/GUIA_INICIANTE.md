@@ -87,7 +87,7 @@ Resultado esperado:
 
 ```text
 All checks passed!
-438 passed, 3 skipped
+<todos os testes executados sem falhas>
 ```
 
 ## 9. Comandos Uteis

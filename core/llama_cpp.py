@@ -6,6 +6,8 @@ import io
 import logging
 import re
 import sys
+import threading
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +17,9 @@ from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler, Qwen25VLChatHandler
 
 from core.config import get_model_by_id
+from core.inference_guard import LockedIterator
 from core.metrics import MetricNames, get_metrics
+from core.network_security import validate_public_http_url
 from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -28,15 +32,32 @@ except ImportError:
     PIL_AVAILABLE = False
 
 
-class Qwen25VLChatHandlerWithPIL(Qwen25VLChatHandler):
-    """Qwen2.5-VL handler with Pillow support for more image formats."""
+def _gpu_offload_supported() -> bool | None:
+    """Report whether the installed llama.cpp build exposes a GPU backend."""
+    try:
+        from llama_cpp import llama_cpp as backend
+
+        supports_gpu = getattr(backend, "llama_supports_gpu_offload", None)
+        return bool(supports_gpu()) if callable(supports_gpu) else None
+    except Exception as exc:
+        logger.debug("Nao foi possivel consultar o backend de GPU: %s", exc)
+        return None
+
+
+class _PILImageLoaderMixin:
+    """Mixin providing Pillow-based image loading for chat handlers."""
 
     def _load_image(self, image_url: str) -> bytes:
+        max_bytes = 20 * 1024 * 1024
         if image_url.startswith("data:"):
             import base64
 
             header, data = image_url.split(",", 1)
+            if len(data) > (max_bytes * 4 // 3) + 16:
+                raise ValueError("Imagem excede o limite de 20 MB.")
             image_bytes = base64.b64decode(data)
+            if len(image_bytes) > max_bytes:
+                raise ValueError("Imagem excede o limite de 20 MB.")
             if PIL_AVAILABLE:
                 try:
                     img = Image.open(io.BytesIO(image_bytes))
@@ -46,49 +67,44 @@ class Qwen25VLChatHandlerWithPIL(Qwen25VLChatHandler):
                     img.save(out, format="JPEG", quality=90)
                     return out.getvalue()
                 except Exception as e:
-                    logger.warning("PIL image conversion failed (Qwen): %s", e)
+                    logger.warning("PIL image conversion failed: %s", e)
             return image_bytes
         else:
-            import urllib.request
+            validated_url = validate_public_http_url(image_url)
 
-            with urllib.request.urlopen(image_url) as f:
-                return f.read()
+            class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    validate_public_http_url(newurl)
+                    return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+            request = urllib.request.Request(
+                validated_url,
+                headers={"User-Agent": "Celsius/1.0 image-loader"},
+            )
+            opener = urllib.request.build_opener(SafeRedirectHandler())
+            with opener.open(request, timeout=10) as response:
+                content_length = response.headers.get("Content-Length")
+                if content_length and int(content_length) > max_bytes:
+                    raise ValueError("Imagem excede o limite de 20 MB.")
+                payload = response.read(max_bytes + 1)
+            if len(payload) > max_bytes:
+                raise ValueError("Imagem excede o limite de 20 MB.")
+            return payload
+
+
+class Qwen25VLChatHandlerWithPIL(_PILImageLoaderMixin, Qwen25VLChatHandler):
+    """Qwen2.5-VL handler with Pillow support for more image formats."""
 
     @property
     def chat_format(self) -> str:
-        """Use Qwen2-VL chat format for proper conversation template."""
         return "qwen2-vl"
 
 
-class Llava15ChatHandlerWithPIL(Llava15ChatHandler):
+class Llava15ChatHandlerWithPIL(_PILImageLoaderMixin, Llava15ChatHandler):
     """LLaVA handler with Pillow support for more image formats."""
-
-    def _load_image(self, image_url: str) -> bytes:
-        if image_url.startswith("data:"):
-            import base64
-
-            header, data = image_url.split(",", 1)
-            image_bytes = base64.b64decode(data)
-            if PIL_AVAILABLE:
-                try:
-                    img = Image.open(io.BytesIO(image_bytes))
-                    if img.mode in ("RGBA", "LA", "P"):
-                        img = img.convert("RGB")
-                    out = io.BytesIO()
-                    img.save(out, format="JPEG", quality=90)
-                    return out.getvalue()
-                except Exception as e:
-                    logger.warning("PIL image conversion failed (LLaVA): %s", e)
-            return image_bytes
-        else:
-            import urllib.request
-
-            with urllib.request.urlopen(image_url) as f:
-                return f.read()
 
     @property
     def chat_format(self) -> str:
-        """Use LLaVA chat format for proper conversation template."""
         return "llava-1-5"
 
 
@@ -101,6 +117,7 @@ class LlamaManager:
         self._started = False
         self._current_model_id: str | None = None
         self._on_model_changed: Callable[[str], None] | None = None
+        self._inference_lock = threading.Lock()
 
     @property
     def current_model_id(self) -> str | None:
@@ -138,6 +155,30 @@ class LlamaManager:
         use_mlock: bool = True,
         verbose: bool = False,
     ) -> bool:
+        """Initialize the model while no inference is using its native context."""
+        with self._inference_lock:
+            return self._start_unlocked(
+                model_id=model_id,
+                n_gpu_layers=n_gpu_layers,
+                n_ctx=n_ctx,
+                n_batch=n_batch,
+                n_threads=n_threads,
+                use_mmap=use_mmap,
+                use_mlock=use_mlock,
+                verbose=verbose,
+            )
+
+    def _start_unlocked(
+        self,
+        model_id: str | None = None,
+        n_gpu_layers: int = -1,
+        n_ctx: int = 8192,
+        n_batch: int = 1024,
+        n_threads: int = 0,
+        use_mmap: bool = True,
+        use_mlock: bool = True,
+        verbose: bool = False,
+    ) -> bool:
         """Initialize Llama model with GPU acceleration via Vulkan."""
         # If same model already loaded, skip
         if self._started and self._llm is not None and self._current_model_id == model_id:
@@ -145,7 +186,7 @@ class LlamaManager:
 
         # If switching model, stop the old one first
         if self._started and self._llm is not None:
-            self.stop()
+            self._stop_unlocked()
 
         settings = get_settings()
         model_id = model_id or settings.llm_model
@@ -157,6 +198,11 @@ class LlamaManager:
                 f"Baixe o modelo no seletor de LLM ou coloque o arquivo GGUF na pasta resources/"
             )
 
+        from core.model_downloader import verify_registered_model
+
+        logger.info("Verificando integridade do modelo %s", model_id)
+        verify_registered_model(model_id, model_path)
+
         # Auto-detect CPU threads if not specified
         # Use half the cores to avoid contention with GPU inference
         if n_threads <= 0:
@@ -167,9 +213,12 @@ class LlamaManager:
         # Vision support (mmproj)
         mmproj_path = self._get_mmproj_path(model_id)
         model_obj = get_model_by_id(model_id)
-        chat_format = None
+        chat_format = model_obj.chat_format if model_obj else None
 
         if mmproj_path:
+            from core.model_downloader import verify_registered_mmproj
+
+            verify_registered_mmproj(model_id, mmproj_path)
             if model_obj and "qwen" in model_obj.name.lower() and "vl" in model_obj.name.lower():
                 self._chat_handler = Qwen25VLChatHandlerWithPIL(
                     clip_model_path=str(mmproj_path),
@@ -188,13 +237,17 @@ class LlamaManager:
             )
         else:
             chat_handler = None
-            # Set chat_format for non-vision Qwen models
-            if model_obj and "qwen" in model_obj.name.lower():
-                chat_format = "qwen2-vl" if "vl" in model_obj.name.lower() else "qwen2"
             if model_obj and model_obj.has_mmproj:
                 logger.warning("mmproj file not found for %s at %s", model_id, mmproj_path)
 
         # Initialize Llama - try GPU first, fall back to CPU on crash
+        gpu_offload_supported = _gpu_offload_supported()
+        if n_gpu_layers != 0 and gpu_offload_supported is False:
+            logger.warning(
+                "A instalacao atual do llama-cpp-python nao possui backend de GPU. "
+                "O modelo sera executado em CPU, mesmo com n_gpu_layers=%s.",
+                n_gpu_layers,
+            )
         try:
             self._llm = Llama(
                 model_path=str(model_path),
@@ -211,7 +264,18 @@ class LlamaManager:
                 flash_attn=True,
                 tensor_split=None,
             )
-            logger.info("Modelo carregado com n_gpu_layers=%s", n_gpu_layers)
+            backend_label = (
+                "GPU disponivel"
+                if gpu_offload_supported is True
+                else "somente CPU"
+                if gpu_offload_supported is False
+                else "backend nao identificado"
+            )
+            logger.info(
+                "Modelo carregado com n_gpu_layers=%s (%s)",
+                n_gpu_layers,
+                backend_label,
+            )
         except Exception as gpu_err:
             logger.warning("GPU falhou (%s), tentando CPU", gpu_err)
             self._llm = Llama(
@@ -235,12 +299,7 @@ class LlamaManager:
         atexit.register(self.stop)
         self._started = True
 
-        # Warm up
-        try:
-            self._llm("Warm up", max_tokens=1, temperature=0)
-        except Exception as e:
-            logger.warning("Model warmup failed (non-critical): %s", e)
-
+        # Synthetic text completions can abort multimodal backends before the UI opens.
         if self._on_model_changed:
             self._on_model_changed(model_id)
 
@@ -252,6 +311,10 @@ class LlamaManager:
 
     def stop(self) -> None:
         """Free model resources."""
+        with self._inference_lock:
+            self._stop_unlocked()
+
+    def _stop_unlocked(self) -> None:
         if self._llm is not None:
             del self._llm
             self._llm = None
@@ -263,22 +326,18 @@ class LlamaManager:
         self._current_model_id = None
 
     def is_healthy(self) -> bool:
-        """Check if model is loaded and responsive."""
+        """Check readiness without running inference concurrently."""
         metrics = get_metrics()
-        if self._llm is None:
-            return False
-        try:
-            # Quick health check with minimal inference
-            with metrics.timer(
-                MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"
-            ):
-                self._llm("test", max_tokens=1, temperature=0)
-            metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status="ok")
+        if not self._inference_lock.acquire(blocking=False):
+            metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status="busy")
             return True
-        except Exception as e:
-            metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status="fail")
-            logger.warning("Health check failed: %s", e)
-            return False
+        try:
+            healthy = self._started and self._llm is not None
+            status = "ok" if healthy else "not_loaded"
+            metrics.inc(MetricNames.HEALTH_CHECK_TOTAL, status=status)
+            return healthy
+        finally:
+            self._inference_lock.release()
 
     def create_chat_completion(
         self,
@@ -292,9 +351,6 @@ class LlamaManager:
     ) -> Any:
         """Create chat completion (OpenAI-compatible API)."""
         metrics = get_metrics()
-        if not self._llm:
-            raise RuntimeError("Model not initialized. Call start() first.")
-
         call_kwargs = dict(
             messages=messages,
             temperature=temperature,
@@ -309,10 +365,22 @@ class LlamaManager:
 
         metrics.inc(MetricNames.LLM_REQUESTS_TOTAL, model=self._current_model_id or "unknown")
 
-        with metrics.timer(
-            MetricNames.LLM_INFERENCE_SECONDS, model=self._current_model_id or "unknown"
-        ):
-            result = self._llm.create_chat_completion(**call_kwargs)
+        self._inference_lock.acquire()
+        lock_transferred = False
+        try:
+            if not self._llm:
+                raise RuntimeError("Model not initialized. Call start() first.")
+            with metrics.timer(
+                MetricNames.LLM_INFERENCE_SECONDS,
+                model=self._current_model_id or "unknown",
+            ):
+                result = self._llm.create_chat_completion(**call_kwargs)
+            if stream:
+                lock_transferred = True
+                return LockedIterator(result, self._inference_lock)
+        finally:
+            if not lock_transferred:
+                self._inference_lock.release()
 
         # Extract token usage if available
         if isinstance(result, dict) and "usage" in result:
@@ -338,28 +406,38 @@ class LlamaManager:
         **kwargs,
     ) -> Any:
         """Create text completion."""
-        if not self._llm:
-            raise RuntimeError("Model not initialized. Call start() first.")
-
-        return self._llm.create_completion(
-            prompt=prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-            **kwargs,
-        )
+        self._inference_lock.acquire()
+        lock_transferred = False
+        try:
+            if not self._llm:
+                raise RuntimeError("Model not initialized. Call start() first.")
+            result = self._llm.create_completion(
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                **kwargs,
+            )
+            if stream:
+                lock_transferred = True
+                return LockedIterator(result, self._inference_lock)
+            return result
+        finally:
+            if not lock_transferred:
+                self._inference_lock.release()
 
     def get_model_info(self) -> dict[str, Any]:
         """Get model metadata."""
-        if not self._llm:
-            return {}
-        model_id = self._current_model_id or ""
-        return {
-            "model_id": model_id,
-            "model_path": str(self._get_model_path(model_id)),
-            "n_ctx": self._llm.n_ctx(),
-            "n_vocab": self._llm.n_vocab(),
-        }
+        with self._inference_lock:
+            if not self._llm:
+                return {}
+            model_id = self._current_model_id or ""
+            return {
+                "model_id": model_id,
+                "model_path": str(self._get_model_path(model_id)),
+                "n_ctx": self._llm.n_ctx(),
+                "n_vocab": self._llm.n_vocab(),
+            }
 
 
 _manager: LlamaManager | None = None

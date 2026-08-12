@@ -141,13 +141,14 @@ class IconButton(QPushButton):
     def _apply_theme(self):
         self.setStyleSheet(f"""
             QPushButton {{
-                background-color: transparent;
-                border: none;
+                background-color: {self._scheme.bg_secondary};
+                border: 1px solid {self._scheme.border_default};
                 border-radius: {RADIUS.radius_md}px;
                 padding: {SPACING.space_2}px;
             }}
             QPushButton:hover {{
                 background-color: {self._scheme.bg_hover};
+                border-color: {self._scheme.accent_primary};
             }}
             QPushButton:pressed {{
                 background-color: {self._scheme.bg_active};
@@ -337,7 +338,7 @@ class SearchInput(QLineEdit):
         s = self._scheme
         self.setStyleSheet(f"""
             QLineEdit {{
-                background: {s.bg_secondary};
+                background: {s.bg_primary};
                 border: 1px solid {s.border_default};
                 border-radius: {RADIUS.radius_md}px;
                 padding: 0 {SPACING.space_3}px;

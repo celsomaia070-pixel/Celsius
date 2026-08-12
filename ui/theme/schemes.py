@@ -105,60 +105,60 @@ class ColorScheme:
 
 
 # ============================================================
-# LIGHT THEME (Ollama-style - clean, white)
+# LIGHT THEME (Celsius Project AI)
 # ============================================================
 LIGHT_SCHEME = ColorScheme(
     # Backgrounds
-    bg_primary=COLORS.gray_0,  # #FFFFFF
-    bg_secondary=COLORS.gray_50,  # #FAFAFA
-    bg_tertiary=COLORS.gray_100,  # #F5F5F5
-    bg_hover=COLORS.gray_100,  # #F5F5F5
-    bg_active=COLORS.gray_200,  # #E5E5E5
-    bg_inverse=COLORS.gray_900,  # #171717
+    bg_primary=COLORS.celsius_page,
+    bg_secondary=COLORS.celsius_surface,
+    bg_tertiary=COLORS.celsius_surface_soft,
+    bg_hover="#E1ECE9",
+    bg_active="#D4E8E4",
+    bg_inverse=COLORS.celsius_ink,
     # Text
-    text_primary=COLORS.gray_900,  # #171717
-    text_secondary=COLORS.gray_600,  # #525252
-    text_muted=COLORS.gray_400,  # #A3A3A3
-    text_inverse=COLORS.gray_0,  # #FFFFFF
-    text_on_accent=COLORS.gray_0,  # #FFFFFF
-    # Accent (preto para estilo Ollama)
-    accent_primary=COLORS.gray_900,  # #171717
-    accent_hover=COLORS.gray_800,  # #262626
-    accent_pressed=COLORS.gray_700,  # #404040
-    accent_subtle=COLORS.gray_100,  # #F5F5F5
-    accent_text=COLORS.gray_0,  # #FFFFFF
+    text_primary=COLORS.celsius_ink,
+    text_secondary=COLORS.celsius_muted,
+    text_muted="#7C8A86",
+    text_inverse=COLORS.celsius_surface,
+    text_on_accent=COLORS.celsius_surface,
+    # Accent
+    accent_primary=COLORS.celsius_primary,
+    accent_hover=COLORS.celsius_primary_strong,
+    accent_pressed="#044E47",
+    accent_subtle="#DFF1ED",
+    accent_text=COLORS.celsius_surface,
     # Borders
-    border_subtle=COLORS.gray_100,  # #F5F5F5
-    border_default=COLORS.gray_200,  # #E5E5E5
-    border_strong=COLORS.gray_300,  # #D4D4D4
-    border_focus=COLORS.gray_900,  # #171717
-    border_error=COLORS.error_500,  # #EF4444
+    border_subtle="#DDE6E3",
+    border_default=COLORS.celsius_line,
+    border_strong="#A9BBB5",
+    border_focus="#E59B2D",
+    border_error=COLORS.celsius_coral,
     # Semantic
-    success=COLORS.success_600,  # #16A34A
-    success_bg=COLORS.success_50,  # #F0FDF4
-    success_text=COLORS.success_700,  # #15803D
-    warning=COLORS.warning_600,  # #D97706
-    warning_bg=COLORS.warning_50,  # #FFFBEB
-    warning_text=COLORS.warning_700,  # #B45309
-    error=COLORS.error_600,  # #DC2626
-    error_bg=COLORS.error_50,  # #FEF2F2
-    error_text=COLORS.error_700,  # #B91C1C
-    info=COLORS.info_600,  # #2563EB
-    info_bg=COLORS.info_50,  # #EFF6FF
-    info_text=COLORS.info_700,  # #1D4ED8
+    success=COLORS.celsius_green,
+    success_bg="#E2F1E8",
+    success_text="#185E39",
+    warning=COLORS.celsius_gold,
+    warning_bg="#F7EDD7",
+    warning_text="#76500D",
+    error=COLORS.celsius_coral,
+    error_bg="#F8E3E1",
+    error_text="#94332C",
+    info=COLORS.celsius_blue,
+    info_bg="#E0ECF4",
+    info_text="#1F587F",
     # Chat Bubbles
-    user_bubble_bg=COLORS.gray_900,  # #171717
-    user_bubble_text=COLORS.gray_0,  # #FFFFFF
-    assistant_bubble_bg=COLORS.gray_50,  # #FAFAFA
-    assistant_bubble_text=COLORS.gray_900,  # #171717
+    user_bubble_bg="#DFF1ED",
+    user_bubble_text=COLORS.celsius_ink,
+    assistant_bubble_bg=COLORS.celsius_surface,
+    assistant_bubble_text=COLORS.celsius_ink,
     # Code
-    code_bg=COLORS.gray_100,  # #F5F5F5
-    code_text=COLORS.gray_900,  # #171717
-    code_border=COLORS.gray_200,  # #E5E5E5
+    code_bg="#EDF3F1",
+    code_text=COLORS.celsius_ink,
+    code_border=COLORS.celsius_line,
     # Scrollbar
-    scrollbar_bg=COLORS.gray_0,  # #FFFFFF
-    scrollbar_handle=COLORS.gray_300,  # #D4D4D4
-    scrollbar_handle_hover=COLORS.gray_400,  # #A3A3A3
+    scrollbar_bg=COLORS.celsius_page,
+    scrollbar_handle="#B7C8C3",
+    scrollbar_handle_hover="#8FA49E",
     # Shadows
     shadow_1=SHADOWS.shadow_sm,
     shadow_2=SHADOWS.shadow_md,
@@ -167,60 +167,60 @@ LIGHT_SCHEME = ColorScheme(
 
 
 # ============================================================
-# DARK THEME (GitHub Dark / VS Code style)
+# DARK THEME (Celsius Project AI)
 # ============================================================
 DARK_SCHEME = ColorScheme(
     # Backgrounds
-    bg_primary="#0D1117",
-    bg_secondary="#161B22",
-    bg_tertiary="#21262D",
-    bg_hover="#30363D",
-    bg_active="#1F6FEB",
-    bg_inverse="#E6EDF3",
+    bg_primary="#101715",
+    bg_secondary="#18211F",
+    bg_tertiary="#202D2A",
+    bg_hover="#283733",
+    bg_active="#304A45",
+    bg_inverse="#EDF5F2",
     # Text
-    text_primary="#E6EDF3",
-    text_secondary="#8B949E",
-    text_muted="#484F58",
-    text_inverse="#0D1117",
+    text_primary="#EDF5F2",
+    text_secondary="#AABBB5",
+    text_muted="#728780",
+    text_inverse="#101715",
     text_on_accent="#FFFFFF",
     # Accent
-    accent_primary="#58A6FF",
-    accent_hover="#79C0FF",
-    accent_pressed="#388BF0",
-    accent_subtle="#1A3A5C",
-    accent_text="#0D1117",
+    accent_primary="#42C6B7",
+    accent_hover="#7ED8CE",
+    accent_pressed="#2FA899",
+    accent_subtle="#1D403B",
+    accent_text="#101715",
     # Borders
-    border_subtle="#21262D",
-    border_default="#30363D",
-    border_strong="#484F58",
-    border_focus="#58A6FF",
-    border_error="#F85149",
+    border_subtle="#293733",
+    border_default="#344440",
+    border_strong="#52655F",
+    border_focus="#FFC267",
+    border_error="#FF8178",
     # Semantic
-    success="#3FB950",
-    success_bg="#163D2A",
-    success_text="#7EE787",
-    warning="#D29922",
-    warning_bg="#3D2E00",
-    warning_text="#E3B341",
-    error="#F85149",
-    error_bg="#4D1A1A",
-    error_text="#FFA198",
-    info="#58A6FF",
-    info_bg="#1A3A5C",
-    info_text="#79C0FF",
+    success="#69C58D",
+    success_bg="#1D3D2A",
+    success_text="#8DDBAA",
+    warning="#E8B759",
+    warning_bg="#453819",
+    warning_text="#F2CC80",
+    error="#FF8178",
+    error_bg="#4A2623",
+    error_text="#FFAAA4",
+    info="#73B8E3",
+    info_bg="#1D3545",
+    info_text="#9BCFEE",
     # Chat Bubbles
-    user_bubble_bg="#007AFF",
-    user_bubble_text="#FFFFFF",
-    assistant_bubble_bg="#1E1E1E",
-    assistant_bubble_text="#E6EDF3",
+    user_bubble_bg="#1D403B",
+    user_bubble_text="#EDF5F2",
+    assistant_bubble_bg="#18211F",
+    assistant_bubble_text="#EDF5F2",
     # Code
-    code_bg="#161B22",
-    code_text="#E6EDF3",
-    code_border="#30363D",
+    code_bg="#131D1A",
+    code_text="#EDF5F2",
+    code_border="#344440",
     # Scrollbar
-    scrollbar_bg="#0D1117",
-    scrollbar_handle="#30363D",
-    scrollbar_handle_hover="#484F58",
+    scrollbar_bg="#101715",
+    scrollbar_handle="#344440",
+    scrollbar_handle_hover="#52655F",
     # Shadows
     shadow_1="rgba(0, 0, 0, 0.2)",
     shadow_2="rgba(0, 0, 0, 0.3)",

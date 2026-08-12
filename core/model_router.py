@@ -14,6 +14,13 @@ from enum import Enum
 from typing import Any
 
 from core.metrics import MetricNames, get_metrics
+from core.model_catalog import (
+    DEFAULT_LLM_MODEL,
+    FAST_LLM_MODEL,
+    QUALITY_LLM_MODEL,
+    REASONING_LLM_MODEL,
+    VISION_LLM_MODEL,
+)
 from core.settings import get_settings
 from core.telemetry import trace_span
 
@@ -55,6 +62,49 @@ class RoutingDecision:
 # ── Model profiles (known models) ────────────────────────────
 
 MODEL_PROFILES: dict[str, ModelProfile] = {
+    "qwen3-4b-q4km": ModelProfile(
+        name="Qwen3 4B Instruct",
+        max_context=32768,
+        supports_tools=True,
+        speed_rating=1.0,
+        quality_rating=0.58,
+    ),
+    "qwen3-8b-q4km": ModelProfile(
+        name="Qwen3 8B Instruct",
+        max_context=131072,
+        supports_tools=True,
+        speed_rating=0.78,
+        quality_rating=0.78,
+    ),
+    "qwen3-14b-q4km": ModelProfile(
+        name="Qwen3 14B Instruct",
+        max_context=131072,
+        supports_tools=True,
+        speed_rating=0.48,
+        quality_rating=0.88,
+    ),
+    "qwen2.5-vl-3b-q4km": ModelProfile(
+        name="Qwen2.5 VL 3B",
+        max_context=32768,
+        supports_vision=True,
+        supports_tools=True,
+        speed_rating=0.88,
+        quality_rating=0.65,
+    ),
+    "deepseek-r1-distill-qwen-7b-q4km": ModelProfile(
+        name="DeepSeek R1 Distill Qwen 7B",
+        max_context=32768,
+        supports_tools=True,
+        speed_rating=0.58,
+        quality_rating=0.82,
+    ),
+    "deepseek-r1-distill-qwen-14b-q4km": ModelProfile(
+        name="DeepSeek R1 Distill Qwen 14B",
+        max_context=32768,
+        supports_tools=True,
+        speed_rating=0.38,
+        quality_rating=0.9,
+    ),
     "llama3.2-3b-q5km": ModelProfile(
         name="Llama 3.2 3B",
         max_context=8192,
@@ -238,6 +288,18 @@ def _keyword_score(lower: str) -> tuple[float, list[str]]:
 
 # ── Keyword banks ─────────────────────────────────────────────
 
+_DEEP_ANALYSIS_KEYWORDS: list[tuple[str, str]] = [
+    (r"\b(estrategia|estrategico|planejamento|viabilidade|cenario|cenarios)\b", "strategy"),
+    (r"\b(raciocine|analise profunda|pensamento profundo|decisao|decidir)\b", "deep-reasoning"),
+    (r"\b(financeiro|fluxo de caixa|margem|lucro|prejuizo|investimento)\b", "business-finance"),
+    (r"\b(comparar fornecedores|otimizar compras|previsao|projecao)\b", "business-planning"),
+]
+
+_VISION_KEYWORDS: list[tuple[str, str]] = [
+    (r"\b(imagem|foto|print|screenshot|nota fiscal|scan|escaneado)\b", "image"),
+    (r"\b(tabela no pdf|layout|grafico no documento|documento visual)\b", "visual-document"),
+]
+
 _COMPLEX_KEYWORDS: list[tuple[str, str]] = [
     (r"\b(analis[ae]|explic[ae]|compar[ae]|resum[ae]|relat[oó]rio)\b", "analysis"),
     (
@@ -266,6 +328,43 @@ _SIMPLE_KEYWORDS: list[tuple[str, str]] = [
 
 
 # ── ModelRouter ───────────────────────────────────────────────
+
+
+def _has_keyword(lower: str, keywords: list[tuple[str, str]]) -> bool:
+    return any(re.search(pattern, lower) for pattern, _label in keywords)
+
+
+def _needs_vision_model(has_image: bool) -> bool:
+    """Use a vision model only when pixels will actually be sent to it."""
+    return has_image
+
+
+def _needs_reasoning_model(lower: str) -> bool:
+    return _has_keyword(lower, _DEEP_ANALYSIS_KEYWORDS)
+
+
+def _model_file_exists(settings: Any, model_id: str) -> bool:
+    try:
+        return settings.get_model_path(model_id).exists()
+    except Exception:
+        return False
+
+
+def _available_model_id(settings: Any, preferred_model_id: str) -> str:
+    fallback_ids = [
+        getattr(settings, "llm_model", ""),
+        getattr(settings, "default_llm_model", DEFAULT_LLM_MODEL),
+        DEFAULT_LLM_MODEL,
+    ]
+    candidates = [preferred_model_id, *fallback_ids]
+    seen: set[str] = set()
+    for model_id in candidates:
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        if _model_file_exists(settings, model_id):
+            return model_id
+    return preferred_model_id
 
 
 @dataclass
@@ -297,6 +396,7 @@ class ModelRouter:
         self,
         query: str,
         has_document: bool = False,
+        has_image: bool = False,
     ) -> RoutingDecision:
         """Full routing decision with score and confidence."""
         metrics = get_metrics()
@@ -322,11 +422,21 @@ class ModelRouter:
 
             confidence = max(0.1, min(1.0, confidence))
 
-            # Pick model
-            if complexity == Complexity.SIMPLE:
-                model_id = getattr(settings, "fast_llm_model", "llama3.2-3b-q5km")
+            # Pick model from user-facing product modes.
+            lower = query.lower()
+            if _needs_vision_model(has_image):
+                model_id = getattr(settings, "vision_llm_model", VISION_LLM_MODEL)
+            elif _needs_reasoning_model(lower):
+                model_id = getattr(settings, "reasoning_llm_model", REASONING_LLM_MODEL)
+            elif has_document:
+                model_id = settings.llm_model or DEFAULT_LLM_MODEL
+            elif complexity == Complexity.SIMPLE:
+                model_id = getattr(settings, "fast_llm_model", FAST_LLM_MODEL)
+            elif complexity == Complexity.COMPLEX:
+                model_id = getattr(settings, "quality_llm_model", QUALITY_LLM_MODEL)
             else:
-                model_id = settings.llm_model
+                model_id = settings.llm_model or DEFAULT_LLM_MODEL
+            model_id = _available_model_id(settings, model_id)
 
             reason = "; ".join(reasons) if reasons else "default routing"
 
@@ -358,6 +468,7 @@ class ModelRouter:
         self,
         query: str,
         has_document: bool = False,
+        has_image: bool = False,
         available_models: list[str] | None = None,
     ) -> list[RoutingDecision]:
         """Return an ordered list of models to try (cascade).
@@ -366,7 +477,7 @@ class ModelRouter:
         are escalation candidates in quality-descending order.  The caller
         decides when to escalate based on response quality heuristics.
         """
-        primary = self.route(query, has_document)
+        primary = self.route(query, has_document, has_image)
         cascade: list[RoutingDecision] = [primary]
 
         if not self.cascade_enabled or primary.confidence >= self.cascade_min_confidence:
@@ -374,7 +485,13 @@ class ModelRouter:
 
         # Low confidence → suggest escalation
         settings = get_settings()
-        models = available_models or [settings.llm_model, getattr(settings, "fast_llm_model", "")]
+        models = available_models or [
+            getattr(settings, "reasoning_llm_model", REASONING_LLM_MODEL),
+            getattr(settings, "quality_llm_model", QUALITY_LLM_MODEL),
+            getattr(settings, "vision_llm_model", VISION_LLM_MODEL),
+            settings.llm_model,
+            getattr(settings, "fast_llm_model", FAST_LLM_MODEL),
+        ]
         profiles = [
             (mid, MODEL_PROFILES.get(mid)) for mid in models if mid and mid != primary.model_id
         ]
@@ -401,9 +518,14 @@ class ModelRouter:
         """Get capability profile for a model."""
         return get_model_profile(model_id)
 
-    def get_model_for_query(self, query: str, has_document: bool = False) -> str:
+    def get_model_for_query(
+        self,
+        query: str,
+        has_document: bool = False,
+        has_image: bool = False,
+    ) -> str:
         """Legacy API: return just the model_id string."""
-        return self.route(query, has_document).model_id
+        return self.route(query, has_document, has_image).model_id
 
 
 # ── MultiModelManager (backward compatible) ───────────────────
@@ -438,10 +560,11 @@ class MultiModelManager:
         self,
         query: str,
         has_document: bool = False,
+        has_image: bool = False,
         **kwargs: Any,
     ) -> tuple[str, Any]:
         """Route query to appropriate model and return (model_id, manager)."""
-        decision = self.router.route(query, has_document)
+        decision = self.router.route(query, has_document, has_image)
         manager = self.get_manager(decision.model_id)
         self._current_complexity = decision.complexity
         self._last_decision = decision

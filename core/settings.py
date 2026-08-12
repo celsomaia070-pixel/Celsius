@@ -1,6 +1,7 @@
 """Application settings with pydantic-settings for external configuration."""
 
 import json
+import os
 import sys
 from enum import Enum
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.file_security import restrict_private_file
+from core.json_persistence import atomic_write_json
 from core.modules import default_enabled_module_ids, normalize_module_ids
 
 ASSISTANT_NAME = "Celsius"
@@ -34,6 +37,7 @@ MODULES_FIELDS = (
 )
 RESPONSE_STYLE_FIELDS = (
     "mode",
+    "detail_level",
     "temperature",
     "top_p",
     "short_answer_max_chars",
@@ -42,6 +46,7 @@ RESPONSE_STYLE_FIELDS = (
 VOICE_FIELDS = (
     "enabled",
     "provider",
+    "profile",
     "voice",
     "rate",
     "pitch",
@@ -57,12 +62,58 @@ MOBILE_ACCESS_FIELDS = (
     "voice_commands_enabled",
     "use_https",
 )
+NOTIFICATION_FIELDS = (
+    "enabled",
+    "external_services_allowed",
+    "require_confirmation",
+    "default_channel",
+    "whatsapp_provider",
+    "whatsapp_phone_number_id",
+    "whatsapp_token_env_var",
+    "email_provider",
+    "email_from",
+    "sms_provider",
+    "sms_sender_id",
+)
+
+APP_DATA_DIR_NAME = "Celsius"
+
+
+def _get_install_dir() -> Path:
+    """Return the read-only application directory."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def _get_bundle_dir() -> Path:
+    """Return the directory containing PyInstaller data files."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return _get_install_dir()
+
+
+def _get_frozen_data_dir() -> Path:
+    """Return a per-user writable directory for installed builds."""
+    configured = os.environ.get("CELSIUS_BASE_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / APP_DATA_DIR_NAME
+    return Path.home() / "AppData" / "Local" / APP_DATA_DIR_NAME
 
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).parent.parent
+        return _get_frozen_data_dir()
+    return _get_install_dir()
+
+
+def _get_resources_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return _get_base_dir() / "models"
+    return _get_install_dir() / "resources"
 
 
 class LogLevel(str, Enum):
@@ -234,10 +285,14 @@ class ModelSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="CELSIUS_MODEL_")
 
+    model_mode: str = "equilibrado"
     default_llm_model: str = "qwen2.5-vl-7b-q4km"
     llm_model: str = "qwen2.5-vl-7b-q4km"
-    fast_llm_model: str = "llama3.2-3b-q5km"
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    fast_llm_model: str = "qwen3-4b-q4km"
+    quality_llm_model: str = "qwen3-14b-q4km"
+    reasoning_llm_model: str = "deepseek-r1-distill-qwen-7b-q4km"
+    vision_llm_model: str = "qwen2.5-vl-7b-q4km"
+    embedding_model: str = "qwen3-embedding-0.6b"
     whisper_model: str = "small"
     num_ctx: int = 16384
     num_predict: int = 2500
@@ -257,41 +312,74 @@ class ResponseStyleSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CELSIUS_RESPONSE_")
 
     mode: Literal["natural", "tecnico", "relatorio"] = "natural"
+    detail_level: Literal["conciso", "equilibrado", "detalhado"] = "detalhado"
     temperature: float = 0.45
     top_p: float = 0.9
-    short_answer_max_chars: int = 180
-    max_simple_sentences: int = 3
+    short_answer_max_chars: int = 320
+    max_simple_sentences: int = 5
 
     def prompt_context(self) -> str:
         lines = [
             "## Estilo de Conversa",
-            "- Fale de forma natural, como um parceiro de trabalho competente.",
-            "- Para perguntas simples, responda em 1 a 3 frases, sem estrutura desnecessaria.",
-            "- Para tarefas tecnicas, use passos claros e exemplos curtos quando ajudarem.",
-            "- Para relatorios, analises e documentos, use topicos, tabelas e conclusoes praticas.",
+            "- Fale com autoridade serena, clareza e dominio do assunto.",
+            "- Comece pela resposta ou conclusao principal; depois desenvolva a explicacao.",
+            "- Ajuste a profundidade ao assunto, nao apenas ao tamanho da pergunta.",
+            "- Perguntas factuais muito simples podem ser breves, mas nunca vagas ou incompletas.",
+            "- Em assuntos substanciais, explique o que e, por que importa e como aplicar.",
+            "- Inclua exemplos concretos, comparacoes ou cenarios praticos quando agregarem valor.",
+            "- Em orientacoes, apresente passos acionaveis e uma recomendacao final quando couber.",
+            "- Aponte premissas, riscos, limites e incertezas relevantes sem inventar seguranca.",
+            "- Para relatorios, analises e documentos, use secoes, tabelas e conclusoes praticas.",
+            "- Use listas e titulos somente quando melhorarem a leitura.",
             "- Evite soar como manual, contrato ou texto engessado.",
+            "- Evite respostas infladas, repetitivas ou cheias de frases genericas.",
             "- Nao comece toda resposta com confirmacoes genericas.",
             "- Use o historico recente para manter continuidade de conversa.",
         ]
+        if self.detail_level == "conciso":
+            lines.extend(
+                [
+                    "- Nivel de detalhe: conciso.",
+                    "- Entregue primeiro o essencial e omita aprofundamentos opcionais.",
+                ]
+            )
+        elif self.detail_level == "equilibrado":
+            lines.extend(
+                [
+                    "- Nivel de detalhe: equilibrado.",
+                    "- Cubra contexto, exemplo e acao pratica sem explorar ramificacoes secundarias.",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "- Nivel de detalhe: detalhado.",
+                    "- Desenvolva os pontos importantes com contexto, exemplos e implicacoes praticas.",
+                    "- Antecipe duvidas previsiveis e inclua detalhes que ajudem o usuario a decidir ou agir.",
+                ]
+            )
         if self.mode == "tecnico":
             lines.extend(
                 [
                     "- Modo atual: tecnico.",
-                    "- Priorize precisao, criterios, riscos e verificacao.",
+                    "- Priorize precisao, fundamentos, criterios, riscos e formas de verificacao.",
+                    "- Mostre exemplos tecnicos ou operacionais suficientes para tornar a resposta aplicavel.",
                 ]
             )
         elif self.mode == "relatorio":
             lines.extend(
                 [
                     "- Modo atual: relatorio.",
-                    "- Priorize estrutura executiva, comparativos, indicadores e proximas acoes.",
+                    "- Abra com um resumo executivo e desenvolva evidencias, comparativos e indicadores.",
+                    "- Termine com conclusoes, prioridades e proximas acoes.",
                 ]
             )
         else:
             lines.extend(
                 [
                     "- Modo atual: natural.",
-                    "- Priorize respostas humanas, diretas e proporcionais ao tamanho da pergunta.",
+                    "- Priorize respostas humanas, completas e proporcionais a complexidade real do tema.",
+                    "- Uma pergunta curta pode exigir uma resposta detalhada; nao a trate automaticamente como rasa.",
                 ]
             )
         return "\n".join(lines)
@@ -346,7 +434,28 @@ class FileSettings(BaseSettings):
     max_pdf_size_mb: int = 300
     large_pdf_page_limit: int = 80
     doc_text_limit: int = 12000
-    doc_extensions: tuple[str, ...] = (".pdf", ".docx", ".odt", ".ods", ".odp")
+    doc_extensions: tuple[str, ...] = (
+        ".pdf",
+        ".docx",
+        ".odt",
+        ".ods",
+        ".odp",
+        ".txt",
+        ".md",
+        ".py",
+        ".json",
+        ".csv",
+        ".xml",
+        ".html",
+        ".css",
+        ".js",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".log",
+    )
     image_extensions: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
     audio_extensions: tuple[str, ...] = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".webm")
 
@@ -461,6 +570,7 @@ class VoiceSettings(BaseSettings):
 
     enabled: bool = True
     provider: str = "edge-tts"
+    profile: str = "natural_male_br"
     voice: str = "pt-BR-AntonioNeural"
     rate: str = "+5%"
     pitch: str = "-2Hz"
@@ -504,6 +614,35 @@ class MobileAccessSettings(BaseSettings):
                 setattr(self, field, data[field])
 
 
+class NotificationSettings(BaseSettings):
+    """External notification channel settings."""
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_NOTIFICATIONS_")
+
+    enabled: bool = False
+    external_services_allowed: bool = False
+    require_confirmation: bool = True
+    default_channel: Literal["whatsapp", "email", "sms"] = "whatsapp"
+    whatsapp_provider: str = "meta_cloud_api"
+    whatsapp_phone_number_id: str = ""
+    whatsapp_token_env_var: str = "CELSIUS_WHATSAPP_TOKEN"
+    email_provider: str = ""
+    email_from: str = ""
+    sms_provider: str = ""
+    sms_sender_id: str = ""
+
+    def to_storage(self) -> dict[str, str | bool]:
+        return {field: getattr(self, field) for field in NOTIFICATION_FIELDS}
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in NOTIFICATION_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field in data:
+                setattr(self, field, data[field])
+
+
 class FeatureFlags(BaseSettings):
     """Feature flags for enabling/disabling modules."""
 
@@ -529,8 +668,8 @@ class Settings(BaseSettings):
     """Main application settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_file_encoding="utf-8",
+        env_prefix="CELSIUS_",
         env_nested_delimiter="__",
         extra="ignore",
     )
@@ -538,7 +677,7 @@ class Settings(BaseSettings):
     environment: Environment = Environment.DEVELOPMENT
     base_dir: Path = Field(default_factory=_get_base_dir)
     data_dir: Path = Field(default_factory=lambda: _get_base_dir() / "data")
-    resources_dir: Path = Field(default_factory=lambda: _get_base_dir() / "resources")
+    resources_dir: Path = Field(default_factory=_get_resources_dir)
     logs_dir: Path = Field(default_factory=lambda: _get_base_dir() / "logs")
 
     assistant: AssistantSettings = Field(default_factory=AssistantSettings)
@@ -556,6 +695,7 @@ class Settings(BaseSettings):
     ui: UiSettings = Field(default_factory=UiSettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     mobile: MobileAccessSettings = Field(default_factory=MobileAccessSettings)
+    notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
 
     memorias_file: Path = Field(default_factory=lambda: _get_base_dir() / "memorias.json")
@@ -565,7 +705,11 @@ class Settings(BaseSettings):
     audio_mic_file: Path = Field(default_factory=lambda: _get_base_dir() / "temp_audio.wav")
 
     def model_post_init(self, __context) -> None:
+        pass
+
+    def initialize(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.resources_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self._load_customer_profile()
         self._load_local_preferences()
@@ -610,6 +754,8 @@ class Settings(BaseSettings):
             self.modules.apply_storage(data["modules"], preserve_explicit=True)
         if isinstance(data.get("mobile"), dict):
             self.mobile.apply_storage(data["mobile"], preserve_explicit=True)
+        if isinstance(data.get("notifications"), dict):
+            self.notifications.apply_storage(data["notifications"], preserve_explicit=True)
 
     def _sync_legacy_owner_name(self) -> None:
         if self.assistant.owner_name and not self.customer.user_name:
@@ -621,10 +767,8 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.assistant.owner_name = self.customer.user_name
         path = self.customer_profile_file
-        path.write_text(
-            json.dumps(self.customer.to_storage(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(path, self.customer.to_storage())
+        restrict_private_file(path)
         self.save_local_preferences()
         return path
 
@@ -632,20 +776,18 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.assistant.owner_name = self.customer.user_name
         path = self.local_preferences_file
-        path.write_text(
-            json.dumps(
-                {
-                    "customer": self.customer.to_storage(),
-                    "modules": self.modules.to_storage(),
-                    "response": self.response.to_storage(),
-                    "voice": self.voice.to_storage(),
-                    "mobile": self.mobile.to_storage(),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        atomic_write_json(
+            path,
+            {
+                "customer": self.customer.to_storage(),
+                "modules": self.modules.to_storage(),
+                "response": self.response.to_storage(),
+                "voice": self.voice.to_storage(),
+                "mobile": self.mobile.to_storage(),
+                "notifications": self.notifications.to_storage(),
+            },
         )
+        restrict_private_file(path)
         return path
 
     @property
@@ -663,6 +805,18 @@ class Settings(BaseSettings):
     @property
     def fast_llm_model(self) -> str:
         return self.model.fast_llm_model
+
+    @property
+    def quality_llm_model(self) -> str:
+        return self.model.quality_llm_model
+
+    @property
+    def reasoning_llm_model(self) -> str:
+        return self.model.reasoning_llm_model
+
+    @property
+    def vision_llm_model(self) -> str:
+        return self.model.vision_llm_model
 
     @fast_llm_model.setter
     def fast_llm_model(self, value: str) -> None:
@@ -750,14 +904,28 @@ class Settings(BaseSettings):
     def get_resources_dir(self) -> Path:
         return self.resources_dir
 
+    @property
+    def bundled_resources_dir(self) -> Path:
+        return _get_bundle_dir() / "resources"
+
+    def get_asset_path(self, relative_path: str | Path) -> Path:
+        return _get_bundle_dir() / Path(relative_path)
+
+    def _resolve_model_resource(self, filename: str) -> Path:
+        writable_path = self.resources_dir / filename
+        if writable_path.exists():
+            return writable_path
+        bundled_path = self.bundled_resources_dir / filename
+        return bundled_path if bundled_path.exists() else writable_path
+
     def get_model_path(self, model_id: str | None = None) -> Path:
         model_id = model_id or self.model.llm_model
         from core.config import get_model_by_id
 
         model = get_model_by_id(model_id)
         if model:
-            return self.resources_dir / model.filename
-        return self.resources_dir / "model.gguf"
+            return self._resolve_model_resource(model.filename)
+        return self._resolve_model_resource("model.gguf")
 
     def get_mmproj_path(self, model_id: str | None = None) -> Path | None:
         model_id = model_id or self.model.llm_model
@@ -765,7 +933,7 @@ class Settings(BaseSettings):
 
         model = get_model_by_id(model_id)
         if model and model.has_mmproj:
-            path = self.resources_dir / model.mmproj_file
+            path = self._resolve_model_resource(model.mmproj_file)
             return path if path.exists() else None
         return None
 
@@ -776,7 +944,12 @@ _settings: Settings | None = None
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
-        _settings = Settings()
+        env_file = None
+        if not getattr(sys, "frozen", False):
+            candidate = _get_install_dir() / ".env"
+            env_file = candidate if candidate.is_file() else None
+        _settings = Settings(_env_file=env_file)
+        _settings.initialize()
     return _settings
 
 

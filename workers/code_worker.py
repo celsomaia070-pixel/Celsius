@@ -1,4 +1,3 @@
-import ast
 import contextlib
 import os
 import subprocess
@@ -7,6 +6,8 @@ import tempfile
 from dataclasses import dataclass
 
 from PySide6.QtCore import QThread, Signal
+
+from core.sandbox import build_restricted_wrapper, validate_code
 
 
 @dataclass
@@ -134,70 +135,7 @@ def _validate_code(code: str) -> str | None:
     - String-based import attempts (__import__('os'))
     - Importlib-based evasion (importlib.import_module)
     """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as e:
-        return f"Syntax error: {e}"
-
-    for node in ast.walk(tree):
-        # 1. Block direct imports of dangerous modules
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root in BLOCKED_IMPORTS:
-                    return f"Blocked import: {alias.name}"
-
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            root = node.module.split(".")[0]
-            if root in BLOCKED_IMPORTS:
-                return f"Blocked import: {node.module}"
-
-        # 2. Block dangerous function/method calls
-        if isinstance(node, ast.Call):
-            func = node.func
-
-            # Direct function name: eval(), exec(), open()
-            if isinstance(func, ast.Name):
-                if func.id in BLOCKED_FUNCTION_NAMES:
-                    return f"Blocked function: {func.id}"
-
-            # Attribute-based calls: os.system(), ctypes.windll
-            elif isinstance(func, ast.Attribute) and func.attr in BLOCKED_METHOD_NAMES:
-                return f"Blocked method: {func.attr}"
-
-        # 3. Block dangerous dunder attribute access
-        if isinstance(node, ast.Attribute) and node.attr in BLOCKED_ATTRIBUTES:
-            return f"Blocked attribute access: {node.attr}"
-
-        # 4. Block string-based __import__ calls:
-        #    __import__('os'), builtins.__import__('os')
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "__import__"
-        ):
-            return "Blocked function: __import__"
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "__import__"
-        ):
-            return "Blocked function: __import__"
-
-        # 5. Block importlib usage
-        if isinstance(node, ast.Attribute) and node.attr in {
-            "import_module",
-            "import_module_of_type",
-        }:
-            return f"Blocked method: importlib.{node.attr}"
-
-        # 6. Scan string constants for suspicious patterns
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            val = node.value.lower()
-            if val in BLOCKED_STRING_PATTERNS:
-                return f"Blocked string constant: '{node.value}'"
-
-    return None
+    return validate_code(code)
 
 
 def _build_wrapper_code(codigo: str, timeout: int) -> str:
@@ -213,17 +151,10 @@ resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))  
 resource.setrlimit(resource.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024))  # 10MB
 resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
 
-{codigo}
+{build_restricted_wrapper(codigo)}
 """
     else:  # Windows
-        wrapper = f"""
-import sys
-
-# Windows: resource limits enforced via Job Object (see windows_sandbox.py)
-# This wrapper runs the user code directly; limits are applied externally.
-
-{codigo}
-"""
+        wrapper = build_restricted_wrapper(codigo)
     return wrapper
 
 

@@ -40,11 +40,9 @@ class GeradorRelatorio:
 
         dejavu_path = _find_dejavu_font()
         if dejavu_path:
-            pdf.add_font("DejaVu", "", dejavu_path, uni=True)
-            pdf.add_font("DejaVu", "B", dejavu_path.replace("Sans.ttf", "Sans-Bold.ttf"), uni=True)
-            pdf.add_font(
-                "DejaVu", "I", dejavu_path.replace("Sans.ttf", "Sans-Oblique.ttf"), uni=True
-            )
+            pdf.add_font("DejaVu", "", dejavu_path)
+            pdf.add_font("DejaVu", "B", dejavu_path.replace("Sans.ttf", "Sans-Bold.ttf"))
+            pdf.add_font("DejaVu", "I", dejavu_path.replace("Sans.ttf", "Sans-Oblique.ttf"))
             use_unicode = True
         else:
             use_unicode = False
@@ -82,10 +80,10 @@ class GeradorRelatorio:
             pdf.set_font("Helvetica", "", 11)
         for linha in conteudo.split("\n"):
             if use_unicode:
-                pdf.multi_cell(0, 6, linha)
+                pdf.multi_cell(0, 6, linha, new_x="LMARGIN", new_y="NEXT")
             else:
                 linha_limpa = linha.encode("latin-1", errors="replace").decode("latin-1")
-                pdf.multi_cell(0, 6, linha_limpa)
+                pdf.multi_cell(0, 6, linha_limpa, new_x="LMARGIN", new_y="NEXT")
 
         os.makedirs(
             os.path.dirname(caminho_saida) if os.path.dirname(caminho_saida) else ".", exist_ok=True

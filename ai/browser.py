@@ -3,6 +3,7 @@ import contextlib
 import logging
 
 from core.circuit_breaker import CircuitBreakerOpenError, get_circuit_breaker
+from core.network_security import UnsafeNetworkTargetError, validate_public_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,21 @@ class BrowserAgent:
         context = await self._browser.new_context(
             viewport={"width": 1280, "height": 720},
         )
+        await context.route("**/*", self._guard_outbound_request)
         self._page = await context.new_page()
+
+    @staticmethod
+    async def _guard_outbound_request(route):
+        url = route.request.url
+        if url.startswith(("data:", "blob:", "about:")):
+            await route.continue_()
+            return
+        try:
+            validate_public_http_url(url)
+        except UnsafeNetworkTargetError:
+            await route.abort("blockedbyclient")
+            return
+        await route.continue_()
 
     async def stop(self):
         if self._browser:
@@ -101,8 +116,9 @@ def navegar_web(url, timeout=30):
     loop = asyncio.new_event_loop()
 
     async def _run():
+        validated_url = validate_public_http_url(url)
         await agent.start(headless=True)
-        await agent.execute_action({"action": "navigate", "url": url})
+        await agent.execute_action({"action": "navigate", "url": validated_url})
         tree = await agent.get_accessibility_tree()
         url_actual = await agent.get_current_url()
         await agent.stop()
@@ -114,7 +130,7 @@ def navegar_web(url, timeout=30):
     except asyncio.TimeoutExpired:
         _browser_navigate_cb.record_failure()
         resultado = f"Timeout ao acessar {url}"
-    except CircuitBreakerOpenError:
+    except (CircuitBreakerOpenError, UnsafeNetworkTargetError):
         raise
     except Exception as e:
         _browser_navigate_cb.record_failure()
