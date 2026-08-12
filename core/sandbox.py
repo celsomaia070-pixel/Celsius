@@ -700,6 +700,13 @@ class SandboxedExecutor:
             stdout = result.stdout[: self.max_output]
             stderr = result.stderr[: self.max_output]
             returncode = result.returncode
+            timeout_signals = {
+                getattr(signal, "SIGALRM", 14),
+                getattr(signal, "SIGKILL", 9),
+                getattr(signal, "SIGXCPU", 24),
+            }
+            if returncode < 0 and -returncode in timeout_signals:
+                stderr = "Timeout: execution exceeded time limit."
 
             return ExecutionResult(
                 output=stdout,

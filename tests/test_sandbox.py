@@ -1,6 +1,8 @@
 """Tests for core.sandbox (AST validation, SafeNamespace, SandboxedExecutor)."""
 
+import signal
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -433,6 +435,15 @@ class TestSandboxedExecutorBlockedCode:
 
 
 class TestSandboxedExecutorTimeout:
+    def test_cpu_limit_signal_is_reported_as_timeout(self, monkeypatch):
+        completed = SimpleNamespace(stdout="", stderr="", returncode=-getattr(signal, "SIGKILL", 9))
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: completed)
+
+        result = SandboxedExecutor(cpu_time=2)._run_in_subprocess("pass")
+
+        assert not result.success
+        assert "Timeout" in result.error
+
     @pytest.mark.skipif(
         _USE_IN_PROCESS,
         reason="In-process timeout is cooperative on Windows, cannot interrupt exec()",
