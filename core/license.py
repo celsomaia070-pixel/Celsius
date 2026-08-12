@@ -6,7 +6,9 @@ Gerencia chaves de licença RSA e controle de período de trial.
 import base64
 import hashlib
 import json
+import os
 import platform
+import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,17 +24,9 @@ TRIAL_DAYS = 3
 LICENSE_FILE = ".license"
 TRIAL_FILE = ".trial"
 
-_EMBEDDED_PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z3VS5JJcds3xfn/ygWe
-GNFMPQW/x0LBBkZTECBLKMYV1QYRzxzKFBbI4fKGJCx4nEjRQA==
------END PUBLIC KEY-----"""
-
-_EMBEDDED_PRIVATE_KEY_PEM = b"""-----BEGIN RSA PRIVATE KEY-----
-MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWeGNFMPQW/x0LBBkZTECBLKMYV1QYR
------END RSA PRIVATE KEY-----"""
-
 _PRODUCT_NAME = "Celsius"
 _PRODUCT_VERSION = "1.0.0"
+PUBLIC_KEY_FILE_NAME = "license_public_key.pem"
 
 
 def _get_data_dir() -> Path:
@@ -49,6 +43,28 @@ def _get_data_dir() -> Path:
 def _get_hwid() -> str:
     raw = f"{platform.node()}-{uuid.getnode()}-{platform.machine()}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _load_product_public_key() -> bytes | None:
+    configured_path = os.environ.get("CELSIUS_LICENSE_PUBLIC_KEY_FILE", "").strip()
+    candidates = []
+    if configured_path:
+        candidates.append(Path(configured_path).expanduser())
+    if getattr(sys, "frozen", False):
+        bundle_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        candidates.append(bundle_dir / "resources" / PUBLIC_KEY_FILE_NAME)
+    else:
+        candidates.append(
+            Path(__file__).resolve().parent.parent / "resources" / PUBLIC_KEY_FILE_NAME
+        )
+
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path.read_bytes()
+        except OSError:
+            continue
+    return None
 
 
 def generate_key_pair() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
@@ -95,7 +111,10 @@ def create_license_key(
     payload_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
     if private_key_pem is None:
-        private_key_pem = _EMBEDDED_PRIVATE_KEY_PEM
+        raise ValueError(
+            "A chave privada e obrigatoria para emitir licencas. "
+            "Ela nunca deve ser incorporada ao aplicativo."
+        )
 
     private_key = serialization.load_pem_private_key(private_key_pem, password=None)
     signature = private_key.sign(
@@ -126,9 +145,14 @@ def validate_license_key(
         return False, "Chave de licença para produto diferente.", payload
 
     if public_key_pem is None:
-        public_key_pem = _EMBEDDED_PUBLIC_KEY_PEM
+        public_key_pem = _load_product_public_key()
+    if not public_key_pem:
+        return False, "Licenciamento ainda nao configurado nesta instalacao.", payload
 
-    public_key = serialization.load_pem_public_key(public_key_pem)
+    try:
+        public_key = serialization.load_pem_public_key(public_key_pem)
+    except (TypeError, ValueError):
+        return False, "Chave publica de licenciamento invalida.", payload
     try:
         public_key.verify(signature, payload_bytes, padding.PKCS1v15(), hashes.SHA256())
     except Exception:

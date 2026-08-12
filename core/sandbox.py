@@ -12,13 +12,13 @@ Executes user-supplied Python code in a restricted namespace with:
 from __future__ import annotations
 
 import ast
+import base64
 import builtins
 import io
 import logging
 import math
 import random
 import re
-import resource
 import signal
 import sys
 import tempfile
@@ -30,6 +30,11 @@ from typing import Any
 
 from core.metrics import MetricNames, get_metrics
 from core.telemetry import trace_span
+
+try:
+    import resource
+except ImportError:  # Windows
+    resource = None
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +159,173 @@ SAFE_MODULES: dict[str, Any] = {
     "io": io,
 }
 
+SAFE_MODULE_EXPORTS: dict[str, frozenset[str]] = {
+    "abc": frozenset({"ABC", "ABCMeta", "abstractmethod"}),
+    "array": frozenset({"array"}),
+    "base64": frozenset(
+        {"b16decode", "b16encode", "b32decode", "b32encode", "b64decode", "b64encode"}
+    ),
+    "bisect": frozenset({"bisect", "bisect_left", "bisect_right", "insort"}),
+    "collections": frozenset(
+        {"ChainMap", "Counter", "OrderedDict", "defaultdict", "deque", "namedtuple"}
+    ),
+    "contextlib": frozenset({"nullcontext", "redirect_stderr", "redirect_stdout", "suppress"}),
+    "copy": frozenset({"copy", "deepcopy"}),
+    "dataclasses": frozenset({"asdict", "astuple", "dataclass", "field", "fields", "replace"}),
+    "datetime": frozenset({"date", "datetime", "time", "timedelta", "timezone"}),
+    "decimal": frozenset({"Decimal", "DecimalException", "getcontext", "localcontext"}),
+    "enum": frozenset({"Enum", "Flag", "IntEnum", "IntFlag", "auto", "unique"}),
+    "fractions": frozenset({"Fraction"}),
+    "functools": frozenset({"cache", "cached_property", "lru_cache", "partial", "reduce", "wraps"}),
+    "hashlib": frozenset(
+        {"blake2b", "blake2s", "md5", "new", "sha1", "sha224", "sha256", "sha384", "sha512"}
+    ),
+    "heapq": frozenset(
+        {"heapify", "heappop", "heappush", "heappushpop", "merge", "nlargest", "nsmallest"}
+    ),
+    "io": frozenset({"BytesIO", "StringIO"}),
+    "itertools": frozenset(
+        {
+            "accumulate",
+            "chain",
+            "combinations",
+            "combinations_with_replacement",
+            "compress",
+            "count",
+            "cycle",
+            "dropwhile",
+            "filterfalse",
+            "groupby",
+            "islice",
+            "pairwise",
+            "permutations",
+            "product",
+            "repeat",
+            "starmap",
+            "takewhile",
+            "tee",
+            "zip_longest",
+        }
+    ),
+    "json": frozenset({"JSONDecodeError", "dump", "dumps", "load", "loads"}),
+    "math": frozenset(name for name in dir(math) if not name.startswith("_")),
+    "pprint": frozenset({"pformat", "pp", "pprint"}),
+    "random": frozenset(
+        {
+            "choice",
+            "choices",
+            "getrandbits",
+            "randint",
+            "random",
+            "randrange",
+            "sample",
+            "seed",
+            "shuffle",
+            "uniform",
+        }
+    ),
+    "re": frozenset(
+        {
+            "ASCII",
+            "DOTALL",
+            "IGNORECASE",
+            "MULTILINE",
+            "Match",
+            "Pattern",
+            "VERBOSE",
+            "compile",
+            "escape",
+            "findall",
+            "finditer",
+            "fullmatch",
+            "match",
+            "search",
+            "split",
+            "sub",
+            "subn",
+        }
+    ),
+    "statistics": frozenset(
+        {
+            "StatisticsError",
+            "correlation",
+            "fmean",
+            "geometric_mean",
+            "harmonic_mean",
+            "linear_regression",
+            "mean",
+            "median",
+            "median_grouped",
+            "median_high",
+            "median_low",
+            "mode",
+            "multimode",
+            "pstdev",
+            "pvariance",
+            "quantiles",
+            "stdev",
+            "variance",
+        }
+    ),
+    "string": frozenset(
+        {
+            "Formatter",
+            "Template",
+            "ascii_letters",
+            "ascii_lowercase",
+            "ascii_uppercase",
+            "digits",
+            "hexdigits",
+            "octdigits",
+            "printable",
+            "punctuation",
+            "whitespace",
+        }
+    ),
+    "textwrap": frozenset({"TextWrapper", "dedent", "fill", "indent", "shorten", "wrap"}),
+    "typing": frozenset(
+        {
+            "Any",
+            "Callable",
+            "Dict",
+            "Iterable",
+            "Iterator",
+            "List",
+            "Literal",
+            "Optional",
+            "Sequence",
+            "Set",
+            "Tuple",
+            "Union",
+        }
+    ),
+}
+
+
+class _SafeModuleProxy:
+    """Expose only explicitly approved attributes from a standard-library module."""
+
+    __slots__ = ("_exports", "_module")
+
+    def __init__(self, module: Any, exports: frozenset[str]):
+        object.__setattr__(self, "_module", module)
+        object.__setattr__(self, "_exports", exports)
+
+    def __getattribute__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError("Atributo privado bloqueado no sandbox")
+        exports = object.__getattribute__(self, "_exports")
+        if name not in exports:
+            raise AttributeError(f"Atributo nao permitido no sandbox: {name}")
+        module = object.__getattribute__(self, "_module")
+        return getattr(module, name)
+
+
+SAFE_MODULE_PROXIES: dict[str, _SafeModuleProxy] = {
+    name: _SafeModuleProxy(module, SAFE_MODULE_EXPORTS[name])
+    for name, module in SAFE_MODULES.items()
+}
+
 # ── Safe builtins subset ──────────────────────────────────────
 
 SAFE_BUILTIN_NAMES: frozenset[str] = frozenset(
@@ -170,17 +342,14 @@ SAFE_BUILTIN_NAMES: frozenset[str] = frozenset(
         "classmethod",
         "complex",
         "dict",
-        "dir",
         "divmod",
         "enumerate",
         "filter",
         "float",
         "format",
         "frozenset",
-        "hasattr",
         "hash",
         "hex",
-        "id",
         "int",
         "isinstance",
         "issubclass",
@@ -189,7 +358,6 @@ SAFE_BUILTIN_NAMES: frozenset[str] = frozenset(
         "list",
         "map",
         "max",
-        "memoryview",
         "min",
         "next",
         "object",
@@ -208,12 +376,20 @@ SAFE_BUILTIN_NAMES: frozenset[str] = frozenset(
         "staticmethod",
         "str",
         "sum",
-        "super",
         "tuple",
-        "type",
         "zip",
         "__name__",
         "__doc__",
+        "__build_class__",
+        "ArithmeticError",
+        "AssertionError",
+        "Exception",
+        "IndexError",
+        "KeyError",
+        "RuntimeError",
+        "TypeError",
+        "ValueError",
+        "ZeroDivisionError",
     }
 )
 
@@ -225,14 +401,68 @@ def _build_safe_builtins() -> dict[str, Any]:
         if hasattr(builtins, name):
             ns[name] = getattr(builtins, name)
     # Inject safe modules as if they were builtins
-    ns.update(SAFE_MODULES)
+    ns.update(SAFE_MODULE_PROXIES)
     # Add commonly-needed constants
     ns["True"] = True
     ns["False"] = False
     ns["None"] = None
     ns["Ellipsis"] = Ellipsis
     ns["NotImplemented"] = NotImplemented
+    ns["__import__"] = _safe_import
     return ns
+
+
+def _safe_import(name: str, globals=None, locals=None, fromlist=(), level: int = 0):
+    if level != 0 or name not in SAFE_MODULES:
+        raise ImportError(f"Import nao permitido no sandbox: {name}")
+    return SAFE_MODULE_PROXIES[name]
+
+
+def build_restricted_wrapper(code: str) -> str:
+    """Build an isolated namespace wrapper for the child Python process."""
+    payload = base64.b64encode(code.encode("utf-8")).decode("ascii")
+    safe_names = sorted(SAFE_BUILTIN_NAMES)
+    module_exports = {name: sorted(exports) for name, exports in SAFE_MODULE_EXPORTS.items()}
+    return f"""
+import base64 as _base64
+import builtins as _builtins
+
+_MODULE_EXPORTS = {module_exports!r}
+_SAFE_NAMES = {safe_names!r}
+
+class _SafeModuleProxy:
+    __slots__ = ('_exports', '_module')
+
+    def __init__(self, module, exports):
+        object.__setattr__(self, '_module', module)
+        object.__setattr__(self, '_exports', frozenset(exports))
+
+    def __getattribute__(self, name):
+        if name.startswith('_'):
+            raise AttributeError('Atributo privado bloqueado no sandbox')
+        exports = object.__getattribute__(self, '_exports')
+        if name not in exports:
+            raise AttributeError(f'Atributo nao permitido no sandbox: {{name}}')
+        module = object.__getattribute__(self, '_module')
+        return getattr(module, name)
+
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    root = name.split('.')[0]
+    if level != 0 or name != root or root not in _MODULE_EXPORTS:
+        raise ImportError(f'Import nao permitido no sandbox: {{name}}')
+    module = _builtins.__import__(root, globals, locals, (), level)
+    return _SafeModuleProxy(module, _MODULE_EXPORTS[root])
+
+_safe_builtins = {{name: getattr(_builtins, name) for name in _SAFE_NAMES}}
+_safe_builtins['__import__'] = _safe_import
+for _module_name, _exports in _MODULE_EXPORTS.items():
+    _safe_builtins[_module_name] = _SafeModuleProxy(
+        _builtins.__import__(_module_name), _exports
+    )
+_globals = {{'__builtins__': _safe_builtins, '__name__': '__sandbox__'}}
+_source = _base64.b64decode({payload!r}).decode('utf-8')
+exec(_builtins.compile(_source, '<celsius-sandbox>', 'exec'), _globals, _globals)
+"""
 
 
 # ── AST validation ────────────────────────────────────────────
@@ -248,14 +478,18 @@ def validate_code(code: str) -> str | None:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root in BLOCKED_IMPORTS:
+                if alias.name not in SAFE_MODULES:
                     return f"Blocked import: {alias.name}"
 
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            root = node.module.split(".")[0]
-            if root in BLOCKED_IMPORTS:
-                return f"Blocked import: {node.module}"
+        elif isinstance(node, ast.ImportFrom) and node.module and node.module not in SAFE_MODULES:
+            return f"Blocked import: {node.module}"
+
+        if isinstance(node, ast.Name) and (
+            node.id in BLOCKED_FUNCTION_NAMES
+            or node.id
+            in {"__builtins__", "getattr", "setattr", "delattr", "vars", "globals", "locals"}
+        ):
+            return f"Blocked name: {node.id}"
 
         if isinstance(node, ast.Call):
             func = node.func
@@ -264,7 +498,9 @@ def validate_code(code: str) -> str | None:
             if isinstance(func, ast.Attribute) and func.attr in BLOCKED_METHOD_NAMES:
                 return f"Blocked method: {func.attr}"
 
-        if isinstance(node, ast.Attribute) and node.attr in BLOCKED_ATTRIBUTES:
+        if isinstance(node, ast.Attribute) and (
+            node.attr in BLOCKED_ATTRIBUTES or node.attr.startswith("_")
+        ):
             return f"Blocked attribute access: {node.attr}"
 
         if (
@@ -288,8 +524,22 @@ def validate_code(code: str) -> str | None:
 
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             val = node.value.lower()
-            if val in ("__import__", "builtins", "breakpoint"):
+            if any(
+                pattern in val
+                for pattern in ("__import__", "__builtins__", "builtins", "breakpoint")
+            ):
                 return f"Blocked string constant: '{node.value}'"
+
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            try:
+                value = ast.literal_eval(node)
+            except (ValueError, TypeError):
+                value = None
+            if isinstance(value, str) and any(
+                pattern in value.lower()
+                for pattern in ("__import__", "__builtins__", "builtins", "breakpoint")
+            ):
+                return "Blocked dynamically constructed string"
 
     return None
 
@@ -450,6 +700,13 @@ class SandboxedExecutor:
             stdout = result.stdout[: self.max_output]
             stderr = result.stderr[: self.max_output]
             returncode = result.returncode
+            timeout_signals = {
+                getattr(signal, "SIGALRM", 14),
+                getattr(signal, "SIGKILL", 9),
+                getattr(signal, "SIGXCPU", 24),
+            }
+            if returncode < 0 and -returncode in timeout_signals:
+                stderr = "Timeout: execution exceeded time limit."
 
             return ExecutionResult(
                 output=stdout,
@@ -476,13 +733,14 @@ class SandboxedExecutor:
                 f"resource.setrlimit(resource.RLIMIT_CPU, ({self.cpu_time}, {self.cpu_time}))\n"
                 f"resource.setrlimit(resource.RLIMIT_AS, ({mem_bytes}, {mem_bytes}))\n"
                 "resource.setrlimit(resource.RLIMIT_FSIZE, (10*1024*1024, 10*1024*1024))\n"
-                "resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))\n" + code
+                "resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))\n"
+                + build_restricted_wrapper(code)
             )
-        return code
+        return build_restricted_wrapper(code)
 
     def _resource_limits_fn(self) -> None:
         """preexec_fn for Unix subprocesses."""
-        if sys.platform == "win32":
+        if sys.platform == "win32" or resource is None:
             return
         mem_bytes = self.memory_mb * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_CPU, (self.cpu_time, self.cpu_time))
@@ -536,8 +794,8 @@ class SandboxedExecutor:
                 metrics.inc(MetricNames.WORKER_ERRORS_TOTAL, error_type="validation")
                 return ExecutionResult(error=f"Security error: {error}", success=False)
 
-            safe_ns = _build_safe_builtins()
-            safe_ns["__name__"] = "__sandbox__"
+            safe_builtins = _build_safe_builtins()
+            safe_ns = {"__builtins__": safe_builtins, "__name__": "__sandbox__"}
 
             stdout_buf = io.StringIO()
             stderr_buf = io.StringIO()
@@ -556,7 +814,8 @@ class SandboxedExecutor:
                 sys.stdout = stdout_buf
                 sys.stderr = stderr_buf
 
-                exec(compile(code, "<sandbox>", "exec"), safe_ns)
+                # The subprocess, AST allowlist and minimal builtins isolate this exec.
+                exec(compile(code, "<sandbox>", "exec"), safe_ns, safe_ns)  # nosec B102
 
                 elapsed = time.perf_counter() - t0
                 return ExecutionResult(

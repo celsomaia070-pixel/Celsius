@@ -28,22 +28,21 @@ class ModernChatView(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
+        self.setObjectName("chatView")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("chatScroll")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-        """)
-
         self.content_widget = QWidget()
+        self.content_widget.setObjectName("chatContent")
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 20, 0, 20)
-        self.content_layout.setSpacing(4)
+        self.content_layout.setContentsMargins(56, 28, 56, 28)
+        self.content_layout.setSpacing(12)
         self.content_layout.addStretch()
 
         self.scroll_area.setWidget(self.content_widget)
@@ -51,6 +50,19 @@ class ModernChatView(QWidget):
 
         # Track scroll position for auto-scroll
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self._apply_theme()
+
+    def _apply_theme(self):
+        s = self._scheme
+        self.setStyleSheet(f"""
+            #chatView, #chatScroll, #chatContent {{
+                background: {s.bg_primary};
+                border: none;
+            }}
+            #chatScroll > QWidget > QWidget {{
+                background: {s.bg_primary};
+            }}
+        """)
 
     def _on_scroll(self, value):
         bar = self.scroll_area.verticalScrollBar()
@@ -179,10 +191,10 @@ class ModernChatView(QWidget):
 
     def set_scheme(self, scheme):
         self._scheme = scheme
+        self._apply_theme()
         if hasattr(self, "_thinking_widget") and hasattr(self._thinking_widget, "set_scheme"):
             self._thinking_widget.set_scheme(scheme)
         for i in range(self.content_layout.count()):
             item = self.content_layout.itemAt(i)
             if item and item.widget() and isinstance(item.widget(), MessageBubble):
-                item.widget()._scheme = scheme
-                item.widget()._render_content()
+                item.widget().set_scheme(scheme)

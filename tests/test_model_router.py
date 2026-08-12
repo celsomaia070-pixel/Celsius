@@ -87,8 +87,8 @@ class TestModelProfiles:
 
     def test_known_models(self):
         for mid in [
-            "llama3.2-3b-q5km",
-            "qwen2.5-3b-q8",
+            "qwen3-4b-q4km",
+            "qwen3-8b-q4km",
             "qwen2.5-vl-7b-q4km",
             "qwen2.5-coder-7b-q5km",
             "gemma3-4b-q4km",
@@ -104,11 +104,11 @@ class TestModelProfiles:
         assert get_model_profile("nonexistent-model") is None
 
     def test_fast_model_is_fastest(self):
-        fast = MODEL_PROFILES["llama3.2-3b-q5km"]
+        fast = MODEL_PROFILES["qwen3-4b-q4km"]
         assert fast.speed_rating == 1.0
 
     def test_vision_models_support_vision(self):
-        for mid in ["qwen2.5-vl-7b-q4km", "gemma3-4b-q4km", "qwen2.5-omni-7b-q4km"]:
+        for mid in ["qwen2.5-vl-3b-q4km", "qwen2.5-vl-7b-q4km", "gemma3-4b-q4km"]:
             p = MODEL_PROFILES.get(mid)
             if p:
                 assert p.supports_vision is True
@@ -155,7 +155,7 @@ class TestComputeComplexityScore:
         assert score_doc > score_no_doc
 
     def test_complex_keywords_positive(self):
-        code = "criar um relatório detalhado do código python com análise estatística"
+        code = "criar um relatÃ³rio detalhado do cÃ³digo python com anÃ¡lise estatÃ­stica"
         score, reasons = _compute_complexity_score(code)
         assert score > 0
         assert any("keyword" in r for r in reasons)
@@ -168,7 +168,9 @@ class TestComputeComplexityScore:
         assert "keyword: analysis" in reasons
 
     def test_code_keyword(self):
-        score, reasons = _compute_complexity_score("escreva um código python completo com funções")
+        score, reasons = _compute_complexity_score(
+            "escreva um cÃ³digo python completo com funÃ§Ãµes"
+        )
         assert any("code" in r for r in reasons)
 
     def test_document_keyword(self):
@@ -188,13 +190,13 @@ class TestComputeComplexityScore:
         assert score > 0
 
     def test_statistics_keyword(self):
-        score, _ = _compute_complexity_score("calcular média mediana desvio estatística")
+        score, _ = _compute_complexity_score("calcular mÃ©dia mediana desvio estatÃ­stica")
         assert score > 0
 
     def test_simple_wh_question(self):
-        score, _ = _compute_complexity_score("qual é a capital do Brasil?")
+        score, _ = _compute_complexity_score("qual Ã© a capital do Brasil?")
         # Has both simple (wh-question) and question mark penalty, net should be negative-ish
-        # but "qual é a capital do Brasil" doesn't match complex keywords
+        # but "qual Ã© a capital do Brasil" doesn't match complex keywords
         assert isinstance(score, float)
 
     def test_score_clamped(self):
@@ -204,7 +206,7 @@ class TestComputeComplexityScore:
 
 class TestKeywordScore:
     def test_multiple_complex_keywords_boost(self):
-        text = "análise código debug refatorar teste"
+        text = "anÃ¡lise cÃ³digo debug refatorar teste"
         score, reasons = _keyword_score(text)
         assert score > 0.3
         assert len(reasons) >= 3
@@ -226,11 +228,12 @@ class TestKeywordScore:
 
 
 class TestModelRouterSimpleQueries:
-    def test_greeting_routes_to_fast_model(self):
+    def test_greeting_routes_to_fast_model(self, monkeypatch):
+        monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         decision = router.route("hello")
         assert decision.complexity == Complexity.SIMPLE
-        assert decision.model_id == "llama3.2-3b-q5km"
+        assert decision.model_id == "qwen3-4b-q4km"
 
     def test_short_question_simple(self):
         router = ModelRouter()
@@ -242,18 +245,29 @@ class TestModelRouterSimpleQueries:
         decision = router.route("bom dia")
         assert decision.complexity == Complexity.SIMPLE
 
+    def test_missing_fast_model_falls_back_to_installed_default(self, monkeypatch):
+        def model_exists(_settings, model_id):
+            return model_id == "qwen2.5-vl-7b-q4km"
+
+        monkeypatch.setattr("core.model_router._model_file_exists", model_exists)
+        router = ModelRouter()
+        decision = router.route("hello")
+
+        assert decision.complexity == Complexity.SIMPLE
+        assert decision.model_id == "qwen2.5-vl-7b-q4km"
+
 
 class TestModelRouterComplexQueries:
     def test_code_query_complex(self):
         router = ModelRouter()
         decision = router.route(
-            "criar um código python para análise de dados com relatório detalhado e testes"
+            "criar um cÃ³digo python para anÃ¡lise de dados com relatÃ³rio detalhado e testes"
         )
         assert decision.complexity in (Complexity.MEDIUM, Complexity.COMPLEX)
 
     def test_long_analysis_complex(self):
         query = (
-            "Faça uma análise detalhada do documento anexo, comparando os dados estatísticos " * 5
+            "FaÃ§a uma anÃ¡lise detalhada do documento anexo, comparando os dados estatÃ­sticos " * 5
         )
         router = ModelRouter()
         decision = router.route(query)
@@ -264,6 +278,38 @@ class TestModelRouterComplexQueries:
         decision_no_doc = router.route("analise isso", has_document=False)
         decision_doc = router.route("analise isso", has_document=True)
         assert decision_doc.score >= decision_no_doc.score
+
+    def test_text_document_uses_active_default_model(self, monkeypatch):
+        monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
+        router = ModelRouter()
+        decision = router.route("analise este documento", has_document=True)
+
+        assert decision.model_id == "qwen2.5-vl-7b-q4km"
+        assert decision.complexity == Complexity.COMPLEX
+
+    def test_image_routes_to_vision_model(self, monkeypatch):
+        monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
+        router = ModelRouter()
+        decision = router.route(
+            "descreva o anexo",
+            has_document=True,
+            has_image=True,
+        )
+
+        assert decision.model_id == "qwen2.5-vl-7b-q4km"
+
+    def test_deep_analysis_routes_to_reasoning_model(self, monkeypatch):
+        monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
+        router = ModelRouter()
+        decision = router.route("faca uma analise profunda de viabilidade financeira")
+
+        assert decision.model_id == "deepseek-r1-distill-qwen-7b-q4km"
+
+    def test_balanced_general_query_routes_to_qwen25_vl(self):
+        router = ModelRouter()
+        decision = router.route("explique como organizar o estoque da empresa")
+
+        assert decision.model_id == "qwen2.5-vl-7b-q4km"
 
 
 class TestModelRouterMediumQueries:
@@ -291,13 +337,18 @@ class TestModelRouterDecisionDetails:
             decision = router.route(q)
             assert 0.0 <= decision.confidence <= 1.0
 
-    def test_model_id_matches_complexity(self):
+    def test_model_id_matches_complexity(self, monkeypatch):
+        monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         simple = router.route("hi")
-        assert simple.model_id == "llama3.2-3b-q5km"
+        assert simple.model_id == "qwen3-4b-q4km"
 
-        complex_q = router.route("criar código python detalhado com análise e relatório")
-        assert complex_q.model_id == "qwen2.5-vl-7b-q4km"
+        complex_q = router.route(
+            "criar codigo python detalhado com analise, relatorio completo, "
+            "debug, testes, performance, estatistica e dashboard"
+        )
+        assert complex_q.complexity == Complexity.COMPLEX
+        assert complex_q.model_id == "qwen3-14b-q4km"
 
 
 class TestModelRouterClassifyComplexity:
@@ -312,7 +363,9 @@ class TestModelRouterClassifyComplexity:
 
     def test_complex_classification(self):
         router = ModelRouter()
-        c = router.classify_complexity("criar código python análise detalhada relatório completo")
+        c = router.classify_complexity(
+            "criar cÃ³digo python anÃ¡lise detalhada relatÃ³rio completo"
+        )
         assert c in (Complexity.MEDIUM, Complexity.COMPLEX)
 
 
@@ -334,10 +387,11 @@ class TestModelRouterGetModelForQuery:
         model = router.get_model_for_query("hi")
         assert isinstance(model, str)
 
-    def test_simple_returns_fast(self):
+    def test_simple_returns_fast(self, monkeypatch):
+        monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         model = router.get_model_for_query("oi")
-        assert model == "llama3.2-3b-q5km"
+        assert model == "qwen3-4b-q4km"
 
 
 class TestModelRouterCascade:

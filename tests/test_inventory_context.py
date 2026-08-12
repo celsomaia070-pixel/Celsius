@@ -1,4 +1,6 @@
-"""Tests for inventory context visibility in AI responses."""
+"""Tests for inventory service and tools."""
+
+from __future__ import annotations
 
 import sys
 from enum import Enum
@@ -23,78 +25,129 @@ class FakeColunaKanban(str, Enum):
         }[self]
 
 
+class FakeItem:
+    def __init__(
+        self,
+        nome,
+        categoria,
+        quantidade,
+        item_id,
+        localizacao="em_estoque",
+        estoque_min=2,
+        estoque_max=20,
+    ):
+        self.id = item_id
+        self.nome = nome
+        self.categoria = categoria
+        self.quantidade = quantidade
+        self.estoque_min = estoque_min
+        self.estoque_max = estoque_max
+        self.localizacao = localizacao
+
+    @property
+    def precisa_repor(self):
+        return self.quantidade <= self.estoque_min
+
+
+class FakeMovimentacao:
+    def __init__(self, item_nome, quantidade, quantidade_anterior, quantidade_nova):
+        self.item_nome = item_nome
+        self.quantidade = quantidade
+        self.quantidade_anterior = quantidade_anterior
+        self.quantidade_nova = quantidade_nova
+
+
 class FakeInventoryService:
     def __init__(self, items):
-        self._items = items
+        self._items = {item.id: item for item in items}
 
     def get_all_items(self):
-        return list(self._items)
+        return list(self._items.values())
 
+    def get_item(self, item_id):
+        return self._items.get(item_id)
 
-def _item(
-    nome: str,
-    categoria: str,
-    quantidade: int,
-    *,
-    item_id: str,
-    localizacao: str = "em_estoque",
-    estoque_min: int = 2,
-    estoque_max: int = 20,
-):
-    return SimpleNamespace(
-        id=item_id,
-        nome=nome,
-        categoria=categoria,
-        quantidade=quantidade,
-        estoque_min=estoque_min,
-        estoque_max=estoque_max,
-        localizacao=localizacao,
-        precisa_repor=quantidade <= estoque_min,
-    )
+    def buscar(self, query):
+        q = query.lower().strip()
+        return [i for i in self._items.values() if q in i.nome.lower() or q in i.categoria.lower()]
+
+    def itens_estoque_baixo(self):
+        return [i for i in self._items.values() if i.precisa_repor]
+
+    def entrada(self, item_id, quantidade):
+        item = self._items.get(item_id)
+        if not item or quantidade <= 0:
+            return None
+        antiga = item.quantidade
+        item.quantidade += quantidade
+        return FakeMovimentacao(item.nome, quantidade, antiga, item.quantidade)
+
+    def saida(self, item_id, quantidade):
+        item = self._items.get(item_id)
+        if not item or quantidade <= 0 or quantidade > item.quantidade:
+            return None
+        antiga = item.quantidade
+        item.quantidade -= quantidade
+        return FakeMovimentacao(item.nome, quantidade, antiga, item.quantidade)
+
+    def adicionar_item(self, nome, categoria, quantidade, estoque_min, estoque_max):
+        new_id = f"new_{len(self._items)}"
+        item = FakeItem(
+            nome, categoria, quantidade, new_id, estoque_min=estoque_min, estoque_max=estoque_max
+        )
+        self._items[item.id] = item
+        return item
 
 
 @pytest.fixture
 def fake_inventory(monkeypatch):
     items = [
-        _item("Parafuso M8", "Produtos", 50, item_id="p1"),
-        _item("Martelo", "Ferramentas", 3, item_id="m1"),
-        _item("Oleo 20W50", "Insumos", 1, item_id="o1", localizacao="critico"),
+        FakeItem("Parafuso M8", "Produtos", 50, item_id="p1"),
+        FakeItem("Martelo", "Ferramentas", 3, item_id="m1"),
+        FakeItem("Oleo 20W50", "Insumos", 1, item_id="o1", localizacao="critico"),
     ]
+    service = FakeInventoryService(items)
     module = SimpleNamespace(
         ColunaKanban=FakeColunaKanban,
-        get_inventory_service=lambda: FakeInventoryService(items),
+        get_inventory_service=lambda: service,
     )
     monkeypatch.setitem(sys.modules, "core.inventory", module)
-    return items
+    return service
 
 
-class TestInventoryContext:
-    def test_general_product_question_keeps_full_inventory(self, fake_inventory):
-        from ai.engine import _obter_contexto_estoque
+class TestInventoryTools:
+    def test_listar_estoque_returns_all_items(self, fake_inventory):
+        from ai.tools import _tool_listar_estoque
 
-        context = _obter_contexto_estoque("quais produtos tenho no meu estoque?")
+        result = _tool_listar_estoque()
+        assert "Parafuso M8" in result
+        assert "Martelo" in result
+        assert "Oleo 20W50" in result
 
-        assert "Dados do estoque do usuario (3 itens" in context
-        assert "Parafuso M8" in context
-        assert "Martelo" in context
-        assert "Oleo 20W50" in context
-        assert "itens encontrados" not in context
+    def test_buscar_item_estoque_by_name(self, fake_inventory):
+        from ai.tools import _tool_buscar_item_estoque
 
-    def test_direct_inventory_list_response_includes_all_items(self, fake_inventory):
-        from ai.engine import _responder_lista_estoque_direta
+        result = _tool_buscar_item_estoque("parafuso")
+        assert "Parafuso M8" in result
+        assert "Martelo" not in result
 
-        response = _responder_lista_estoque_direta("listar meu estoque completo")
+    def test_entrada_estoque_increases_quantity(self, fake_inventory):
+        from ai.tools import _tool_entrada_estoque
 
-        assert "Estoque completo: 3 item" in response
-        assert "Parafuso M8" in response
-        assert "Martelo" in response
-        assert "Oleo 20W50" in response
+        result = _tool_entrada_estoque("p1", 10)
+        assert "60" in result  # 50 + 10
+        assert fake_inventory.get_item("p1").quantidade == 60
 
-    def test_specific_inventory_question_still_filters_by_item_name(self, fake_inventory):
-        from ai.engine import _obter_contexto_estoque
+    def test_saida_estoque_decreases_quantity(self, fake_inventory):
+        from ai.tools import _tool_saida_estoque
 
-        context = _obter_contexto_estoque("quanto de parafuso tenho?")
+        result = _tool_saida_estoque("p1", 5)
+        assert "45" in result  # 50 - 5
+        assert fake_inventory.get_item("p1").quantidade == 45
 
-        assert "Dados do estoque (itens encontrados)" in context
-        assert "Parafuso M8" in context
-        assert "Martelo" not in context
+    def test_itens_estoque_baixo_returns_critical(self, fake_inventory):
+        from ai.tools import _tool_itens_estoque_baixo
+
+        result = _tool_itens_estoque_baixo()
+        assert "Oleo 20W50" in result
+        assert "Parafuso M8" not in result

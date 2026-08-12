@@ -115,12 +115,11 @@ def _get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         try:
-            from sentence_transformers import SentenceTransformer
-
+            from core.embeddings import create_sentence_transformer
             from core.settings import get_settings
 
             settings = get_settings()
-            _embedding_model = SentenceTransformer(settings.embedding_model)
+            _embedding_model = create_sentence_transformer(settings.embedding_model)
         except Exception as e:
             logger.warning("Failed to load embedding model: %s", e)
             return None

@@ -14,6 +14,11 @@ class TestSupplierService:
             telefone="11999990000",
             email="compras@example.com",
             categoria="Pecas",
+            documento="12.345.678/0001-90",
+            produtos="Pastilhas de freio, filtros e oleos",
+            prazo_pagamento="28 dias",
+            lead_time_dias="3",
+            status="Preferencial",
             observacoes="Entrega em ate 3 dias.",
         )
 
@@ -24,6 +29,8 @@ class TestSupplierService:
         assert suppliers[0].id == supplier.id
         assert suppliers[0].nome == "Auto Pecas Maia"
         assert suppliers[0].categoria == "Pecas"
+        assert suppliers[0].documento == "12.345.678/0001-90"
+        assert suppliers[0].status == "Preferencial"
 
     def test_update_delete_and_search_supplier(self, tmp_path):
         service = SupplierService(data_file=tmp_path / "suppliers.json")
@@ -34,11 +41,14 @@ class TestSupplierService:
             nome="Distribuidora Central Ltda",
             contato="Ana",
             categoria="Material de escritorio",
+            produtos="Papel, toner e embalagens",
+            status="Ativo",
         )
 
         assert updated is not None
         assert updated.contato == "Ana"
         assert service.search("escritorio")[0].id == supplier.id
+        assert service.search("toner")[0].id == supplier.id
         assert service.delete(supplier.id) is True
         assert service.list_all() == []
 

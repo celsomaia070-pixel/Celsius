@@ -53,9 +53,7 @@ def cmd_generate_keypair(args):
 
 
 def cmd_generate_license(args):
-    private_key_pem = None
-    if args.private_key:
-        private_key_pem = Path(args.private_key).read_bytes()
+    private_key_pem = Path(args.private_key).read_bytes()
 
     if args.expiry:
         expiry_date = datetime.fromisoformat(args.expiry)
@@ -168,7 +166,11 @@ def main():
     lic.add_argument("--days", type=int, help="Dias ate expirar")
     lic.add_argument("--expiry", help="Data de expiracao (YYYY-MM-DD)")
     lic.add_argument("--hwid", help="Hardware ID para vincular")
-    lic.add_argument("--private-key", help="Caminho para chave privada PEM")
+    lic.add_argument(
+        "--private-key",
+        required=True,
+        help="Caminho para a chave privada PEM, mantida fora do projeto",
+    )
     lic.add_argument("--save", help="Salvar em arquivo JSON")
 
     subparsers.add_parser("trials", help="Listar trials e licencas")

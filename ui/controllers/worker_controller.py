@@ -141,6 +141,26 @@ class WorkerController(QObject):
         self._voz_worker.finished.connect(self.voice_finished.emit)
         self._voz_worker.start()
 
+    def start_voice_stream(self, *, force_enabled: bool = False):
+        """Inicia uma sessao continua de voz para receber trechos em fila."""
+        if self._voz_worker and self._voz_worker.isRunning():
+            self._voz_worker.stop()
+        self._voz_worker = VozWorker("", force_enabled=force_enabled, streaming=True)
+        self._voz_worker.erro_tts.connect(self.voice_error.emit)
+        self._voz_worker.audio_ready.connect(self.voice_audio_ready.emit)
+        self._voz_worker.finished.connect(self.voice_finished.emit)
+        self._voz_worker.start()
+
+    def enqueue_voice_chunk(self, text: str, *, continuation: bool = True):
+        """Adiciona um trecho de fala na sessao continua atual."""
+        if self._voz_worker:
+            self._voz_worker.enqueue_text(text, continuation=continuation)
+
+    def finish_voice_stream(self):
+        """Fecha a entrada da sessao continua apos enfileirar todos os trechos."""
+        if self._voz_worker:
+            self._voz_worker.finish_stream()
+
     def stop_voice(self):
         """Para sÃ­ntese de voz."""
         if self._voz_worker and self._voz_worker.isRunning():

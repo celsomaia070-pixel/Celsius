@@ -39,9 +39,10 @@ class ModernInputArea(QWidget):
 
     def _setup_ui(self):
         s = self._scheme
+        self.setObjectName("inputArea")
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(24, 10, 24, 20)
         main_layout.setSpacing(0)
 
         # Container with rounded border
@@ -49,7 +50,7 @@ class ModernInputArea(QWidget):
         self.container.setObjectName("inputContainer")
         container_layout = QVBoxLayout(self.container)
         container_layout.setContentsMargins(
-            SPACING.space_3, SPACING.space_2, SPACING.space_3, SPACING.space_2
+            SPACING.space_3, SPACING.space_3, SPACING.space_3, SPACING.space_3
         )
         container_layout.setSpacing(SPACING.space_2)
 
@@ -90,7 +91,7 @@ class ModernInputArea(QWidget):
         self.input = QLineEdit()
         self.input.setPlaceholderText("Mensagem...")
         self.input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.input.setFixedHeight(40)
+        self.input.setFixedHeight(44)
         self.input.setStyleSheet(f"""
             QLineEdit {{
                 background: transparent;
@@ -181,15 +182,43 @@ class ModernInputArea(QWidget):
         """)
         input_row.addWidget(self.model_combo)
 
+        self.btn_send = QPushButton()
+        self.btn_send.setIcon(icon("paper-plane", s.text_on_accent))
+        self.btn_send.setToolTip("Enviar mensagem (Enter)")
+        self.btn_send.setCursor(Qt.PointingHandCursor)
+        self.btn_send.setFixedSize(40, 40)
+        self.btn_send.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.accent_primary};
+                border: 1px solid {s.accent_primary};
+                border-radius: {RADIUS.radius_md}px;
+                padding: {SPACING.space_2}px;
+            }}
+            QPushButton:hover {{
+                background: {s.accent_hover};
+                border-color: {s.accent_hover};
+            }}
+            QPushButton:pressed {{
+                background: {s.accent_pressed};
+                border-color: {s.accent_pressed};
+            }}
+        """)
+        self.btn_send.clicked.connect(self._on_send)
+        input_row.addWidget(self.btn_send)
+
         container_layout.addLayout(input_row)
 
         main_layout.addWidget(self.container)
 
         self.setStyleSheet(f"""
+            #inputArea {{
+                background: {s.bg_primary};
+                border: none;
+            }}
             #inputContainer {{
                 background: {s.bg_secondary};
                 border: 1px solid {s.border_default};
-                border-radius: 24px;
+                border-radius: {RADIUS.radius_lg}px;
             }}
         """)
 
@@ -218,6 +247,7 @@ class ModernInputArea(QWidget):
         self.btn_mic.setEnabled(not busy)
         self.btn_voice.setEnabled(not busy)
         self.model_combo.setEnabled(not busy)
+        self.btn_send.setEnabled(not busy)
         if busy:
             self.input.setPlaceholderText("Celsius esta respondendo...")
         else:
@@ -280,21 +310,37 @@ class ModernInputArea(QWidget):
             self.btn_mic.setIcon(icon("microphone", self._scheme.text_muted))
 
     def set_models(self, models: list, current_model: str = ""):
-        self.model_combo.clear()
-        self.model_combo.addItems(models)
-        if current_model:
-            idx = self.model_combo.findText(current_model)
-            if idx >= 0:
-                self.model_combo.setCurrentIndex(idx)
+        self.model_combo.blockSignals(True)
+        try:
+            self.model_combo.clear()
+            for model in models:
+                if isinstance(model, dict):
+                    label = str(model.get("label") or model.get("name") or model.get("id") or "")
+                    self.model_combo.addItem(label, model)
+                    item = self.model_combo.model().item(self.model_combo.count() - 1)
+                    if item is not None:
+                        item.setEnabled(bool(model.get("installed", True)))
+                else:
+                    self.model_combo.addItem(str(model), model)
+            if current_model:
+                idx = self.model_combo.findText(current_model)
+                if idx >= 0:
+                    self.model_combo.setCurrentIndex(idx)
+        finally:
+            self.model_combo.blockSignals(False)
 
     def set_scheme(self, scheme):
         self._scheme = scheme
         s = scheme
         self.setStyleSheet(f"""
+            #inputArea {{
+                background: {s.bg_primary};
+                border: none;
+            }}
             #inputContainer {{
                 background: {s.bg_secondary};
                 border: 1px solid {s.border_default};
-                border-radius: 24px;
+                border-radius: {RADIUS.radius_lg}px;
             }}
         """)
         self.input.setStyleSheet(f"""
@@ -332,6 +378,10 @@ class ModernInputArea(QWidget):
             QPushButton:hover {{
                 background: {s.bg_hover};
             }}
+            QPushButton:checked {{
+                background: {s.accent_subtle};
+                border: 1px solid {s.accent_primary};
+            }}
         """)
         self.btn_voice.setIcon(icon("volume-up", s.text_muted))
         self.btn_voice.setStyleSheet(f"""
@@ -365,5 +415,22 @@ class ModernInputArea(QWidget):
                 background: {s.bg_secondary};
                 border: 1px solid {s.border_default};
                 selection-background-color: {s.accent_primary};
+            }}
+        """)
+        self.btn_send.setIcon(icon("paper-plane", s.text_on_accent))
+        self.btn_send.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.accent_primary};
+                border: 1px solid {s.accent_primary};
+                border-radius: {RADIUS.radius_md}px;
+                padding: {SPACING.space_2}px;
+            }}
+            QPushButton:hover {{
+                background: {s.accent_hover};
+                border-color: {s.accent_hover};
+            }}
+            QPushButton:pressed {{
+                background: {s.accent_pressed};
+                border-color: {s.accent_pressed};
             }}
         """)

@@ -1,7 +1,6 @@
 """Conversation versioning and full-text search system."""
 
 import builtins
-import hashlib
 import json
 import os
 import re
@@ -20,8 +19,13 @@ from core.telemetry import (
     trace_span,
 )
 
-_CONVERSATIONS_DIR = Path(__file__).resolve().parent.parent / "conversations"
 _MAX_VERSIONS = 5
+
+
+def _default_conversations_dir() -> Path:
+    from core.settings import get_settings
+
+    return get_settings().data_dir / "conversations"
 
 
 def _now_iso() -> str:
@@ -29,7 +33,7 @@ def _now_iso() -> str:
 
 
 def _generate_id() -> str:
-    return hashlib.md5(uuid.uuid4().bytes).hexdigest()[:12]
+    return uuid.uuid4().hex[:12]
 
 
 def _tokenize(text: str) -> list[str]:
@@ -175,7 +179,7 @@ class ConversationManager:
     """Manages versioned conversations with full-text search."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self._dir = base_dir or _CONVERSATIONS_DIR
+        self._dir = base_dir or _default_conversations_dir()
         self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._search = FullTextSearch()
@@ -336,7 +340,7 @@ class ConversationManager:
 
     def search(self, query: str, limit: int = 20) -> builtins.list[dict[str, Any]]:
         """Full-text search across all conversations."""
-        with trace_span("conversation.search", {"query": query}):
+        with trace_span("conversation.search", {"query_length": len(query)}):
             results = self._search.search(query, limit=limit)
             record_metric(MetricNames.MEMORY_SEARCHES_TOTAL, 1, {"source": "conversation"})
             return results

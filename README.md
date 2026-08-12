@@ -72,7 +72,7 @@ local. Se HTTPS for desligado, alguns navegadores podem bloquear o microfone.
 ## Comeco Rapido
 
 ```powershell
-git clone https://github.com/celso/celsius.git
+git clone https://github.com/celsomaia070-pixel/Celsius.git
 cd celsius
 
 python -m venv .venv
@@ -99,12 +99,9 @@ python -m ruff check .
 python -m pytest -q
 ```
 
-Resultado validado localmente:
-
-```text
-438 passed, 3 skipped
-All checks passed!
-```
+O total de testes evolui junto com o produto. A execucao e considerada valida
+quando ambos os comandos terminam sem erros; o CI repete essa verificacao em
+Windows e Linux.
 
 ## Documentacao
 
@@ -113,6 +110,7 @@ All checks passed!
 - [Desenvolvimento](docs/DEVELOPMENT.md)
 - [Arquitetura](docs/ARCHITECTURE.md)
 - [Configuracao](docs/CONFIGURATION.md)
+- [Privacidade e protecao de dados](docs/PRIVACY.md)
 - [Build e instalador](docs/BUILD.md)
 - [Seguranca](SECURITY.md)
 - [Contribuicao](CONTRIBUTING.md)

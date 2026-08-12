@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+from core.sandbox import build_restricted_wrapper
+
 # Win32 constants
 JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
 JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
@@ -38,7 +40,7 @@ class WindowsSandboxConfig:
     cpu_time_limit_seconds: int = 30
     process_memory_limit_mb: int = 256
     job_memory_limit_mb: int = 512
-    active_process_limit: int = 4
+    active_process_limit: int = 1
     kill_on_job_close: bool = True
     die_on_unhandled_exception: bool = True
 
@@ -184,7 +186,7 @@ def executar_codigo_windows(
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".py", delete=False, encoding="utf-8"
         ) as f:
-            f.write(codigo)
+            f.write(build_restricted_wrapper(codigo))
             temp_path = f.name
 
         env = _sandbox_env()
@@ -215,12 +217,24 @@ def executar_codigo_windows(
                 proc_handle = getattr(process, "_handle", None)
                 if proc_handle is None:
                     proc_handle = getattr(process, "process_handle", None)
-                if proc_handle is not None:
-                    assigned = kernel32.AssignProcessToJobObject(job_handle, proc_handle)
-                    if not assigned:
-                        err = ctypes.get_last_error()
-                        if err != ERROR_NOT_FOUND:
-                            logger.warning("AssignProcessToJobObject failed: %s", err)
+                if proc_handle is None:
+                    process.kill()
+                    process.wait()
+                    return WindowsSandboxResult(
+                        stdout="",
+                        stderr="Security error: handle do processo indisponivel para o Job Object.",
+                        returncode=-1,
+                    )
+                assigned = kernel32.AssignProcessToJobObject(job_handle, proc_handle)
+                if not assigned:
+                    err = ctypes.get_last_error()
+                    process.kill()
+                    process.wait()
+                    return WindowsSandboxResult(
+                        stdout="",
+                        stderr=f"Security error: falha ao aplicar Job Object ({err}).",
+                        returncode=-1,
+                    )
 
                 stdout, stderr = process.communicate(timeout=timeout + 5)
                 stdout = stdout[:max_output]

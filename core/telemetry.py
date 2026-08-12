@@ -150,6 +150,17 @@ def init_telemetry(
 
     if enabled is None:
         enabled = _telemetry_enabled_by_settings()
+    if enabled:
+        try:
+            from core.settings import get_settings
+
+            if get_settings().customer.local_offline_required:
+                _logger.warning(
+                    "Telemetry disabled because local/offline mode is required by the customer profile"
+                )
+                enabled = False
+        except Exception:
+            pass
     if not enabled:
         _tracer = _noop_tracer
         _meter = _noop_meter

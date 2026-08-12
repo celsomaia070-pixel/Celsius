@@ -76,11 +76,18 @@ Ao adicionar uma funcionalidade:
 
 ## Dependencias
 
-- Runtime: `requirements.txt`.
-- Desenvolvimento: `requirements-dev.in`.
-- Metadados do pacote: `pyproject.toml`.
+`pyproject.toml` e a unica fonte editavel das dependencias. Os arquivos
+`requirements.in`, `requirements.txt` e `requirements-dev.in` existem para
+compatibilidade com instaladores e sao gerados automaticamente.
 
-Ao adicionar dependencia nova, atualize o arquivo certo e rode os testes.
+Ao adicionar ou atualizar uma dependencia:
+
+```powershell
+python tools\sync_requirements.py
+python tools\sync_requirements.py --check
+```
+
+O CI falha quando esses arquivos ficam diferentes do `pyproject.toml`.
 
 ## Git
 

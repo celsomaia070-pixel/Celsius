@@ -15,6 +15,7 @@ from core.hardware import (
     detect_hardware,
     estimate_tokens_per_sec,
 )
+from core.model_catalog import DEFAULT_LLM_MODEL, FAST_LLM_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +88,8 @@ TIER_COMPLETO = HardwareTier(
     min_ram_gb=24,
     min_vram_mb=6000,
     min_cpu_cores=6,
-    main_model_id="qwen2.5-vl-7b-q4km",
-    fast_model_id="llama3.2-3b-q5km",
+    main_model_id=DEFAULT_LLM_MODEL,
+    fast_model_id=FAST_LLM_MODEL,
     n_gpu_layers=-1,
     n_ctx=16384,
     n_batch=1024,
@@ -99,8 +100,8 @@ TIER_COMPLETO_GPU = HardwareTier(
     min_ram_gb=16,
     min_vram_mb=6000,
     min_cpu_cores=4,
-    main_model_id="qwen2.5-vl-7b-q4km",
-    fast_model_id="llama3.2-3b-q5km",
+    main_model_id=DEFAULT_LLM_MODEL,
+    fast_model_id=FAST_LLM_MODEL,
     n_gpu_layers=-1,
     n_ctx=8192,
     n_batch=1024,
@@ -111,8 +112,8 @@ TIER_LEVE_RAM = HardwareTier(
     min_ram_gb=12,
     min_vram_mb=0,
     min_cpu_cores=4,
-    main_model_id="gemma3-4b-q4km",
-    fast_model_id="llama3.2-3b-q5km",
+    main_model_id=FAST_LLM_MODEL,
+    fast_model_id=FAST_LLM_MODEL,
     n_gpu_layers=0,
     n_ctx=4096,
     n_batch=512,
@@ -123,8 +124,8 @@ TIER_LEVE = HardwareTier(
     min_ram_gb=8,
     min_vram_mb=0,
     min_cpu_cores=2,
-    main_model_id="llama3.2-3b-q5km",
-    fast_model_id="llama3.2-3b-q5km",
+    main_model_id=FAST_LLM_MODEL,
+    fast_model_id=FAST_LLM_MODEL,
     n_gpu_layers=0,
     n_ctx=2048,
     n_batch=256,
@@ -135,8 +136,8 @@ TIER_MINIMO = HardwareTier(
     min_ram_gb=0,
     min_vram_mb=0,
     min_cpu_cores=0,
-    main_model_id="llama3.2-3b-q5km",
-    fast_model_id="llama3.2-3b-q5km",
+    main_model_id=FAST_LLM_MODEL,
+    fast_model_id=FAST_LLM_MODEL,
     n_gpu_layers=0,
     n_ctx=1024,
     n_batch=128,
@@ -184,6 +185,8 @@ def select_optimal_model(
 
     tier = select_tier(profile)
 
+    # Keep the main chat model balanced; the router sends document/image tasks
+    # to the vision model only when the request actually needs it.
     main_model_id = tier.main_model_id
     if not prefer_multimodal:
         fast_models = [m for m in GGUF_MODELS if m.category == "fast"]

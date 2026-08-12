@@ -25,9 +25,11 @@ from PySide6.QtWidgets import (
 from core.business_records import BusinessRecordService, get_business_record_service
 from core.memory import get_memory_service
 from core.mobile_access import ensure_mobile_token
+from core.module_schema import module_fields, module_primary_field, module_summary
 from core.modules import get_module_definition, module_catalog, suggest_modules_for_company
 from core.settings import Settings, get_settings
 from core.suppliers import SupplierService, get_supplier_service
+from core.tts import available_tts_profiles, resolve_tts_profile
 from ui.theme.schemes import ColorScheme, get_scheme
 
 
@@ -36,7 +38,7 @@ class CaixaMemoriaDialog(QDialog):
         super().__init__(parent)
         self.memory_service = memory_service or get_memory_service()
         self._scheme = scheme or get_scheme()
-        self.setWindowTitle("Adicionar Memória")
+        self.setWindowTitle("Adicionar MemÃ³ria")
         self.setFixedSize(450, 160)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self._apply_theme()
@@ -215,6 +217,13 @@ class FornecedoresDialog(QDialog):
         self.input_telefone = QLineEdit()
         self.input_email = QLineEdit()
         self.input_categoria = QLineEdit()
+        self.input_documento = QLineEdit()
+        self.input_produtos = QLineEdit()
+        self.input_prazo_pagamento = QLineEdit()
+        self.input_lead_time = QLineEdit()
+        self.combo_status = QComboBox()
+        self.combo_status.setEditable(True)
+        self.combo_status.addItems(["Ativo", "Preferencial", "Cotacao", "Inativo"])
         self.input_observacoes = QTextEdit()
         self.input_observacoes.setMinimumHeight(120)
         self.input_observacoes.setPlaceholderText(
@@ -226,6 +235,11 @@ class FornecedoresDialog(QDialog):
         form.addRow("Telefone:", self.input_telefone)
         form.addRow("E-mail:", self.input_email)
         form.addRow("Categoria:", self.input_categoria)
+        form.addRow("CNPJ/Documento:", self.input_documento)
+        form.addRow("Produtos:", self.input_produtos)
+        form.addRow("Prazo pagto.:", self.input_prazo_pagamento)
+        form.addRow("Entrega dias:", self.input_lead_time)
+        form.addRow("Status:", self.combo_status)
         form.addRow("Observacoes:", self.input_observacoes)
         content.addLayout(form, 2)
 
@@ -271,7 +285,7 @@ class FornecedoresDialog(QDialog):
             QLabel#subtitle {{
                 color: {s.text_secondary};
             }}
-            QLineEdit, QTextEdit, QListWidget {{
+            QLineEdit, QTextEdit, QListWidget, QComboBox {{
                 background-color: {s.bg_secondary};
                 border: 1px solid {s.border_default};
                 border-radius: 6px;
@@ -335,7 +349,10 @@ class FornecedoresDialog(QDialog):
         suppliers = self.supplier_service.search(self.input_search.text())
         for supplier in suppliers:
             item = QListWidgetItem()
-            details = supplier.categoria or supplier.contato or supplier.telefone or "Sem categoria"
+            detail_parts = [
+                value for value in (supplier.status, supplier.categoria, supplier.contato) if value
+            ]
+            details = " | ".join(detail_parts[:2]) or supplier.telefone or "Sem categoria"
             item.setText(f"{supplier.nome}\n{details}")
             item.setData(Qt.UserRole, supplier.id)
             self.list_suppliers.addItem(item)
@@ -358,6 +375,15 @@ class FornecedoresDialog(QDialog):
         self.input_telefone.setText(supplier.telefone)
         self.input_email.setText(supplier.email)
         self.input_categoria.setText(supplier.categoria)
+        self.input_documento.setText(supplier.documento)
+        self.input_produtos.setText(supplier.produtos)
+        self.input_prazo_pagamento.setText(supplier.prazo_pagamento)
+        self.input_lead_time.setText(supplier.lead_time_dias)
+        status_index = self.combo_status.findText(supplier.status)
+        if status_index >= 0:
+            self.combo_status.setCurrentIndex(status_index)
+        else:
+            self.combo_status.setEditText(supplier.status)
         self.input_observacoes.setPlainText(supplier.observacoes)
 
     def _clear_form(self):
@@ -367,6 +393,11 @@ class FornecedoresDialog(QDialog):
         self.input_telefone.clear()
         self.input_email.clear()
         self.input_categoria.clear()
+        self.input_documento.clear()
+        self.input_produtos.clear()
+        self.input_prazo_pagamento.clear()
+        self.input_lead_time.clear()
+        self.combo_status.setCurrentIndex(0)
         self.input_observacoes.clear()
         self.input_nome.setFocus()
 
@@ -382,6 +413,11 @@ class FornecedoresDialog(QDialog):
             "telefone": self.input_telefone.text(),
             "email": self.input_email.text(),
             "categoria": self.input_categoria.text(),
+            "documento": self.input_documento.text(),
+            "produtos": self.input_produtos.text(),
+            "prazo_pagamento": self.input_prazo_pagamento.text(),
+            "lead_time_dias": self.input_lead_time.text(),
+            "status": self.combo_status.currentText(),
             "observacoes": self.input_observacoes.toPlainText(),
         }
         supplier_id = self._current_supplier_id()
@@ -401,61 +437,6 @@ class FornecedoresDialog(QDialog):
         self._refresh_list()
 
 
-MODULE_RECORD_FIELDS: dict[str, list[tuple[str, str]]] = {
-    "customers": [
-        ("nome", "Nome"),
-        ("contato", "Contato"),
-        ("telefone", "Telefone"),
-        ("email", "E-mail"),
-        ("observacoes", "Observacoes"),
-    ],
-    "products_services": [
-        ("nome", "Nome"),
-        ("categoria", "Categoria"),
-        ("preco", "Preco"),
-        ("observacoes", "Observacoes"),
-    ],
-    "quotes": [
-        ("titulo", "Titulo"),
-        ("cliente", "Cliente"),
-        ("valor", "Valor"),
-        ("status", "Status"),
-        ("observacoes", "Observacoes"),
-    ],
-    "finance": [
-        ("descricao", "Descricao"),
-        ("tipo", "Tipo"),
-        ("valor", "Valor"),
-        ("vencimento", "Vencimento"),
-        ("observacoes", "Observacoes"),
-    ],
-    "agenda": [
-        ("titulo", "Titulo"),
-        ("data_hora", "Data/Hora"),
-        ("responsavel", "Responsavel"),
-        ("observacoes", "Observacoes"),
-    ],
-    "cases_deadlines": [
-        ("titulo", "Cliente/Processo"),
-        ("prazo", "Prazo"),
-        ("status", "Status"),
-        ("observacoes", "Observacoes"),
-    ],
-    "knowledge": [
-        ("titulo", "Titulo"),
-        ("origem", "Origem"),
-        ("tipo", "Tipo"),
-        ("observacoes", "Observacoes"),
-    ],
-    "reports": [
-        ("titulo", "Relatorio"),
-        ("tipo", "Tipo"),
-        ("periodicidade", "Periodicidade"),
-        ("observacoes", "Observacoes"),
-    ],
-}
-
-
 class ModuloRegistrosDialog(QDialog):
     """Generic local registry for ready business modules."""
 
@@ -472,7 +453,7 @@ class ModuloRegistrosDialog(QDialog):
             raise ValueError(f"Modulo desconhecido: {module_id}")
         self.record_service = record_service or get_business_record_service()
         self._scheme = scheme or get_scheme()
-        self.inputs: dict[str, QLineEdit | QTextEdit] = {}
+        self.inputs: dict[str, QLineEdit | QTextEdit | QComboBox] = {}
         self.setWindowTitle(self.module.name)
         self.setMinimumSize(720, 500)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -513,14 +494,23 @@ class ModuloRegistrosDialog(QDialog):
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
 
-        for key, label in MODULE_RECORD_FIELDS.get(self.module.id, [("titulo", "Titulo")]):
-            if key == "observacoes":
+        for field in module_fields(self.module.id):
+            if field.kind == "textarea":
                 input_widget = QTextEdit()
                 input_widget.setMaximumHeight(110)
+                if field.placeholder:
+                    input_widget.setPlaceholderText(field.placeholder)
+            elif field.kind == "select":
+                input_widget = QComboBox()
+                input_widget.setEditable(True)
+                input_widget.addItems(field.options)
             else:
                 input_widget = QLineEdit()
-            self.inputs[key] = input_widget
-            form.addRow(f"{label}:", input_widget)
+                if field.placeholder:
+                    input_widget.setPlaceholderText(field.placeholder)
+            self.inputs[field.key] = input_widget
+            required_marker = " *" if field.required else ""
+            form.addRow(f"{field.label}{required_marker}:", input_widget)
         content.addLayout(form, 2)
         layout.addLayout(content, 1)
 
@@ -571,7 +561,7 @@ class ModuloRegistrosDialog(QDialog):
             QLabel#subtitle, QLabel#hint {{
                 color: {s.text_secondary};
             }}
-            QLineEdit, QTextEdit, QListWidget {{
+            QLineEdit, QTextEdit, QListWidget, QComboBox {{
                 background-color: {s.bg_secondary};
                 border: 1px solid {s.border_default};
                 border-radius: 6px;
@@ -625,7 +615,7 @@ class ModuloRegistrosDialog(QDialog):
         self.list_records.clear()
         for record in self.record_service.search(self.module.id, self.input_search.text()):
             item = QListWidgetItem()
-            detail = next((value for value in record.fields.values() if value), "Sem detalhes")
+            detail = module_summary(record.fields, self.module.id)
             item.setText(f"{record.title}\n{detail}")
             item.setData(Qt.UserRole, record.id)
             self.list_records.addItem(item)
@@ -644,6 +634,12 @@ class ModuloRegistrosDialog(QDialog):
             value = record.fields.get(key, "")
             if isinstance(widget, QTextEdit):
                 widget.setPlainText(value)
+            elif isinstance(widget, QComboBox):
+                index = widget.findText(value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+                else:
+                    widget.setEditText(value)
             else:
                 widget.setText(value)
 
@@ -652,6 +648,11 @@ class ModuloRegistrosDialog(QDialog):
         for widget in self.inputs.values():
             if isinstance(widget, QTextEdit):
                 widget.clear()
+            elif isinstance(widget, QComboBox):
+                if widget.count():
+                    widget.setCurrentIndex(0)
+                elif widget.isEditable():
+                    widget.setEditText("")
             else:
                 widget.clear()
         first = next(iter(self.inputs.values()), None)
@@ -661,9 +662,14 @@ class ModuloRegistrosDialog(QDialog):
     def _save_record(self):
         fields = {}
         for key, widget in self.inputs.items():
-            fields[key] = widget.toPlainText() if isinstance(widget, QTextEdit) else widget.text()
+            if isinstance(widget, QTextEdit):
+                fields[key] = widget.toPlainText()
+            elif isinstance(widget, QComboBox):
+                fields[key] = widget.currentText()
+            else:
+                fields[key] = widget.text()
 
-        title = fields.get("nome") or fields.get("titulo") or fields.get("descricao") or ""
+        title = fields.get(module_primary_field(self.module.id), "")
         if not title.strip():
             QMessageBox.warning(self, self.module.name, "Preencha o campo principal.")
             return
@@ -1089,11 +1095,18 @@ class ConfiguracoesDialog(QDialog):
         self.input_timezone = QLineEdit()
         self.combo_response_mode = QComboBox()
         self.combo_response_mode.addItems(["natural", "tecnico", "relatorio"])
+        self.combo_response_detail = QComboBox()
+        self.combo_response_detail.addItems(["conciso", "equilibrado", "detalhado"])
         self.input_response_temperature = QLineEdit()
         self.input_response_top_p = QLineEdit()
         self.check_voice_enabled = QCheckBox(
             "Ativar saida por voz quando o modo voz estiver ligado"
         )
+        self.combo_voice_profile = QComboBox()
+        self._voice_profiles = available_tts_profiles("edge-tts")
+        for profile in self._voice_profiles:
+            label = f"{profile.name} - {profile.description}"
+            self.combo_voice_profile.addItem(label, profile.id)
         self.combo_voice = QComboBox()
         self.combo_voice.addItems(
             [
@@ -1106,12 +1119,29 @@ class ConfiguracoesDialog(QDialog):
         self.input_voice_rate = QLineEdit()
         self.input_voice_pitch = QLineEdit()
         self.input_voice_volume = QLineEdit()
+        self.combo_voice_profile.currentIndexChanged.connect(self._apply_selected_voice_profile)
         self.check_mobile_enabled = QCheckBox("Ativar acesso local pelo celular")
         self.check_mobile_lan = QCheckBox("Permitir acesso pela mesma rede Wi-Fi")
         self.check_mobile_voice = QCheckBox("Permitir comandos de voz pelo celular")
         self.check_mobile_https = QCheckBox("Usar HTTPS local para melhorar suporte ao microfone")
         self.input_mobile_port = QLineEdit()
         self.input_mobile_token = QLineEdit()
+        self.check_notifications_enabled = QCheckBox("Ativar Canais e Notificacoes")
+        self.check_notifications_external = QCheckBox(
+            "Permitir envio por internet e servico externo"
+        )
+        self.check_notifications_confirmation = QCheckBox(
+            "Exigir confirmacao antes de enviar mensagens"
+        )
+        self.combo_notification_channel = QComboBox()
+        self.combo_notification_channel.addItems(["whatsapp", "email", "sms"])
+        self.input_whatsapp_provider = QLineEdit()
+        self.input_whatsapp_phone_id = QLineEdit()
+        self.input_whatsapp_token_env = QLineEdit()
+        self.input_email_provider = QLineEdit()
+        self.input_email_from = QLineEdit()
+        self.input_sms_provider = QLineEdit()
+        self.input_sms_sender = QLineEdit()
         self.input_business_context = QTextEdit()
         self.input_business_context.setMaximumHeight(82)
         self.input_business_context.setPlaceholderText(
@@ -1136,9 +1166,11 @@ class ConfiguracoesDialog(QDialog):
         form.addRow("Necessidades:", self.input_main_needs)
         form.addRow("", self.check_offline)
         form.addRow("Modo resposta:", self.combo_response_mode)
+        form.addRow("Nivel de detalhe:", self.combo_response_detail)
         form.addRow("Criatividade:", self.input_response_temperature)
         form.addRow("Top-p:", self.input_response_top_p)
         form.addRow("", self.check_voice_enabled)
+        form.addRow("Perfil de voz:", self.combo_voice_profile)
         form.addRow("Voz:", self.combo_voice)
         form.addRow("Velocidade:", self.input_voice_rate)
         form.addRow("Tom da voz:", self.input_voice_pitch)
@@ -1171,6 +1203,36 @@ class ConfiguracoesDialog(QDialog):
         mobile_button_row.addWidget(self.btn_regenerate_mobile_token)
         mobile_button_row.addStretch()
         layout.addLayout(mobile_button_row)
+
+        self.notifications_title = QLabel("Canais e Notificacoes")
+        self.notifications_title.setObjectName("section_title")
+        layout.addWidget(self.notifications_title)
+
+        self.notifications_hint = QLabel(
+            "WhatsApp, e-mail e SMS dependem de internet e servico externo. Tokens sensiveis "
+            "devem ficar em variaveis de ambiente, nao no arquivo local de preferencias."
+        )
+        self.notifications_hint.setWordWrap(True)
+        self.notifications_hint.setObjectName("hint")
+        layout.addWidget(self.notifications_hint)
+
+        notifications_form = QFormLayout()
+        notifications_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        notifications_form.setFormAlignment(Qt.AlignTop)
+        notifications_form.setHorizontalSpacing(14)
+        notifications_form.setVerticalSpacing(10)
+        notifications_form.addRow("", self.check_notifications_enabled)
+        notifications_form.addRow("", self.check_notifications_external)
+        notifications_form.addRow("", self.check_notifications_confirmation)
+        notifications_form.addRow("Canal padrao:", self.combo_notification_channel)
+        notifications_form.addRow("WhatsApp provedor:", self.input_whatsapp_provider)
+        notifications_form.addRow("WhatsApp phone ID:", self.input_whatsapp_phone_id)
+        notifications_form.addRow("Token env var:", self.input_whatsapp_token_env)
+        notifications_form.addRow("E-mail provedor:", self.input_email_provider)
+        notifications_form.addRow("E-mail remetente:", self.input_email_from)
+        notifications_form.addRow("SMS provedor:", self.input_sms_provider)
+        notifications_form.addRow("SMS remetente:", self.input_sms_sender)
+        layout.addLayout(notifications_form)
 
         self.modules_title = QLabel("Modulos da empresa")
         self.modules_title.setObjectName("section_title")
@@ -1228,6 +1290,15 @@ class ConfiguracoesDialog(QDialog):
             lambda: self._save_with_mobile_action("regenerate")
         )
 
+    def _apply_selected_voice_profile(self):
+        profile = resolve_tts_profile(self.combo_voice_profile.currentData())
+        if profile is None or profile.experimental:
+            return
+        self.combo_voice.setCurrentText(profile.voice)
+        self.input_voice_rate.setText(profile.rate)
+        self.input_voice_pitch.setText(profile.pitch)
+        self.input_voice_volume.setText(profile.volume)
+
     def _load_values(self):
         customer = self.settings.customer
         self.input_user_name.setText(customer.user_name)
@@ -1246,10 +1317,16 @@ class ConfiguracoesDialog(QDialog):
             self.module_checks[module.id].setChecked(module.id in enabled_modules)
         response = self.settings.response
         self.combo_response_mode.setCurrentText(response.mode)
+        self.combo_response_detail.setCurrentText(response.detail_level)
         self.input_response_temperature.setText(str(response.temperature))
         self.input_response_top_p.setText(str(response.top_p))
         voice = self.settings.voice
         self.check_voice_enabled.setChecked(voice.enabled)
+        profile_index = self.combo_voice_profile.findData(voice.profile)
+        if profile_index >= 0:
+            self.combo_voice_profile.blockSignals(True)
+            self.combo_voice_profile.setCurrentIndex(profile_index)
+            self.combo_voice_profile.blockSignals(False)
         self.combo_voice.setCurrentText(voice.voice)
         self.input_voice_rate.setText(voice.rate)
         self.input_voice_pitch.setText(voice.pitch)
@@ -1263,6 +1340,18 @@ class ConfiguracoesDialog(QDialog):
         self.check_mobile_https.setChecked(mobile.use_https)
         self.input_mobile_port.setText(str(mobile.port))
         self.input_mobile_token.setText(mobile.pairing_token)
+        notifications = self.settings.notifications
+        self.check_notifications_enabled.setChecked(notifications.enabled)
+        self.check_notifications_external.setChecked(notifications.external_services_allowed)
+        self.check_notifications_confirmation.setChecked(notifications.require_confirmation)
+        self.combo_notification_channel.setCurrentText(notifications.default_channel)
+        self.input_whatsapp_provider.setText(notifications.whatsapp_provider)
+        self.input_whatsapp_phone_id.setText(notifications.whatsapp_phone_number_id)
+        self.input_whatsapp_token_env.setText(notifications.whatsapp_token_env_var)
+        self.input_email_provider.setText(notifications.email_provider)
+        self.input_email_from.setText(notifications.email_from)
+        self.input_sms_provider.setText(notifications.sms_provider)
+        self.input_sms_sender.setText(notifications.sms_sender_id)
         self._update_mobile_status_hint()
         self.storage_hint.setText(
             f"Perfil: {self.settings.customer_profile_file}\n"
@@ -1382,10 +1471,13 @@ class ConfiguracoesDialog(QDialog):
         )
         response = self.settings.response
         response.mode = self.combo_response_mode.currentText()
+        response.detail_level = self.combo_response_detail.currentText()
         response.temperature = _float_from_input(self.input_response_temperature.text(), 0.45)
         response.top_p = _float_from_input(self.input_response_top_p.text(), 0.9)
         voice = self.settings.voice
         voice.enabled = self.check_voice_enabled.isChecked()
+        voice.provider = "edge-tts"
+        voice.profile = self.combo_voice_profile.currentData() or "natural_male_br"
         voice.voice = self.combo_voice.currentText()
         voice.rate = self.input_voice_rate.text().strip() or "+5%"
         voice.pitch = self.input_voice_pitch.text().strip() or "-2Hz"
@@ -1402,6 +1494,20 @@ class ConfiguracoesDialog(QDialog):
             mobile.port = 8787
         token_source = "" if regenerate_token else self.input_mobile_token.text()
         mobile.pairing_token = ensure_mobile_token(token_source)
+        notifications = self.settings.notifications
+        notifications.enabled = self.check_notifications_enabled.isChecked()
+        notifications.external_services_allowed = self.check_notifications_external.isChecked()
+        notifications.require_confirmation = self.check_notifications_confirmation.isChecked()
+        notifications.default_channel = self.combo_notification_channel.currentText()
+        notifications.whatsapp_provider = self.input_whatsapp_provider.text().strip()
+        notifications.whatsapp_phone_number_id = self.input_whatsapp_phone_id.text().strip()
+        notifications.whatsapp_token_env_var = (
+            self.input_whatsapp_token_env.text().strip() or "CELSIUS_WHATSAPP_TOKEN"
+        )
+        notifications.email_provider = self.input_email_provider.text().strip()
+        notifications.email_from = self.input_email_from.text().strip()
+        notifications.sms_provider = self.input_sms_provider.text().strip()
+        notifications.sms_sender_id = self.input_sms_sender.text().strip()
 
     def _update_mobile_status_hint(self):
         mobile = self.settings.mobile

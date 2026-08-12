@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f4f7f6">
+    <title>Celsius Project AI</title>
+    <link rel="icon" href="/app/assets/brand.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/app/assets/app.css?v=20260810.6">
+  </head>
+  <body data-theme="light">
+    <div class="app-shell">
+      <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+      <aside class="sidebar" id="sidebar" aria-label="Navegacao principal">
+        <div class="brand-row">
+          <svg class="wordmark" viewBox="0 0 252 48" role="img" aria-label="Celsius Project AI">
+            <text x="0" y="32" class="wordmark-main">Celsius</text>
+            <text x="96" y="32" class="wordmark-project">Project</text>
+            <text x="172" y="32" class="wordmark-ai">AI</text>
+          </svg>
+          <button class="icon-button sidebar-close" id="sidebar-close" type="button" aria-label="Fechar menu" title="Fechar menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <button class="new-chat-button" id="new-chat" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Nova conversa</span>
+        </button>
+
+        <nav class="primary-nav" aria-label="Modulos">
+          <button class="nav-item active" id="chat-button" type="button" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+            <span>Assistente</span>
+          </button>
+          <button class="nav-item" id="memory-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></svg>
+            <span>Memorias</span>
+          </button>
+          <button class="nav-item" id="documents-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>
+            <span>Documentos</span>
+          </button>
+          <button class="nav-item" id="customers-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>Clientes</span>
+          </button>
+          <button class="nav-item" id="suppliers-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5M9 10h.01M15 10h.01M9 13h.01M15 13h.01"/></svg>
+            <span>Fornecedores</span>
+          </button>
+          <button class="nav-item" id="inventory-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 8-9 5-9-5M3 8l9-5 9 5v8l-9 5-9-5Z"/><path d="M12 13v8"/></svg>
+            <span>Estoque</span>
+          </button>
+          <button class="nav-item" id="products-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8M2 7h20v5H2zM12 22V7M7 7a3 3 0 1 1 5-2.2A3 3 0 1 1 17 7"/></svg>
+            <span>Produtos e servicos</span>
+          </button>
+          <button class="nav-item" id="quotes-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v20H6zM9 6h6M9 10h6M9 14h3"/><path d="m14 17 2 2 4-4"/></svg>
+            <span>Orcamentos</span>
+          </button>
+          <button class="nav-item" id="reports-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+            <span>Relatorios</span>
+          </button>
+          <button class="nav-item" id="cases-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM8 2v4M16 2v4M8 10h8M8 14h5"/><path d="m15 17 2 2 4-4"/></svg>
+            <span>Processos e prazos</span>
+          </button>
+          <button class="nav-item" id="agenda-button" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+            <span>Agenda</span>
+          </button>
+        </nav>
+
+        <div class="conversation-section">
+          <div class="section-heading">
+            <span>Conversas</span>
+            <button class="icon-button compact" id="refresh-conversations" type="button" aria-label="Atualizar conversas" title="Atualizar conversas">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+            </button>
+          </div>
+          <div class="conversation-list" id="conversation-list" role="list"></div>
+        </div>
+
+        <div class="sidebar-footer">
+          <button class="mobile-pair-command" id="mobile-pair-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+            <span>Parear celular</span>
+          </button>
+          <div class="sidebar-status-row">
+            <div class="local-state" id="local-state">
+              <span class="status-dot"></span>
+              <span>IA local</span>
+            </div>
+            <div class="theme-switch" role="group" aria-label="Modo de exibicao">
+              <button type="button" data-theme-option="light" aria-pressed="true">LIGHT</button>
+              <button type="button" data-theme-option="green" aria-pressed="false">GREEN</button>
+              <button type="button" data-theme-option="dark" aria-pressed="false">DARK</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <button class="icon-button menu-button" id="menu-button" type="button" aria-label="Abrir menu" title="Abrir menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+          <div class="conversation-identity">
+            <h1 id="conversation-title">Nova conversa</h1>
+            <span id="company-label">Celsius Project AI</span>
+          </div>
+          <div class="privacy-state" title="Processamento executado neste computador">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Local</span>
+          </div>
+        </header>
+
+        <div class="jarvis-visual" id="jarvis-visual" data-state="idle" role="status" aria-live="polite" title="Arraste para mover. Clique duas vezes para voltar ao canto." hidden>
+          <canvas id="jarvis-canvas" width="220" height="220" aria-label="Jarvis, visualizador de atividade do Celsius"></canvas>
+          <span id="jarvis-status">Jarvis ativo</span>
+        </div>
+
+        <aside class="agenda-alert" id="agenda-alert" role="alertdialog" aria-live="assertive" aria-labelledby="agenda-alert-title" hidden>
+          <div class="agenda-alert-signal" aria-hidden="true"></div>
+          <div class="agenda-alert-copy">
+            <strong id="agenda-alert-title">Lembrete da agenda</strong>
+            <div id="agenda-alert-list"></div>
+          </div>
+          <button class="agenda-alert-dismiss" id="agenda-alert-dismiss" type="button">Desativar lembrete</button>
+        </aside>
+
+        <section class="chat-stage" id="chat-stage" aria-label="Conversa com o Celsius">
+          <div class="messages" id="messages" aria-live="polite">
+            <div class="empty-state" id="empty-state">
+              <div class="empty-mark" aria-hidden="true">C</div>
+              <h2>Como posso ajudar hoje?</h2>
+              <p id="empty-subtitle">Celsius, seu agente multimodal local.</p>
+            </div>
+          </div>
+          <button class="scroll-latest" id="scroll-latest" type="button" aria-label="Ir para a resposta mais recente" title="Ir para o final" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+        </section>
+
+        <section class="agenda-view" id="agenda-view" aria-labelledby="agenda-heading" hidden>
+          <div class="module-toolbar">
+            <div>
+              <h2 id="agenda-heading">Agenda</h2>
+              <p id="agenda-summary">Carregando compromissos...</p>
+            </div>
+            <div class="module-actions">
+              <button class="icon-button" id="agenda-refresh" type="button" aria-label="Atualizar agenda" title="Atualizar agenda">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+              </button>
+              <button class="primary-command" id="agenda-add" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <span>Novo compromisso</span>
+              </button>
+            </div>
+          </div>
+          <div class="agenda-filters" aria-label="Filtros da agenda">
+            <label class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <span class="visually-hidden">Buscar na agenda</span>
+              <input id="agenda-search" type="search" placeholder="Buscar compromisso, cliente ou responsavel">
+            </label>
+            <label>
+              <span class="visually-hidden">Filtrar por status</span>
+              <select id="agenda-status-filter">
+                <option value="">Todos os status</option>
+                <option>Agendado</option>
+                <option>Confirmado</option>
+                <option>Concluido</option>
+                <option>Remarcar</option>
+                <option>Cancelado</option>
+              </select>
+            </label>
+          </div>
+          <div class="agenda-table-wrap">
+            <table class="agenda-table">
+              <thead>
+                <tr>
+                  <th>Data e hora</th>
+                  <th>Compromisso</th>
+                  <th>Cliente / local</th>
+                  <th>Status</th>
+                  <th><span class="visually-hidden">Acoes</span></th>
+                </tr>
+              </thead>
+              <tbody id="agenda-list"></tbody>
+            </table>
+            <div class="agenda-empty" id="agenda-empty" hidden>
+              <strong>Nenhum compromisso encontrado</strong>
+              <span>Crie um compromisso ou ajuste os filtros.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="documents-view" id="documents-view" aria-labelledby="documents-heading" hidden>
+          <div class="module-toolbar">
+            <div>
+              <h2 id="documents-heading">Documentos</h2>
+              <p id="documents-summary">Carregando base de conhecimento...</p>
+            </div>
+            <div class="module-actions">
+              <button class="icon-button" id="documents-refresh" type="button" aria-label="Atualizar documentos" title="Atualizar documentos">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+              </button>
+              <button class="primary-command" id="documents-add" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <span>Adicionar documentos</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="document-metrics" aria-label="Resumo da base local">
+            <div><strong id="documents-total">0</strong><span>documentos</span></div>
+            <div><strong id="documents-indexed">0</strong><span>indexados</span></div>
+            <div><strong id="documents-processing">0</strong><span>processando</span></div>
+            <div><strong id="documents-chunks">0</strong><span>trechos pesquisaveis</span></div>
+          </div>
+
+          <form class="knowledge-search" id="knowledge-search-form">
+            <div>
+              <strong>Pesquisar na base de conhecimento</strong>
+              <span>O conteúdo permanece neste computador.</span>
+            </div>
+            <label class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <span class="visually-hidden">Pergunta para a base de conhecimento</span>
+              <input id="knowledge-search-input" type="search" required placeholder="Ex.: Qual e o prazo de entrega definido nos manuais?">
+            </label>
+            <button class="primary-command" id="knowledge-search-button" type="submit">Pesquisar</button>
+          </form>
+          <div class="knowledge-results" id="knowledge-results" hidden>
+            <div class="knowledge-results-header">
+              <strong>Trechos encontrados</strong>
+              <button class="icon-button compact" id="knowledge-results-close" type="button" aria-label="Fechar resultados" title="Fechar resultados">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div id="knowledge-results-list"></div>
+          </div>
+
+          <div class="documents-filters" aria-label="Filtros dos documentos">
+            <label class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <span class="visually-hidden">Filtrar documentos</span>
+              <input id="documents-filter" type="search" placeholder="Filtrar por nome, categoria ou responsavel">
+            </label>
+            <label>
+              <span class="visually-hidden">Filtrar documentos por status</span>
+              <select id="documents-status-filter">
+                <option value="">Todos os status</option>
+                <option>Processando</option>
+                <option>Indexado</option>
+                <option>Revisar</option>
+                <option>Arquivado</option>
+              </select>
+            </label>
+          </div>
+          <div class="documents-table-wrap">
+            <table class="documents-table">
+              <thead>
+                <tr>
+                  <th>Documento</th>
+                  <th>Categoria / origem</th>
+                  <th>Status</th>
+                  <th>Base local</th>
+                  <th><span class="visually-hidden">Acoes</span></th>
+                </tr>
+              </thead>
+              <tbody id="documents-list"></tbody>
+            </table>
+            <div class="documents-empty" id="documents-empty" hidden>
+              <strong>Nenhum documento encontrado</strong>
+              <span>Adicione um arquivo ou ajuste os filtros.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="relationships-view" id="relationships-view" aria-labelledby="relationships-heading" hidden>
+          <div class="module-toolbar">
+            <div>
+              <h2 id="relationships-heading">Clientes</h2>
+              <p id="relationships-summary">Carregando cadastros locais...</p>
+            </div>
+            <div class="module-actions">
+              <button class="icon-button" id="relationships-refresh" type="button" aria-label="Atualizar cadastros" title="Atualizar">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+              </button>
+              <button class="primary-command" id="relationships-add" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <span>Novo cliente</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="relationship-metrics" aria-label="Resumo dos cadastros">
+            <div><strong id="relationships-total">0</strong><span>cadastrados</span></div>
+            <div><strong id="relationships-active">0</strong><span>ativos</span></div>
+            <div><strong id="relationships-contactable">0</strong><span>com contato</span></div>
+            <div><strong id="relationships-profiled">0</strong><span id="relationships-profiled-label">com segmento</span></div>
+          </div>
+
+          <div class="relationships-filters" aria-label="Filtros dos cadastros">
+            <label class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <span class="visually-hidden">Buscar cadastros</span>
+              <input id="relationships-filter" type="search" placeholder="Buscar por nome, documento ou contato">
+            </label>
+            <label>
+              <span class="visually-hidden">Filtrar por status</span>
+              <select id="relationships-status-filter">
+                <option value="">Todos os status</option>
+                <option>Ativo</option>
+                <option>Inativo</option>
+                <option>Em atendimento</option>
+                <option>Preferencial</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="relationships-table-wrap">
+            <table class="relationships-table">
+              <thead>
+                <tr>
+                  <th>Nome / documento</th>
+                  <th>Contato</th>
+                  <th id="relationships-profile-heading">Segmento</th>
+                  <th>Status</th>
+                  <th><span class="visually-hidden">Acoes</span></th>
+                </tr>
+              </thead>
+              <tbody id="relationships-list"></tbody>
+            </table>
+            <div class="relationships-empty" id="relationships-empty" hidden>
+              <strong>Nenhum cadastro encontrado</strong>
+              <span>Crie um registro ou ajuste os filtros.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="inventory-view" id="inventory-view" aria-labelledby="inventory-heading" hidden>
+          <div class="module-toolbar">
+            <div>
+              <h2 id="inventory-heading">Estoque</h2>
+              <p id="inventory-summary">Carregando controle de estoque...</p>
+            </div>
+            <div class="module-actions">
+              <button class="icon-button" id="inventory-refresh" type="button" aria-label="Atualizar estoque" title="Atualizar estoque">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+              </button>
+              <button class="primary-command" id="inventory-add" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <span>Novo item</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="inventory-metrics" aria-label="Indicadores do estoque">
+            <div><strong id="inventory-total">0</strong><span>itens</span></div>
+            <div><strong id="inventory-units">0</strong><span>unidades</span></div>
+            <div><strong id="inventory-critical">0</strong><span>em reposicao</span></div>
+            <div><strong id="inventory-categories">0</strong><span>categorias</span></div>
+          </div>
+
+          <div class="module-tabs" role="tablist" aria-label="Visoes do estoque">
+            <button class="active" id="inventory-items-tab" type="button" role="tab" aria-selected="true">Itens</button>
+            <button id="inventory-movements-tab" type="button" role="tab" aria-selected="false">Movimentacoes</button>
+          </div>
+
+          <div id="inventory-items-panel" role="tabpanel">
+            <div class="inventory-filters" aria-label="Filtros do estoque">
+              <label class="search-field">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                <span class="visually-hidden">Buscar item no estoque</span>
+                <input id="inventory-filter" type="search" placeholder="Buscar item ou categoria">
+              </label>
+              <label>
+                <span class="visually-hidden">Filtrar saude do estoque</span>
+                <select id="inventory-health-filter">
+                  <option value="">Todos os status</option>
+                  <option>Normal</option><option>Critico</option><option>Sem estoque</option><option>Acima do maximo</option>
+                </select>
+              </label>
+            </div>
+            <div class="inventory-table-wrap">
+              <table class="inventory-table">
+                <thead><tr><th>Item / categoria</th><th>Quantidade</th><th>Saude</th><th>Localizacao</th><th><span class="visually-hidden">Acoes</span></th></tr></thead>
+                <tbody id="inventory-list"></tbody>
+              </table>
+              <div class="inventory-empty" id="inventory-empty" hidden><strong>Nenhum item encontrado</strong><span>Cadastre um item ou ajuste os filtros.</span></div>
+            </div>
+          </div>
+
+          <div id="inventory-movements-panel" role="tabpanel" hidden>
+            <div class="inventory-table-wrap movements-wrap">
+              <table class="inventory-table movements-table">
+                <thead><tr><th>Data e hora</th><th>Item</th><th>Movimento</th><th>Saldo</th></tr></thead>
+                <tbody id="inventory-movements-list"></tbody>
+              </table>
+              <div class="inventory-empty" id="inventory-movements-empty" hidden><strong>Nenhuma movimentacao registrada</strong><span>Entradas e saidas aparecerao aqui.</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="products-view" id="products-view" aria-labelledby="products-heading" hidden>
+          <div class="module-toolbar">
+            <div>
+              <h2 id="products-heading">Produtos e servicos</h2>
+              <p id="products-summary">Carregando catalogo comercial...</p>
+            </div>
+            <div class="module-actions">
+              <button class="icon-button" id="products-refresh" type="button" aria-label="Atualizar catalogo" title="Atualizar catalogo">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+              </button>
+              <button class="primary-command" id="products-add" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                <span>Novo cadastro</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="product-metrics" aria-label="Indicadores do catalogo">
+            <div><strong id="products-total">0</strong><span>cadastros</span></div>
+            <div><strong id="products-active">0</strong><span>ativos</span></div>
+            <div><strong id="products-products">0</strong><span>produtos</span></div>
+            <div><strong id="products-services">0</strong><span>servicos</span></div>
+            <div><strong id="products-margin">--</strong><span>margem media</span></div>
+          </div>
+
+          <div class="products-filters" aria-label="Filtros do catalogo">
+            <label class="search-field">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+              <span class="visually-hidden">Buscar no catalogo</span>
+              <input id="products-filter" type="search" placeholder="Buscar por nome, SKU ou categoria">
+            </label>
+            <label><span class="visually-hidden">Filtrar por tipo</span><select id="products-type-filter"><option value="">Todos os tipos</option><option>Produto</option><option>Servico</option><option>Pacote</option><option>Assinatura</option></select></label>
+            <label><span class="visually-hidden">Filtrar por status</span><select id="products-status-filter"><option value="">Todos os status</option><option>Ativo</option><option>Pausado</option><option>Sob encomenda</option><option>Inativo</option></select></label>
+          </div>
+          <div class="products-table-wrap">
+            <table class="products-table">
+              <thead><tr><th>Codigo / nome</th><th>Tipo / categoria</th><th>Preco / custo</th><th>Margem</th><th>Status</th><th><span class="visually-hidden">Acoes</span></th></tr></thead>
+              <tbody id="products-list"></tbody>
+            </table>
+            <div class="products-empty" id="products-empty" hidden><strong>Nenhum produto ou servico encontrado</strong><span>Crie um cadastro ou ajuste os filtros.</span></div>
+          </div>
+        </section>
+
+        <section class="workflow-view" id="quotes-view" aria-labelledby="quotes-heading" hidden>
+          <div class="module-toolbar">
+            <div><h2 id="quotes-heading">Orcamentos</h2><p id="quotes-summary">Carregando propostas comerciais...</p></div>
+            <div class="module-actions">
+              <button class="icon-button" id="quotes-refresh" type="button" aria-label="Atualizar orcamentos" title="Atualizar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button>
+              <button class="primary-command" id="quotes-add" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Novo orcamento</span></button>
+            </div>
+          </div>
+          <div class="workflow-metrics" aria-label="Indicadores de orcamentos">
+            <div><strong id="quotes-total">0</strong><span>propostas</span></div>
+            <div><strong id="quotes-sent">0</strong><span>enviadas</span></div>
+            <div><strong id="quotes-approved">0</strong><span>aprovadas</span></div>
+            <div><strong id="quotes-value">R$ 0</strong><span>valor aprovado</span></div>
+          </div>
+          <div class="workflow-filters">
+            <label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span class="visually-hidden">Buscar orcamentos</span><input id="quotes-filter" type="search" placeholder="Buscar numero, cliente ou proposta"></label>
+            <label><span class="visually-hidden">Filtrar status</span><select id="quotes-status-filter"><option value="">Todos os status</option><option>Rascunho</option><option>Enviado</option><option>Aprovado</option><option>Recusado</option><option>Expirado</option></select></label>
+          </div>
+          <div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Proposta</th><th>Cliente</th><th>Valor / margem</th><th>Validade</th><th>Status</th><th><span class="visually-hidden">Acoes</span></th></tr></thead><tbody id="quotes-list"></tbody></table><div class="workflow-empty" id="quotes-empty" hidden><strong>Nenhum orcamento encontrado</strong><span>Crie uma proposta ou ajuste os filtros.</span></div></div>
+        </section>
+
+        <section class="workflow-view" id="reports-view" aria-labelledby="reports-heading" hidden>
+          <div class="module-toolbar">
+            <div><h2 id="reports-heading">Relatorios</h2><p id="reports-summary">Relatorios gerados localmente com dados operacionais.</p></div>
+            <div class="module-actions">
+              <button class="icon-button" id="reports-refresh" type="button" aria-label="Atualizar relatorios" title="Atualizar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button>
+              <button class="primary-command" id="reports-add" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Gerar relatorio</span></button>
+            </div>
+          </div>
+          <div class="local-processing-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><div><strong>Processamento local</strong><span>Os dados e arquivos gerados permanecem neste computador.</span></div></div>
+          <div class="workflow-metrics" aria-label="Indicadores de relatorios">
+            <div><strong id="reports-total">0</strong><span>relatorios</span></div>
+            <div><strong id="reports-generated">0</strong><span>gerados</span></div>
+            <div><strong id="reports-pdf">0</strong><span>em PDF</span></div>
+            <div><strong id="reports-sources">0</strong><span>fontes usadas</span></div>
+          </div>
+          <div class="workflow-filters"><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span class="visually-hidden">Buscar relatorios</span><input id="reports-filter" type="search" placeholder="Buscar titulo, fonte ou indicador"></label><label><span class="visually-hidden">Filtrar formato</span><select id="reports-format-filter"><option value="">Todos os formatos</option><option value="pdf">PDF</option><option value="docx">DOCX</option><option value="md">Markdown</option></select></label></div>
+          <div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Relatorio</th><th>Fonte / periodo</th><th>Indicador</th><th>Formato</th><th>Status</th><th><span class="visually-hidden">Acoes</span></th></tr></thead><tbody id="reports-list"></tbody></table><div class="workflow-empty" id="reports-empty" hidden><strong>Nenhum relatorio gerado</strong><span>Gere um resumo operacional, executivo ou por area.</span></div></div>
+        </section>
+
+        <section class="workflow-view" id="cases-view" aria-labelledby="cases-heading" hidden>
+          <div class="module-toolbar">
+            <div><h2 id="cases-heading">Processos e prazos</h2><p id="cases-summary">Acompanhamento local de responsabilidades e vencimentos.</p></div>
+            <div class="module-actions">
+              <button class="icon-button" id="cases-refresh" type="button" aria-label="Atualizar processos" title="Atualizar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button>
+              <button class="primary-command" id="cases-add" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Novo processo</span></button>
+            </div>
+          </div>
+          <div class="sensitive-data-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><div><strong>Area sensivel</strong><span>Dados mantidos localmente. A estrutura esta preparada para permissoes e auditoria.</span></div></div>
+          <div class="workflow-metrics" aria-label="Indicadores de prazos"><div><strong id="cases-total">0</strong><span>registros</span></div><div><strong id="cases-open">0</strong><span>em andamento</span></div><div><strong id="cases-due">0</strong><span>proximos 7 dias</span></div><div><strong id="cases-overdue">0</strong><span>atrasados</span></div></div>
+          <div class="workflow-filters"><label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span class="visually-hidden">Buscar processos</span><input id="cases-filter" type="search" placeholder="Buscar processo, cliente ou responsavel"></label><label><span class="visually-hidden">Filtrar prioridade</span><select id="cases-priority-filter"><option value="">Todas as prioridades</option><option>Baixa</option><option>Normal</option><option>Alta</option><option>Critica</option></select></label><label><span class="visually-hidden">Filtrar prazos</span><select id="cases-deadline-filter"><option value="">Todos os prazos</option><option value="overdue">Atrasados</option><option value="due">Proximos 7 dias</option></select></label></div>
+          <div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Processo / cliente</th><th>Prazo</th><th>Responsavel</th><th>Proximo passo</th><th>Status</th><th><span class="visually-hidden">Acoes</span></th></tr></thead><tbody id="cases-list"></tbody></table><div class="workflow-empty" id="cases-empty" hidden><strong>Nenhum processo ou prazo encontrado</strong><span>Crie um acompanhamento ou ajuste os filtros.</span></div></div>
+        </section>
+
+        <footer class="composer-band" id="composer-band">
+          <div class="composer-wrap">
+            <div class="attachment-list" id="attachment-list" aria-live="polite"></div>
+            <div class="composer-options">
+              <label class="model-control" title="Escolher o modelo usado nesta conversa">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4v1a4 4 0 0 0-3 6.65V15a4 4 0 0 0 4 4h1M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1 3 6.65V15a4 4 0 0 1-4 4h-1M9 11h6M12 8v8M10 22h4"/></svg>
+                <span class="visually-hidden">Modelo de linguagem</span>
+                <select id="model-select" aria-label="Modelo de linguagem">
+                  <option value="">Automatico (recomendado)</option>
+                </select>
+              </label>
+              <div class="mode-controls" aria-label="Modos do assistente">
+                <label class="mode-toggle" title="Ler as respostas em voz alta">
+                  <input id="voice-toggle" type="checkbox">
+                  <span class="mode-toggle-face">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12"/></svg>
+                    <span>Voz</span>
+                  </span>
+                </label>
+                <label class="mode-toggle" title="Mostrar o Jarvis durante o processamento e a fala">
+                  <input id="jarvis-toggle" type="checkbox">
+                  <span class="mode-toggle-face">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h3l2-6 4 12 2-6h7"/></svg>
+                    <span>Jarvis</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div class="composer" id="composer">
+              <button class="icon-button composer-action" id="attach-button" type="button" aria-label="Anexar arquivo" title="Anexar arquivo">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+              </button>
+              <textarea id="message-input" rows="1" maxlength="20000" placeholder="Mensagem para o Celsius" aria-label="Mensagem para o Celsius"></textarea>
+              <button class="icon-button composer-action voice-input-button" id="voice-input-button" type="button" aria-label="Fazer pergunta por audio" title="Fazer pergunta por audio">
+                <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg>
+                <svg class="stop-recording-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+              </button>
+              <button class="send-button" id="send-button" type="button" aria-label="Enviar mensagem" title="Enviar mensagem">
+                <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                <svg class="stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+              </button>
+              <input id="file-input" type="file" multiple hidden>
+            </div>
+            <p class="composer-note"><span id="voice-input-status" class="voice-input-status" hidden></span><span id="composer-default-note">Respostas geradas localmente podem conter imprecisoes.</span></p>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <dialog class="memory-dialog" id="memory-dialog" aria-labelledby="memory-title">
+      <div class="dialog-header">
+        <div>
+          <h2 id="memory-title">Memorias do Celsius</h2>
+          <p>Fatos locais usados para personalizar as respostas.</p>
+        </div>
+        <button class="icon-button" id="memory-close" type="button" aria-label="Fechar memorias" title="Fechar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="memory-list" id="memory-list"></div>
+      <form class="memory-form" id="memory-form">
+        <label for="memory-input">Novo fato importante</label>
+        <textarea id="memory-input" maxlength="2000" rows="3" placeholder="Ex.: O usuario prefere relatorios detalhados."></textarea>
+        <div class="dialog-actions">
+          <span id="memory-count">0 memorias</span>
+          <button class="primary-command" id="memory-save" type="submit">Salvar memoria</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="agenda-dialog" id="agenda-dialog" aria-labelledby="agenda-dialog-title">
+      <form id="agenda-form">
+        <div class="dialog-header">
+          <div>
+            <h2 id="agenda-dialog-title">Novo compromisso</h2>
+            <p>O Celsius podera consultar estes dados e emitir o lembrete local.</p>
+          </div>
+          <button class="icon-button" id="agenda-close" type="button" aria-label="Fechar compromisso" title="Fechar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="agenda-form-grid">
+          <input id="agenda-id" type="hidden">
+          <label class="field-wide">Titulo
+            <input id="agenda-title" name="title" maxlength="180" required placeholder="Ex.: Reuniao com fornecedor">
+          </label>
+          <label>Tipo
+            <select id="agenda-type" name="event_type">
+              <option>Consulta</option><option selected>Reuniao</option><option>Entrega</option><option>Visita</option><option>Prazo</option><option>Outro</option>
+            </select>
+          </label>
+          <label>Data e hora
+            <input id="agenda-starts-at" name="starts_at" type="datetime-local" required>
+          </label>
+          <label>Cliente / paciente
+            <input id="agenda-customer" name="customer" maxlength="180">
+          </label>
+          <label>Responsavel
+            <input id="agenda-responsible" name="responsible" maxlength="180">
+          </label>
+          <label class="field-wide">Local
+            <input id="agenda-location" name="location" maxlength="240">
+          </label>
+          <label>Lembrar antes
+            <select id="agenda-reminder" name="reminder_minutes">
+              <option value="0">No horario</option>
+              <option value="5">5 minutos</option>
+              <option value="15" selected>15 minutos</option>
+              <option value="30">30 minutos</option>
+              <option value="60">1 hora</option>
+              <option value="1440">1 dia</option>
+            </select>
+          </label>
+          <label>Status
+            <select id="agenda-status" name="status">
+              <option>Agendado</option><option>Confirmado</option><option>Concluido</option><option>Remarcar</option><option>Cancelado</option>
+            </select>
+          </label>
+          <label class="field-wide">Observacoes
+            <textarea id="agenda-notes" name="notes" maxlength="5000" rows="3"></textarea>
+          </label>
+        </div>
+        <div class="agenda-form-actions">
+          <button class="secondary-command" id="agenda-cancel" type="button">Cancelar</button>
+          <button class="primary-command" id="agenda-save" type="submit">Salvar compromisso</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="documents-dialog" id="documents-dialog" aria-labelledby="documents-dialog-title">
+      <form id="documents-form">
+        <div class="dialog-header">
+          <div>
+            <h2 id="documents-dialog-title">Adicionar documentos</h2>
+            <p>Os arquivos serão copiados e indexados somente neste computador.</p>
+          </div>
+          <button class="icon-button" id="documents-close" type="button" aria-label="Fechar envio de documentos" title="Fechar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="documents-form-body">
+          <label class="document-dropzone" id="document-dropzone" for="documents-files">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>
+            <strong>Selecionar arquivos</strong>
+            <span>PDF, DOCX, ODT, planilhas e arquivos de texto</span>
+            <input id="documents-files" type="file" multiple accept=".pdf,.docx,.odt,.ods,.odp,.txt,.md,.json,.csv,.xml,.html,.yaml,.yml">
+          </label>
+          <div class="selected-document-list" id="selected-document-list" hidden></div>
+          <div class="documents-form-grid">
+            <label>Tipo
+              <select id="documents-type">
+                <option>Contrato</option><option>Manual</option><option>Nota</option><option>Laudo</option><option selected>Outro</option>
+              </select>
+            </label>
+            <label>Categoria
+              <input id="documents-category" maxlength="120" placeholder="Ex.: Comercial, Qualidade">
+            </label>
+            <label>Origem
+              <input id="documents-origin" maxlength="180" placeholder="Ex.: Fornecedor, setor interno">
+            </label>
+            <label>Responsavel
+              <input id="documents-responsible" maxlength="180">
+            </label>
+          </div>
+          <div class="external-service-note">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Extração, armazenamento e pesquisa são executados localmente.</span>
+          </div>
+        </div>
+        <div class="agenda-form-actions">
+          <button class="secondary-command" id="documents-cancel" type="button">Cancelar</button>
+          <button class="primary-command" id="documents-upload" type="submit">Importar e indexar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="relationship-dialog" id="relationship-dialog" aria-labelledby="relationship-dialog-title">
+      <form id="relationship-form">
+        <div class="dialog-header">
+          <div>
+            <h2 id="relationship-dialog-title">Novo cliente</h2>
+            <p id="relationship-dialog-subtitle">Cadastro local acessivel pelo assistente Celsius.</p>
+          </div>
+          <button class="icon-button" id="relationship-close" type="button" aria-label="Fechar cadastro" title="Fechar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="relationship-form-grid">
+          <input id="relationship-id" type="hidden">
+          <label class="field-wide">Nome / razao social
+            <input id="relationship-name" maxlength="180" required>
+          </label>
+          <label>Documento
+            <input id="relationship-document" maxlength="80" placeholder="CPF, CNPJ ou identificacao">
+          </label>
+          <label>Status
+            <select id="relationship-status">
+              <option>Ativo</option><option>Inativo</option><option>Em atendimento</option><option>Preferencial</option>
+            </select>
+          </label>
+          <label>Contato
+            <input id="relationship-contact" maxlength="180">
+          </label>
+          <label>Telefone
+            <input id="relationship-phone" maxlength="60" inputmode="tel">
+          </label>
+          <label class="field-wide">E-mail
+            <input id="relationship-email" maxlength="180" type="email">
+          </label>
+
+          <label class="customer-field">Tipo de cliente
+            <select id="relationship-customer-type">
+              <option>Pessoa</option><option>Empresa</option><option selected>Outro</option>
+            </select>
+          </label>
+          <label class="customer-field">Segmento
+            <input id="relationship-segment" maxlength="120">
+          </label>
+          <label class="customer-field">Responsavel interno
+            <input id="relationship-responsible" maxlength="180">
+          </label>
+          <label class="customer-field">Endereco
+            <input id="relationship-address" maxlength="300">
+          </label>
+
+          <label class="supplier-field">Categoria
+            <input id="relationship-category" maxlength="120">
+          </label>
+          <label class="supplier-field">Prazo de entrega (dias)
+            <input id="relationship-lead-time" maxlength="20" inputmode="numeric">
+          </label>
+          <label class="supplier-field field-wide">Produtos fornecidos
+            <input id="relationship-products" maxlength="1000">
+          </label>
+          <label class="supplier-field field-wide">Condicoes de pagamento
+            <input id="relationship-payment-terms" maxlength="180">
+          </label>
+
+          <label class="field-wide">Observacoes
+            <textarea id="relationship-notes" maxlength="5000" rows="3"></textarea>
+          </label>
+        </div>
+        <div class="agenda-form-actions">
+          <button class="secondary-command" id="relationship-cancel" type="button">Cancelar</button>
+          <button class="primary-command" id="relationship-save" type="submit">Salvar cadastro</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="inventory-dialog" id="inventory-dialog" aria-labelledby="inventory-dialog-title">
+      <form id="inventory-form">
+        <div class="dialog-header">
+          <div><h2 id="inventory-dialog-title">Novo item</h2><p>Defina os limites usados nos alertas de reposicao.</p></div>
+          <button class="icon-button" id="inventory-close" type="button" aria-label="Fechar cadastro de item" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="inventory-form-grid">
+          <input id="inventory-id" type="hidden">
+          <label class="field-wide">Nome do item<input id="inventory-name" maxlength="180" required></label>
+          <label>Categoria<input id="inventory-category" maxlength="120" placeholder="Ex.: Filtros, insumos"></label>
+          <label id="inventory-quantity-field">Quantidade inicial<input id="inventory-quantity" type="number" min="0" max="1000000000" value="0"></label>
+          <label>Estoque minimo<input id="inventory-minimum" type="number" min="0" max="1000000000" value="0" required></label>
+          <label>Estoque maximo<input id="inventory-maximum" type="number" min="0" max="1000000000" value="0" required></label>
+          <label class="field-wide">Localizacao operacional<select id="inventory-location"><option value="">Automatica conforme o saldo</option><option value="em_estoque">Em estoque</option><option value="em_uso">Em uso</option><option value="a_comprar">A comprar</option><option value="critico">Estoque minimo</option></select></label>
+        </div>
+        <div class="agenda-form-actions"><button class="secondary-command" id="inventory-cancel" type="button">Cancelar</button><button class="primary-command" id="inventory-save" type="submit">Salvar item</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="movement-dialog" id="movement-dialog" aria-labelledby="movement-dialog-title">
+      <form id="movement-form">
+        <div class="dialog-header">
+          <div><h2 id="movement-dialog-title">Movimentar estoque</h2><p id="movement-item-name">Item selecionado</p></div>
+          <button class="icon-button" id="movement-close" type="button" aria-label="Fechar movimentacao" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="movement-form-body">
+          <input id="movement-item-id" type="hidden">
+          <label>Tipo<select id="movement-type"><option value="entrada">Entrada</option><option value="saida">Saida</option></select></label>
+          <label>Quantidade<input id="movement-quantity" type="number" min="1" max="1000000000" value="1" required></label>
+        </div>
+        <div class="agenda-form-actions"><button class="secondary-command" id="movement-cancel" type="button">Cancelar</button><button class="primary-command" id="movement-save" type="submit">Registrar movimentacao</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="product-dialog" id="product-dialog" aria-labelledby="product-dialog-title">
+      <form id="product-form">
+        <div class="dialog-header">
+          <div><h2 id="product-dialog-title">Novo produto ou servico</h2><p>Cadastro comercial local com preco, custo e margem.</p></div>
+          <button class="icon-button" id="product-close" type="button" aria-label="Fechar cadastro comercial" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="product-form-grid">
+          <input id="product-id" type="hidden">
+          <label>Codigo / SKU<input id="product-code" maxlength="80"></label>
+          <label>Tipo<select id="product-type"><option>Produto</option><option>Servico</option><option>Pacote</option><option>Assinatura</option></select></label>
+          <label class="field-wide">Nome<input id="product-name" maxlength="180" required></label>
+          <label>Categoria<input id="product-category" maxlength="120"></label>
+          <label>Unidade<input id="product-unit" maxlength="40" placeholder="un., hora, kg"></label>
+          <label>Preco de venda<input id="product-price" maxlength="60" inputmode="decimal" placeholder="0,00"></label>
+          <label>Custo<input id="product-cost" maxlength="60" inputmode="decimal" placeholder="0,00"></label>
+          <label class="field-wide">Fornecedor padrao<input id="product-default-supplier" maxlength="180"></label>
+          <label>Status<select id="product-status"><option>Ativo</option><option>Pausado</option><option>Sob encomenda</option><option>Inativo</option></select></label>
+          <label class="field-wide">Observacoes<textarea id="product-notes" maxlength="5000" rows="3"></textarea></label>
+        </div>
+        <div class="agenda-form-actions"><button class="secondary-command" id="product-cancel" type="button">Cancelar</button><button class="primary-command" id="product-save" type="submit">Salvar cadastro</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="workflow-dialog" id="quote-dialog" aria-labelledby="quote-dialog-title">
+      <form id="quote-form">
+        <div class="dialog-header"><div><h2 id="quote-dialog-title">Novo orcamento</h2><p>Proposta comercial local com valor, validade e etapa.</p></div><button class="icon-button" id="quote-close" type="button" aria-label="Fechar orcamento" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+        <div class="workflow-form-grid">
+          <input id="quote-id" type="hidden">
+          <label>Numero<input id="quote-number" maxlength="80" placeholder="Gerado automaticamente"></label>
+          <label>Status<select id="quote-status"><option>Rascunho</option><option>Enviado</option><option>Aprovado</option><option>Recusado</option><option>Expirado</option></select></label>
+          <label class="field-wide">Titulo<input id="quote-title" maxlength="180" required></label>
+          <label>Cliente<input id="quote-customer" maxlength="180"></label>
+          <label>Responsavel<input id="quote-responsible" maxlength="180"></label>
+          <label>Valor total<input id="quote-value" maxlength="60" inputmode="decimal" placeholder="0,00"></label>
+          <label>Margem estimada<input id="quote-margin" maxlength="60" placeholder="Ex.: 32%"></label>
+          <label>Validade<input id="quote-valid-until" type="date"></label>
+          <label class="field-wide">Itens e servicos<textarea id="quote-items" maxlength="10000" rows="4" placeholder="Descreva quantidades, itens, servicos e condicoes."></textarea></label>
+          <label class="field-wide">Observacoes<textarea id="quote-notes" maxlength="5000" rows="3"></textarea></label>
+        </div>
+        <div class="agenda-form-actions"><button class="secondary-command" id="quote-cancel" type="button">Cancelar</button><button class="primary-command" id="quote-save" type="submit">Salvar orcamento</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="workflow-dialog" id="report-dialog" aria-labelledby="report-dialog-title">
+      <form id="report-form">
+        <div class="dialog-header"><div><h2 id="report-dialog-title">Gerar relatorio</h2><p>Crie um arquivo real usando os dados locais do Celsius.</p></div><button class="icon-button" id="report-close" type="button" aria-label="Fechar relatorio" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+        <div class="workflow-form-grid">
+          <label class="field-wide">Titulo<input id="report-title" maxlength="180" required placeholder="Ex.: Resumo gerencial mensal"></label>
+          <label>Tipo<select id="report-type"><option>Executivo</option><option>Operacional</option><option>Estoque</option><option>Vendas</option><option>Clientes</option></select></label>
+          <label>Fonte de dados<select id="report-source"><option>Executivo</option><option>Estoque</option><option>Clientes</option><option>Fornecedores</option><option>Orcamentos</option><option>Processos e prazos</option></select></label>
+          <label>Periodo<input id="report-period" maxlength="120" value="Atual" placeholder="Ex.: Julho de 2026"></label>
+          <label>Formato<select id="report-format"><option value="pdf">PDF</option><option value="docx">DOCX</option><option value="md">Markdown</option></select></label>
+          <label>Periodicidade<select id="report-periodicity"><option>Sob demanda</option><option>Diario</option><option>Semanal</option><option>Mensal</option></select></label>
+          <label>Responsavel<input id="report-responsible" maxlength="180"></label>
+          <label class="field-wide">Indicador principal<input id="report-indicator" maxlength="180" placeholder="Opcional; o Celsius pode calcular um resumo"></label>
+          <label class="field-wide">Observacoes<textarea id="report-notes" maxlength="5000" rows="3"></textarea></label>
+        </div>
+        <div class="agenda-form-actions"><button class="secondary-command" id="report-cancel" type="button">Cancelar</button><button class="primary-command" id="report-generate" type="submit">Gerar arquivo</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="workflow-dialog" id="case-dialog" aria-labelledby="case-dialog-title">
+      <form id="case-form">
+        <div class="dialog-header"><div><h2 id="case-dialog-title">Novo processo ou prazo</h2><p>Controle local de vencimento, responsavel e proximo passo.</p></div><button class="icon-button" id="case-close" type="button" aria-label="Fechar processo" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+        <div class="workflow-form-grid">
+          <input id="case-id" type="hidden">
+          <label class="field-wide">Processo ou caso<input id="case-title" maxlength="240" required></label>
+          <label>Cliente<input id="case-customer" maxlength="180"></label>
+          <label>Tipo<input id="case-type" maxlength="120"></label>
+          <label>Prazo<input id="case-deadline" type="date"></label>
+          <label>Prioridade<select id="case-priority"><option>Baixa</option><option selected>Normal</option><option>Alta</option><option>Critica</option></select></label>
+          <label>Responsavel<input id="case-responsible" maxlength="180"></label>
+          <label>Status<select id="case-status"><option>Novo</option><option>Em andamento</option><option>Aguardando terceiro</option><option>Concluido</option><option>Arquivado</option></select></label>
+          <label class="field-wide">Proximo passo<input id="case-next-step" maxlength="500"></label>
+          <label class="field-wide">Observacoes<textarea id="case-notes" maxlength="5000" rows="4"></textarea></label>
+        </div>
+        <div class="agenda-form-actions"><button class="secondary-command" id="case-cancel" type="button">Cancelar</button><button class="primary-command" id="case-save" type="submit">Salvar acompanhamento</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="workflow-dialog mobile-pair-dialog" id="mobile-pair-dialog" aria-labelledby="mobile-pair-title">
+      <div class="dialog-header">
+        <div><h2 id="mobile-pair-title">Parear celular</h2><p>Acesso local pela mesma rede Wi-Fi.</p></div>
+        <button class="icon-button" id="mobile-pair-close" type="button" aria-label="Fechar pareamento" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="mobile-pair-content">
+        <div class="mobile-qr-frame"><img id="mobile-pair-qr" alt="QR Code para acessar o Celsius pelo celular" hidden></div>
+        <strong id="mobile-pair-status">Preparando acesso local...</strong>
+        <a id="mobile-pair-link" href="#" target="_blank" rel="noreferrer"></a>
+        <p class="mobile-pair-note" id="mobile-pair-note"></p>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-command" id="mobile-pair-copy" type="button">Copiar link</button>
+        <button class="primary-command" id="mobile-pair-done" type="button">Concluir</button>
+      </div>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="assertive"></div>
+    <script src="/app/assets/app.js?v=20260810.6" defer></script>
+  </body>
+</html>

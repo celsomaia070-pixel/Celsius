@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Celso", email = "celso@example.com"}
+    {name = "Celso Maia"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -24,39 +24,45 @@ classifiers = [
 ]
 dependencies = [
     "PySide6>=6.5,<7.0",
-    "sentence-transformers>=2.2,<4.0",
-    "numpy>=1.24,<2.0",
+    "sentence-transformers>=5.7,<6.0",
+    "numpy>=2.0,<2.5; python_version < '3.14'",
+    "numpy>=2.5,<3.0; python_version >= '3.14'",
     "llama-cpp-python>=0.2.0,<1.0",
-    "huggingface-hub>=0.20,<1.0",
-    "structlog>=23.0,<25.0",
+    "huggingface-hub>=1.0,<2.0",
+    "structlog>=26.0,<27.0",
     "opentelemetry-api>=1.20,<2.0",
     "opentelemetry-sdk>=1.20,<2.0",
     "opentelemetry-exporter-otlp>=1.20,<2.0",
-    "opentelemetry-instrumentation>=1.20,<2.0",
     "pydantic>=2.5,<3.0",
     "pydantic-settings>=2.1,<3.0",
     "python-dotenv>=1.0,<2.0",
-    "duckduckgo-search>=4.0,<7.0",
+    "duckduckgo-search>=8.1,<9.0",
     "feedparser>=6.0,<7.0",
     "playwright>=1.40,<2.0",
     "SpeechRecognition>=3.10,<4.0",
     "sounddevice>=0.4,<1.0",
     "scipy>=1.10,<2.0",
-    "edge-tts>=6.1,<7.0",
+    "edge-tts>=7.2,<8.0",
     "pygame-ce>=2.2,<3.0",
     "pydub>=0.25,<1.0",
     "openai-whisper>=20230918",
     "faster-whisper>=1.0,<2.0",
-    "pypdf>=3.0,<5.0",
+    "pypdf>=6.15,<7.0",
+    "pdfplumber>=0.11,<1.0",
+    "pypdfium2>=4.30,<6.0",
+    "rapidocr>=3.8,<4.0",
+    "onnxruntime>=1.19,<2.0",
     "python-docx>=0.8,<2.0",
-    "Pillow>=9.0,<11.0",
+    "Pillow>=12.3,<13.0",
     "qrcode[pil]>=7.4,<9.0",
     "odfpy>=1.4,<2.0",
     "fpdf2>=2.7,<4.0",
     "matplotlib>=3.8,<4.0",
-    "chromadb>=0.5,<1.0",
+    "chromadb>=1.5,<2.0",
     "rank-bm25>=0.2,<1.0",
-    "cryptography>=41.0,<44.0",
+    "cryptography>=50.0,<51.0",
+    "fastapi>=0.139,<1.0",
+    "uvicorn>=0.49,<1.0",
 ]
 
 [project.optional-dependencies]
@@ -76,6 +82,8 @@ dev = [
     "pre-commit>=3.6,<5.0",
     "types-requests>=2.31,<3.0",
     "types-PyYAML>=6.0,<7.0",
+    "httpx>=0.27,<1.0",
+    "tomli>=2.0,<3.0; python_version < '3.11'",
 ]
 test = [
     "pytest>=9.0.3,<10.0",
@@ -85,6 +93,8 @@ test = [
     "pytest-mock>=3.12,<4.0",
     "pytest-xdist>=3.5,<4.0",
     "hypothesis>=6.92,<7.0",
+    "httpx>=0.27,<1.0",
+    "tomli>=2.0,<3.0; python_version < '3.11'",
 ]
 security = [
     "pip-audit>=2.7,<3.0",
@@ -93,12 +103,15 @@ security = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/celso/celsius"
-Repository = "https://github.com/celso/celsius"
+Homepage = "https://github.com/celsomaia070-pixel/Celsius"
+Repository = "https://github.com/celsomaia070-pixel/Celsius"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ai*", "core*", "processors*", "ui*", "workers*"]
+
+[tool.setuptools.package-data]
+"core.web_api" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -113,7 +126,9 @@ markers = [
     "unit: marks tests as unit tests",
 ]
 filterwarnings = [
-    "ignore::DeprecationWarning",
+    "ignore:'asyncio.get_event_loop_policy'.*:DeprecationWarning:pytest_asyncio.plugin",
+    "ignore:'asyncio.set_event_loop_policy'.*:DeprecationWarning:pytest_asyncio.plugin",
+    "ignore:'asyncio.iscoroutinefunction'.*:DeprecationWarning:chromadb.telemetry.opentelemetry",
 ]
 
 [tool.ruff]

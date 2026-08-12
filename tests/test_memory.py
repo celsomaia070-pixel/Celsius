@@ -62,6 +62,18 @@ class TestMemoryService:
         assert len(memories) == 1
         assert memories[0]["texto"] == "Persistent memory"
 
+    def test_multiple_instances_do_not_overwrite_recent_memories(self, temp_settings):
+        service1 = MemoryService(temp_settings)
+        service2 = MemoryService(temp_settings)
+
+        service1.add("Memoria da janela desktop")
+        service2.add("Memoria da interface web")
+
+        assert [item["texto"] for item in service1.get_all()] == [
+            "Memoria da janela desktop",
+            "Memoria da interface web",
+        ]
+
     def test_thread_safety(self, memory_service):
         import threading
         import time

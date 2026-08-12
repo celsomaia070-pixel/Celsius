@@ -18,13 +18,16 @@ class TestTheme:
         from ui.theme import DARK_SCHEME
 
         assert DARK_SCHEME is not None
-        assert DARK_SCHEME.bg_primary == "#0D1117"
+        assert DARK_SCHEME.bg_primary == "#101715"
+        assert DARK_SCHEME.accent_primary == "#42C6B7"
 
     def test_light_scheme_exists(self):
         from ui.theme import LIGHT_SCHEME
 
         assert LIGHT_SCHEME is not None
-        assert LIGHT_SCHEME.bg_primary == "#FFFFFF"
+        assert LIGHT_SCHEME.bg_primary == "#F4F7F6"
+        assert LIGHT_SCHEME.bg_secondary == "#FFFFFF"
+        assert LIGHT_SCHEME.accent_primary == "#087E72"
 
     def test_get_stylesheet(self):
         from ui.theme import DARK_SCHEME, get_stylesheet
@@ -32,19 +35,29 @@ class TestTheme:
         css = get_stylesheet(DARK_SCHEME)
         assert "QMainWindow" in css
         assert "QPushButton" in css
-        assert "#0D1117" in css
+        assert "#101715" in css
 
     def test_system_theme_resolves_to_light(self):
         from ui.theme import scheme_from_name
 
-        assert scheme_from_name("system").bg_primary == "#FFFFFF"
+        assert scheme_from_name("system").bg_primary == "#F4F7F6"
 
     def test_chat_fallback_is_light(self, qapp):
         from ui.window import ModernChatView, ModernInputArea, MessageBubble
 
-        assert ModernChatView()._scheme.bg_primary == "#FFFFFF"
-        assert ModernInputArea()._scheme.bg_primary == "#FFFFFF"
-        assert MessageBubble("Teste")._scheme.bg_primary == "#FFFFFF"
+        assert ModernChatView()._scheme.bg_primary == "#F4F7F6"
+        assert ModernInputArea()._scheme.bg_primary == "#F4F7F6"
+        assert MessageBubble("Teste")._scheme.bg_primary == "#F4F7F6"
+
+    def test_chat_input_matches_celsius_identity(self, qapp):
+        from ui.chat import ModernInputArea
+        from ui.theme import LIGHT_SCHEME
+
+        input_area = ModernInputArea()
+
+        assert LIGHT_SCHEME.bg_secondary in input_area.styleSheet()
+        assert LIGHT_SCHEME.accent_primary in input_area.btn_send.styleSheet()
+        assert not input_area.btn_send.icon().isNull()
 
     def test_inventory_status_colors_follow_dark_scheme(self):
         from types import SimpleNamespace
@@ -339,8 +352,10 @@ class TestConfiguracoesDialog:
         dialog.input_business_context.setPlainText("Controla estoque e fornecedores.")
         dialog.input_main_needs.setPlainText("Organizar fornecedores e relatorios.")
         dialog.combo_response_mode.setCurrentText("tecnico")
+        dialog.combo_response_detail.setCurrentText("detalhado")
         dialog.input_response_temperature.setText("0.35")
-        dialog.combo_voice.setCurrentText("pt-BR-FranciscaNeural")
+        profile_index = dialog.combo_voice_profile.findData("natural_female_br")
+        dialog.combo_voice_profile.setCurrentIndex(profile_index)
         dialog.input_voice_rate.setText("+8%")
         for module_id, check in dialog.module_checks.items():
             if check.isEnabled():
@@ -357,7 +372,9 @@ class TestConfiguracoesDialog:
         assert "chat" in settings.modules.enabled
         assert "settings" in settings.modules.enabled
         assert settings.response.mode == "tecnico"
+        assert settings.response.detail_level == "detalhado"
         assert settings.response.temperature == 0.35
+        assert settings.voice.profile == "natural_female_br"
         assert settings.voice.voice == "pt-BR-FranciscaNeural"
         assert settings.voice.rate == "+8%"
         assert settings.customer_profile_file.exists()
@@ -526,8 +543,6 @@ class TestEngineConversationHistory:
 
         monkeypatch.setattr(engine, "executar_comando", lambda _pergunta: None)
         monkeypatch.setattr(engine, "_responder_rapido", lambda _pergunta: None)
-        monkeypatch.setattr(engine, "_processar_operacao_estoque", lambda _pergunta: None)
-        monkeypatch.setattr(engine, "_obter_contexto_estoque", lambda _pergunta: "")
 
         def fake_loop_react(
             prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, history=None
@@ -556,6 +571,47 @@ class TestEngineConversationHistory:
 
 
 class TestResponseSafety:
+    def test_strips_complete_reasoning_block(self):
+        from ai.react import _strip_reasoning_blocks
+
+        response = "<think>analise privada</think>\nResposta final."
+
+        assert _strip_reasoning_blocks(response) == "Resposta final."
+
+    def test_strips_reasoning_when_template_injected_opening_tag(self):
+        from ai.react import _strip_reasoning_blocks
+
+        response = "Primeiro analiso o pedido.</think>\nResposta final."
+
+        assert _strip_reasoning_blocks(response) == "Resposta final."
+
+    def test_reasoning_stream_filter_handles_fragmented_closing_tag(self):
+        from ai.react import _ReasoningStreamFilter
+
+        output = []
+        stream_filter = _ReasoningStreamFilter(assume_reasoning=True)
+        for chunk in ("analise privada", "</thi", "nk>\nResposta", " final."):
+            output.append(stream_filter.feed(chunk))
+
+        assert "".join(output) == "Resposta final."
+
+    def test_reasoning_stream_filter_detects_fragmented_opening_tag(self):
+        from ai.react import _ReasoningStreamFilter
+
+        output = []
+        stream_filter = _ReasoningStreamFilter()
+        for chunk in ("<thi", "nk>analise", "</think>", "Resposta final."):
+            output.append(stream_filter.feed(chunk))
+
+        assert "".join(output) == "Resposta final."
+
+    def test_reasoning_stream_filter_keeps_regular_response(self):
+        from ai.react import _ReasoningStreamFilter
+
+        stream_filter = _ReasoningStreamFilter()
+
+        assert stream_filter.feed("Resposta direta.") == "Resposta direta."
+
     def test_limpar_resposta_removes_internal_chat_template_markers(self):
         from ai.react import _limpar_resposta
 
@@ -576,6 +632,69 @@ class TestResponseSafety:
 
         assert "<|im_end|>" not in cleaned
         assert "<|im_start|>" not in cleaned
+
+
+class TestImageModelSelection:
+    def test_activates_configured_vision_model_when_needed(self, monkeypatch, tmp_path):
+        import sys
+        from types import SimpleNamespace
+
+        from ai.engine import _ensure_vision_manager
+
+        model_path = tmp_path / "vision.gguf"
+        mmproj_path = tmp_path / "mmproj.gguf"
+        model_path.write_bytes(b"model")
+        mmproj_path.write_bytes(b"projector")
+
+        class FakeManager:
+            _chat_handler = None
+
+            def __init__(self):
+                self.switches = []
+
+            def switch_model(self, model_id, **kwargs):
+                self.switches.append((model_id, kwargs))
+                self._chat_handler = object()
+                return True
+
+        manager = FakeManager()
+        model = SimpleNamespace(
+            vision_llm_model="qwen2.5-vl-7b-q4km",
+            n_gpu_layers=-1,
+            num_ctx=8192,
+            n_batch=512,
+            n_threads=4,
+            use_mmap=True,
+            use_mlock=False,
+        )
+        settings = SimpleNamespace(
+            model=model,
+            get_model_path=lambda _model_id: model_path,
+            get_mmproj_path=lambda _model_id: mmproj_path,
+        )
+        llama_module = sys.modules["core.llama_cpp"]
+        monkeypatch.setattr(llama_module, "get_llama_manager", lambda: manager)
+
+        selected = _ensure_vision_manager(settings)
+
+        assert selected is manager
+        assert manager.switches[0][0] == "qwen2.5-vl-7b-q4km"
+
+    def test_image_keeps_visual_route_when_memory_context_exists(self, qapp, tmp_path):
+        from workers.ai_worker import AIWorker
+
+        image_path = tmp_path / "foto.png"
+        image_path.write_bytes(b"fake-image")
+        prompt = {
+            "anexos": [(str(image_path), image_path.name)],
+            "documento": "Memorias relevantes da conversa.",
+        }
+        worker = AIWorker(prompt)
+
+        worker._prepare_attachments()
+
+        assert prompt["caminho_imagem"] == str(image_path)
+        assert prompt["documento"] == "Memorias relevantes da conversa."
 
 
 class TestModernInputArea:
@@ -667,6 +786,52 @@ class TestModernChatWindow:
         assert "Sua identidade fixa e Celsius" in prompt
         assert "perfil da empresa orienta contexto" in prompt
         assert "nao limita" in prompt
+
+    def test_formats_agenda_reminder_message(self, qapp):
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from ui.window import ModernChatWindow
+
+        window = ModernChatWindow.__new__(ModernChatWindow)
+        event = SimpleNamespace(
+            title="Revisar pedido",
+            starts_at=datetime(2026, 7, 29, 14, 30),
+            customer="Cliente Maia",
+            location="Escritorio",
+        )
+
+        message = window._format_agenda_reminder_message([event])
+
+        assert "Lembrete da agenda:" in message
+        assert "Revisar pedido" in message
+        assert "29/07/2026 14:30" in message
+        assert "Cliente Maia" in message
+        assert "Escritorio" in message
+
+    def test_voice_stream_tail_keeps_unsent_text(self, qapp):
+        from ui.window import ModernChatWindow
+
+        window = ModernChatWindow.__new__(ModernChatWindow)
+        window._voice_stream_enqueued_text = "Primeira frase falada."
+        window._voice_stream_buffer = "Segunda frase ainda no buffer."
+
+        missing = window._missing_voice_stream_tail(
+            "Primeira frase falada. Segunda frase ainda no buffer."
+        )
+
+        assert missing == "Segunda frase ainda no buffer."
+
+    def test_voice_stream_tail_does_not_repeat_complete_text(self, qapp):
+        from ui.window import ModernChatWindow
+
+        window = ModernChatWindow.__new__(ModernChatWindow)
+        window._voice_stream_enqueued_text = "Primeira frase falada. Segunda frase falada."
+        window._voice_stream_buffer = ""
+
+        missing = window._missing_voice_stream_tail("Primeira frase falada. Segunda frase falada.")
+
+        assert missing == ""
 
     @pytest.mark.skip(reason="Requires full inventory/kanban stack (mocked in test env)")
     def test_window_creation(self, qapp):

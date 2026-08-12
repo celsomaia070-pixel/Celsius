@@ -32,7 +32,7 @@ def generate_base_stylesheet(scheme: ColorScheme) -> str:
     return f"""
 /* ============================================================
    BASE STYLESHEET - Gerado a partir de design tokens
-   Theme: {"Light" if s.bg_primary == "#FFFFFF" else "Dark"}
+   Theme: {"Light" if s.text_primary == "#14211F" else "Dark"}
    ============================================================ */
 
 /* ----- Global ----- */
@@ -275,7 +275,7 @@ QMenu::separator {{
 
 /* ----- Dialog ----- */
 QDialog {{
-    background-color: {s.bg_primary};
+    background-color: {s.bg_secondary};
     border: {px(bd.width_normal)} solid {s.border_default};
     border-radius: {px(rad.radius_lg)};
 }}
@@ -642,12 +642,12 @@ def generate_sidebar_stylesheet(scheme: ColorScheme) -> str:
    ============================================================ */
 
 .Sidebar {{
-    background: {s.bg_primary};
+    background: {s.bg_secondary};
     border-right: {px(1)} solid {s.border_default};
 }}
 
 .Sidebar__header {{
-    background: {s.bg_primary};
+    background: {s.bg_secondary};
     border-bottom: {px(1)} solid {s.border_default};
     padding: {px(sp.space_3)} {px(sp.space_4)};
 }}
@@ -659,7 +659,7 @@ def generate_sidebar_stylesheet(scheme: ColorScheme) -> str:
 }}
 
 .Sidebar__tabBar {{
-    background: {s.bg_primary};
+    background: {s.bg_secondary};
     border-bottom: {px(1)} solid {s.border_default};
     padding: 0 {px(sp.space_2)};
 }}
@@ -710,7 +710,7 @@ def generate_sidebar_stylesheet(scheme: ColorScheme) -> str:
 
 .Sidebar__footer {{
     border-top: {px(1)} solid {s.border_default};
-    background: {s.bg_primary};
+    background: {s.bg_secondary};
     padding: {px(sp.space_3)};
 }}
 

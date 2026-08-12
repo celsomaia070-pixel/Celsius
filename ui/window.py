@@ -4,11 +4,13 @@ Main Window - Janela principal refatorada usando controllers e views extraídos.
 
 import contextlib
 import tempfile
+from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.agenda import get_agenda_service
 from core.inventory import get_inventory_service
 from core.memory import get_memory_service
 from core.mobile_access import (
@@ -28,6 +31,13 @@ from core.mobile_access import (
 )
 from core.modules import get_module_definition, sidebar_modules
 from core.settings import get_settings
+from core.tts import (
+    TTS_STREAM_FOLLOWUP_MAX_CHARS,
+    TTS_STREAM_FOLLOWUP_MIN_CHARS,
+    TTS_STREAM_FOLLOWUP_SENTENCE_CHARS,
+    naturalize_tts_text,
+    pop_ready_tts_chunk,
+)
 from ui.chat import ModernChatView, ModernInputArea
 from ui.command_palette import CommandPaletteManager
 from ui.controllers.conversation_manager import ConversationManager
@@ -52,6 +62,7 @@ class ModernChatWindow(QMainWindow):
         super().__init__()
         self.settings = get_settings()
         self.memory_service = get_memory_service()
+        self.agenda_service = get_agenda_service()
         self.inventory_service = get_inventory_service()
         self.worker_manager = WorkerManager()
         self.theme_manager = ThemeManager()
@@ -74,9 +85,23 @@ class ModernChatWindow(QMainWindow):
         self._pending_file_path = ""
         self._memories_enabled = True
         self._voice_enabled = False
+        self._voice_stream_enabled_for_response = False
+        self._voice_stream_force_enabled = False
+        self._voice_stream_buffer = ""
+        self._voice_stream_active = False
+        self._voice_stream_had_content = False
+        self._voice_stream_enqueued_text = ""
+        self._voice_stream_chunks_enqueued = 0
+        self._voice_stream_finish_requested = False
+        self._pending_mobile_voice_audio = []
         self._ai_busy = False
         self._next_response_should_speak_on_pc = False
         self._mobile_server = None
+        self._agenda_timer = None
+        self._agenda_alert_flash_timer = None
+        self._agenda_beep_timer = None
+        self._agenda_alert_flash_on = False
+        self._pending_agenda_reminders = {}
         self._jarvis = None
         if self.settings.ui.jarvis_enabled:
             self._jarvis = JarvisVoiceVisualizer(
@@ -87,7 +112,7 @@ class ModernChatWindow(QMainWindow):
             )
             self._jarvis.VISUALIZATION_STOPPED.connect(self._on_jarvis_stopped)
 
-        self.setWindowTitle("Celsius")
+        self.setWindowTitle("Celsius Project AI")
         self.resize(1100, 700)
         self._setup_ui()
         self._apply_theme()
@@ -115,9 +140,11 @@ class ModernChatWindow(QMainWindow):
         self._new_conversation()
         QTimer.singleShot(500, self._maybe_show_first_setup)
         self._start_mobile_access_if_enabled()
+        self._start_agenda_reminders()
 
     def _setup_ui(self):
         central = QWidget()
+        central.setObjectName("appRoot")
         self.setCentralWidget(central)
 
         root_layout = QHBoxLayout(central)
@@ -140,15 +167,18 @@ class ModernChatWindow(QMainWindow):
 
         # Right content
         content_widget = QWidget()
+        content_widget.setObjectName("contentShell")
+        self._content_widget = content_widget
         main_layout = QVBoxLayout(content_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Top bar
         self._top_bar = QWidget()
-        self._top_bar.setFixedHeight(100)
+        self._top_bar.setObjectName("topBar")
+        self._top_bar.setFixedHeight(72)
         top_bar_layout = QHBoxLayout(self._top_bar)
-        top_bar_layout.setContentsMargins(16, 0, 20, 0)
+        top_bar_layout.setContentsMargins(20, 0, 20, 0)
         top_bar_layout.setSpacing(12)
 
         # Hamburger toggle
@@ -159,6 +189,19 @@ class ModernChatWindow(QMainWindow):
         self.hamburger_btn.setCursor(Qt.PointingHandCursor)
         self.hamburger_btn.clicked.connect(self._toggle_sidebar)
         top_bar_layout.addWidget(self.hamburger_btn)
+
+        title_block = QWidget()
+        title_block.setObjectName("workspaceTitleBlock")
+        title_layout = QVBoxLayout(title_block)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(1)
+        self.workspace_title = QLabel("Celsius Project AI")
+        self.workspace_title.setObjectName("workspaceTitle")
+        self.workspace_subtitle = QLabel("IA local • dados no seu computador")
+        self.workspace_subtitle.setObjectName("workspaceSubtitle")
+        title_layout.addWidget(self.workspace_title)
+        title_layout.addWidget(self.workspace_subtitle)
+        top_bar_layout.addWidget(title_block)
 
         top_bar_layout.addStretch(1)
 
@@ -180,6 +223,24 @@ class ModernChatWindow(QMainWindow):
         top_bar_layout.addWidget(self.settings_btn)
 
         main_layout.addWidget(self._top_bar)
+
+        # Agenda alert stays visible until the user acknowledges the reminder.
+        self.agenda_alert = QWidget()
+        self.agenda_alert.setObjectName("agendaAlert")
+        self.agenda_alert.hide()
+        agenda_alert_layout = QHBoxLayout(self.agenda_alert)
+        agenda_alert_layout.setContentsMargins(16, 10, 16, 10)
+        agenda_alert_layout.setSpacing(12)
+
+        self.agenda_alert_label = QLabel("")
+        self.agenda_alert_label.setWordWrap(True)
+        agenda_alert_layout.addWidget(self.agenda_alert_label, 1)
+
+        self.agenda_alert_button = QPushButton("Desativar lembrete")
+        self.agenda_alert_button.setCursor(Qt.PointingHandCursor)
+        self.agenda_alert_button.clicked.connect(self._dismiss_agenda_alert)
+        agenda_alert_layout.addWidget(self.agenda_alert_button)
+        main_layout.addWidget(self.agenda_alert)
 
         # Chat view
         self.chat_view = ModernChatView(scheme=scheme_from_name(self._theme_mode.value))
@@ -254,12 +315,59 @@ class ModernChatWindow(QMainWindow):
 
     def _apply_theme(self):
         self.theme_controller.apply_theme(self)
+        scheme = scheme_from_name(self._theme_mode.value)
+        if hasattr(self, "_top_bar"):
+            self._top_bar.setStyleSheet(f"""
+                #topBar {{
+                    background: {scheme.bg_secondary};
+                    border-bottom: 1px solid {scheme.border_default};
+                }}
+                #workspaceTitleBlock {{
+                    background: transparent;
+                    border: none;
+                }}
+                #workspaceTitle {{
+                    background: transparent;
+                    border: none;
+                    color: {scheme.text_primary};
+                    font-size: 16px;
+                    font-weight: 700;
+                }}
+                #workspaceSubtitle {{
+                    background: transparent;
+                    border: none;
+                    color: {scheme.accent_primary};
+                    font-size: 11px;
+                    font-weight: 600;
+                }}
+            """)
+            icon_button_style = f"""
+                QPushButton {{
+                    background: {scheme.bg_secondary};
+                    border: 1px solid {scheme.border_default};
+                    border-radius: 6px;
+                    padding: 8px;
+                }}
+                QPushButton:hover {{
+                    background: {scheme.accent_subtle};
+                    border-color: {scheme.accent_primary};
+                }}
+                QPushButton:pressed {{
+                    background: {scheme.bg_active};
+                }}
+            """
+            self.hamburger_btn.setIcon(icon("bars", scheme.text_primary))
+            self.settings_btn.setIcon(icon("cog", scheme.text_primary))
+            self.hamburger_btn.setStyleSheet(icon_button_style)
+            self.theme_btn.setStyleSheet(icon_button_style)
+            self.settings_btn.setStyleSheet(icon_button_style)
         if hasattr(self, "module_placeholder"):
-            scheme = scheme_from_name(self._theme_mode.value)
             self.module_placeholder.setStyleSheet(
                 f"background: {scheme.bg_primary}; color: {scheme.text_secondary}; "
                 "font-size: 15px; padding: 28px;"
             )
+        if hasattr(self, "agenda_alert"):
+            self._apply_agenda_alert_style()
 
     def _toggle_theme(self):
         self._theme_mode = self.theme_controller.toggle()
@@ -371,6 +479,139 @@ class ModernChatWindow(QMainWindow):
             f"{title}\n\n{description}\n\nModulo em preparacao para esta empresa."
         )
         self.module_placeholder.show()
+
+    def _start_agenda_reminders(self):
+        self._agenda_timer = QTimer(self)
+        self._agenda_timer.setInterval(60_000)
+        self._agenda_timer.timeout.connect(self._check_agenda_reminders)
+        self._agenda_timer.start()
+        QTimer.singleShot(2_000, self._check_agenda_reminders)
+
+    def _check_agenda_reminders(self):
+        if not hasattr(self, "agenda_service"):
+            return
+        if not self.settings.modules.is_enabled("agenda"):
+            return
+        reminders = self.agenda_service.due_reminders(now=datetime.now())
+        if not reminders:
+            return
+
+        new_reminders = []
+        for event in reminders:
+            if event.id in self._pending_agenda_reminders:
+                continue
+            self._pending_agenda_reminders[event.id] = event
+            new_reminders.append(event)
+
+        if not new_reminders:
+            return
+
+        message = self._format_agenda_reminder_message(new_reminders)
+        self.chat_view.add_assistant_message(message)
+        self._show_agenda_alert()
+        self._beep_agenda_alert()
+        if self._mobile_server:
+            self._mobile_server.publish_response(message, kind="agenda_reminder")
+
+    def _format_agenda_reminder_message(self, events):
+        lines = ["Lembrete da agenda:"]
+        for event in events:
+            details = [event.starts_at.strftime("%d/%m/%Y %H:%M")]
+            if event.customer:
+                details.append(event.customer)
+            if event.location:
+                details.append(event.location)
+            lines.append(f"- {event.title} ({' | '.join(details)})")
+        return "\n".join(lines)
+
+    def _show_agenda_alert(self):
+        if not self._pending_agenda_reminders:
+            self._hide_agenda_alert()
+            return
+
+        events = list(self._pending_agenda_reminders.values())
+        self.agenda_alert_label.setText(self._format_agenda_reminder_message(events))
+        self.agenda_alert.show()
+        self._start_agenda_alert_timers()
+
+    def _dismiss_agenda_alert(self):
+        for event_id in list(self._pending_agenda_reminders):
+            with contextlib.suppress(Exception):
+                self.agenda_service.mark_reminded(event_id)
+        self._pending_agenda_reminders.clear()
+        self._hide_agenda_alert()
+
+    def _hide_agenda_alert(self):
+        self._stop_agenda_alert_timers()
+        self._agenda_alert_flash_on = False
+        if hasattr(self, "agenda_alert"):
+            self.agenda_alert.hide()
+            self._apply_agenda_alert_style()
+
+    def _start_agenda_alert_timers(self):
+        if self._agenda_alert_flash_timer is None:
+            self._agenda_alert_flash_timer = QTimer(self)
+            self._agenda_alert_flash_timer.setInterval(700)
+            self._agenda_alert_flash_timer.timeout.connect(self._toggle_agenda_alert_flash)
+        if not self._agenda_alert_flash_timer.isActive():
+            self._agenda_alert_flash_timer.start()
+
+        if self._agenda_beep_timer is None:
+            self._agenda_beep_timer = QTimer(self)
+            self._agenda_beep_timer.setInterval(30_000)
+            self._agenda_beep_timer.timeout.connect(self._beep_agenda_alert)
+        if not self._agenda_beep_timer.isActive():
+            self._agenda_beep_timer.start()
+
+    def _stop_agenda_alert_timers(self):
+        if self._agenda_alert_flash_timer and self._agenda_alert_flash_timer.isActive():
+            self._agenda_alert_flash_timer.stop()
+        if self._agenda_beep_timer and self._agenda_beep_timer.isActive():
+            self._agenda_beep_timer.stop()
+
+    def _toggle_agenda_alert_flash(self):
+        self._agenda_alert_flash_on = not self._agenda_alert_flash_on
+        self._apply_agenda_alert_style()
+
+    def _beep_agenda_alert(self):
+        if not self._pending_agenda_reminders:
+            return
+        with contextlib.suppress(Exception):
+            QApplication.beep()
+
+    def _apply_agenda_alert_style(self):
+        scheme = scheme_from_name(self._theme_mode.value)
+        active_bg = scheme.warning
+        idle_bg = scheme.warning_bg
+        bg = active_bg if self._agenda_alert_flash_on else idle_bg
+        text = scheme.text_on_accent if self._agenda_alert_flash_on else scheme.warning_text
+        button_bg = scheme.bg_primary
+        button_hover = scheme.bg_hover
+
+        self.agenda_alert.setStyleSheet(
+            f"""
+            QWidget#agendaAlert {{
+                background: {bg};
+                border-bottom: 1px solid {scheme.warning};
+            }}
+            """
+        )
+        self.agenda_alert_label.setStyleSheet(f"color: {text}; font-size: 14px; font-weight: 700;")
+        self.agenda_alert_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background: {button_bg};
+                color: {scheme.text_primary};
+                border: 1px solid {scheme.border_default};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: {button_hover};
+            }}
+            """
+        )
 
     def _apply_module_configuration(self):
         modules = sidebar_modules(self.settings.modules.enabled)
@@ -582,9 +823,14 @@ class ModernChatWindow(QMainWindow):
         self._ai_busy = True
         self.input_area.set_busy(True)
         self.chat_view.start_streaming()
+        self._reset_voice_stream()
+        should_stream_voice = self._voice_enabled or self._next_response_should_speak_on_pc
+        self._voice_stream_enabled_for_response = should_stream_voice
+        self._voice_stream_force_enabled = should_stream_voice
 
     def _on_ai_response_token(self, token: str):
         self.chat_view.append_streaming(token)
+        self._stream_voice_token(token)
 
     def _on_ai_response_finished(self, full_text: str):
         self._ai_busy = False
@@ -594,20 +840,22 @@ class ModernChatWindow(QMainWindow):
             self.conversation_manager.add_message(self._current_conv_id, "assistant", full_text)
         if self._mobile_server:
             self._mobile_server.publish_response(full_text, kind="assistant")
+            self._publish_pending_mobile_voice_audio()
         should_speak_on_pc = self._voice_enabled or self._next_response_should_speak_on_pc
         self._next_response_should_speak_on_pc = False
         if should_speak_on_pc and full_text.strip():
-            if self._jarvis:
-                self._jarvis.start_speaking()
-            self.worker_controller.start_voice(
-                full_text,
-                force_enabled=should_speak_on_pc,
-            )
+            if self._voice_stream_had_content:
+                self._flush_voice_stream(full_text)
+            else:
+                self._enqueue_voice_stream_chunk(full_text, continuation=False)
+        else:
+            self._reset_voice_stream()
 
     def _on_ai_response_error(self, error: str):
         self._ai_busy = False
         self.input_area.set_busy(False)
         self.chat_view.hide_thinking()
+        self._reset_voice_stream()
         error_text = f"Erro: {error}"
         if getattr(self.chat_view, "_streaming_bubble", None):
             self.chat_view.finish_streaming(error_text)
@@ -664,16 +912,41 @@ class ModernChatWindow(QMainWindow):
 
     # Model handlers
     def _populate_model_combo(self):
-        """Fill model combo with all GGUF_MODELS and select current."""
+        """Fill model combo with GGUF_MODELS and mark missing local files."""
         from core.config import GGUF_MODELS, get_model_by_id
 
-        model_names = [m.display_name for m in GGUF_MODELS]
-        self.input_area.set_models(model_names)
+        model_entries = []
+        for model in GGUF_MODELS:
+            model_path = self.settings.get_model_path(model.id)
+            installed = model_path.exists()
+            status = "" if installed else " - nao instalado"
+            model_entries.append(
+                {
+                    "id": model.id,
+                    "label": f"{model.display_name}{status}",
+                    "display_name": model.display_name,
+                    "installed": installed,
+                    "path": str(model_path),
+                    "hf_repo": model.hf_repo,
+                    "hf_file": model.hf_file,
+                }
+            )
+        self.input_area.set_models(model_entries)
         current = get_model_by_id(self.settings.llm_model)
         if current:
-            idx = self.input_area.model_combo.findText(current.display_name)
-            if idx >= 0:
-                self.input_area.model_combo.setCurrentIndex(idx)
+            self._select_model_in_combo(current.id)
+
+    def _select_model_in_combo(self, model_id: str) -> None:
+        combo = self.input_area.model_combo
+        previous_state = combo.blockSignals(True)
+        try:
+            for idx in range(combo.count()):
+                data = combo.itemData(idx)
+                if isinstance(data, dict) and data.get("id") == model_id:
+                    combo.setCurrentIndex(idx)
+                    return
+        finally:
+            combo.blockSignals(previous_state)
 
     def _on_model_list_loaded(self, models: list):
         self.input_area.set_models(models)
@@ -682,11 +955,35 @@ class ModernChatWindow(QMainWindow):
         """Switch to the selected model by display name."""
         from core.config import GGUF_MODELS
 
-        match = next((m for m in GGUF_MODELS if m.display_name == display_name), None)
+        selected_data = self.input_area.model_combo.currentData()
+        selected_id = selected_data.get("id") if isinstance(selected_data, dict) else None
+        match = next(
+            (m for m in GGUF_MODELS if m.id == selected_id or m.display_name == display_name),
+            None,
+        )
         if not match:
             return
         old_model = self.settings.llm_model
         if match.id == old_model:
+            return
+        model_path = self.settings.get_model_path(match.id)
+        installed = model_path.exists()
+        if isinstance(selected_data, dict):
+            installed = bool(selected_data.get("installed", installed))
+            if not installed:
+                model_path = type(model_path)(selected_data.get("path", model_path))
+        if not installed:
+            self._select_model_in_combo(old_model)
+            QMessageBox.information(
+                self,
+                "Modelo nao instalado",
+                "Este modelo ainda nao esta na pasta resources.\n\n"
+                f"Arquivo esperado:\n{model_path}\n\n"
+                "Baixe no seletor de LLM ou coloque o GGUF em:\n"
+                f"{self.settings.get_resources_dir()}\n\n"
+                f"Repositorio: {match.hf_repo}\n"
+                f"Arquivo: {match.hf_file}",
+            )
             return
         self.settings.llm_model = match.id
         # Restart llama.cpp with the new model
@@ -702,9 +999,11 @@ class ModernChatWindow(QMainWindow):
                 n_threads=0,
             ):
                 self.settings.llm_model = old_model
+                self._select_model_in_combo(old_model)
                 QMessageBox.warning(self, "Erro", f"Falha ao carregar modelo {match.name}")
         except Exception as e:
             self.settings.llm_model = old_model
+            self._select_model_in_combo(old_model)
             QMessageBox.warning(self, "Erro", f"Falha ao trocar modelo: {e}")
 
     def _on_model_loaded(self, model_name: str):
@@ -750,6 +1049,7 @@ class ModernChatWindow(QMainWindow):
         if not self._voice_enabled:
             if self._jarvis:
                 self._jarvis.stop_speaking()
+            self._reset_voice_stream()
             self.worker_controller.stop_voice()
 
     def _on_voice_text_ready(self, text: str):
@@ -763,13 +1063,18 @@ class ModernChatWindow(QMainWindow):
     def _on_voice_error(self, error: str):
         if self._jarvis:
             self._jarvis.stop_speaking()
+        self._voice_stream_active = False
         QMessageBox.warning(self, "Erro na voz", error)
 
     def _on_voice_audio_ready(self, audio: bytes, mime_type: str):
         if self._mobile_server:
+            if self._ai_busy and self._voice_stream_enabled_for_response:
+                self._pending_mobile_voice_audio.append((audio, mime_type))
+                return
             self._mobile_server.publish_audio(audio, mime_type=mime_type)
 
     def _on_voice_finished(self):
+        self._voice_stream_active = False
         if self._jarvis:
             self._jarvis.stop_speaking()
 
@@ -778,6 +1083,7 @@ class ModernChatWindow(QMainWindow):
 
     # User message handler
     def _on_user_message(self, text: str):
+        self._reset_voice_stream()
         self.worker_controller.stop_voice()
         if self._jarvis:
             self._jarvis.stop_speaking()
@@ -803,6 +1109,96 @@ class ModernChatWindow(QMainWindow):
         # so the user message can render first
         QTimer.singleShot(0, lambda: self._start_ai_response(text, attachments))
 
+    def _stream_voice_token(self, token: str):
+        if not self._voice_stream_enabled_for_response or not token:
+            return
+
+        self._voice_stream_buffer += token
+        self._voice_stream_had_content = True
+        while True:
+            if self._voice_stream_chunks_enqueued:
+                chunk, remaining = pop_ready_tts_chunk(
+                    self._voice_stream_buffer,
+                    min_chars=TTS_STREAM_FOLLOWUP_MIN_CHARS,
+                    min_sentence_chars=TTS_STREAM_FOLLOWUP_SENTENCE_CHARS,
+                    max_chars=TTS_STREAM_FOLLOWUP_MAX_CHARS,
+                )
+            else:
+                chunk, remaining = pop_ready_tts_chunk(self._voice_stream_buffer)
+            self._voice_stream_buffer = remaining
+            if not chunk:
+                break
+            self._enqueue_voice_stream_chunk(chunk)
+
+    def _flush_voice_stream(self, full_text: str = ""):
+        missing_tail = self._missing_voice_stream_tail(full_text)
+        if missing_tail:
+            self._voice_stream_buffer = ""
+            self._enqueue_voice_stream_chunk(missing_tail, continuation=False)
+        elif self._voice_stream_buffer.strip():
+            self._enqueue_voice_stream_chunk(
+                self._voice_stream_buffer.strip(),
+                continuation=False,
+            )
+            self._voice_stream_buffer = ""
+        self._finish_voice_stream()
+
+    def _enqueue_voice_stream_chunk(self, text: str, *, continuation: bool = True):
+        cleaned = naturalize_tts_text(text)
+        if not cleaned:
+            return
+        self._ensure_voice_stream_started()
+        self._voice_stream_enqueued_text = f"{self._voice_stream_enqueued_text} {cleaned}".strip()
+        self._voice_stream_chunks_enqueued += 1
+        self.worker_controller.enqueue_voice_chunk(cleaned, continuation=continuation)
+
+    def _ensure_voice_stream_started(self):
+        if self._voice_stream_active:
+            return
+        self._voice_stream_active = True
+        self._voice_stream_finish_requested = False
+        if self._jarvis:
+            self._jarvis.start_speaking()
+        self.worker_controller.start_voice_stream(force_enabled=self._voice_stream_force_enabled)
+
+    def _finish_voice_stream(self):
+        if not self._voice_stream_active or self._voice_stream_finish_requested:
+            return
+        self._voice_stream_finish_requested = True
+        self.worker_controller.finish_voice_stream()
+
+    def _reset_voice_stream(self):
+        self._voice_stream_enabled_for_response = False
+        self._voice_stream_force_enabled = False
+        self._voice_stream_buffer = ""
+        self._voice_stream_active = False
+        self._voice_stream_had_content = False
+        self._voice_stream_enqueued_text = ""
+        self._voice_stream_chunks_enqueued = 0
+        self._voice_stream_finish_requested = False
+        self._pending_mobile_voice_audio = []
+
+    def _publish_pending_mobile_voice_audio(self):
+        if not self._mobile_server or not self._pending_mobile_voice_audio:
+            return
+        for audio, mime_type in self._pending_mobile_voice_audio:
+            self._mobile_server.publish_audio(audio, mime_type=mime_type)
+        self._pending_mobile_voice_audio = []
+
+    def _missing_voice_stream_tail(self, full_text: str) -> str:
+        final_text = naturalize_tts_text(full_text)
+        spoken_text = naturalize_tts_text(self._voice_stream_enqueued_text)
+        if not final_text:
+            return ""
+        if not spoken_text:
+            return final_text
+        if final_text.startswith(spoken_text):
+            return final_text[len(spoken_text) :].strip()
+        buffer_text = naturalize_tts_text(self._voice_stream_buffer)
+        if buffer_text and final_text.endswith(buffer_text):
+            return buffer_text
+        return ""
+
     def _start_ai_response(self, text: str, attachments: list | None = None):
         history = self.conversation_manager.get_history_for_ai(self._current_conv_id)
         memories = self.conversation_manager.get_memories_for_ai() if self._memories_enabled else []
@@ -822,16 +1218,21 @@ class ModernChatWindow(QMainWindow):
             self.input_area.set_busy(False)
 
     def _build_system_prompt(self) -> str:
-        from datetime import date
-
         today = date.today().strftime("%d/%m/%Y")
         assistant = self.settings.assistant
+        agenda_context = ""
+        if getattr(self.settings.modules, "is_enabled", None) and self.settings.modules.is_enabled(
+            "agenda"
+        ):
+            agenda_service = getattr(self, "agenda_service", None) or get_agenda_service()
+            agenda_context = f"\n\n{agenda_service.prompt_context()}"
         return (
             f"Voce e {assistant.name}, {assistant.profile}. "
             f"Sua identidade fixa e Celsius. Hoje e {today}. "
             "Ajude em tarefas gerais do usuario quando solicitado, incluindo redacao, estudos, "
             "tecnologia e explicacoes. O perfil da empresa orienta contexto, mas nao limita "
             "os assuntos que voce pode responder."
+            f"{agenda_context}"
         )
 
     # File attachment
@@ -969,6 +1370,9 @@ class ModernChatWindow(QMainWindow):
         if self._jarvis:
             self._jarvis.close()
             self._jarvis = None
+        if self._agenda_timer and self._agenda_timer.isActive():
+            self._agenda_timer.stop()
+        self._stop_agenda_alert_timers()
         self._stop_mobile_access()
         self.worker_controller.cleanup()
         super().closeEvent(event)

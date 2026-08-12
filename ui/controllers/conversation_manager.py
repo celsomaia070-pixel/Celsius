@@ -2,7 +2,6 @@
 ConversationManager - Gerencia conversas, histórico e persistência.
 """
 
-import os
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -25,13 +24,13 @@ class ConversationManager(QObject):
         self._conversations = {}
         self._current_conv_id = None
         self._core_manager = get_conversation_manager(
-            Path(self.settings.base_dir) / "conversations"
+            Path(self.settings.data_dir) / "conversations"
         )
         self._load_conversations()
 
     def _get_conversations_dir(self):
-        dir_path = os.path.join(self.settings.base_dir, "conversations")
-        os.makedirs(dir_path, exist_ok=True)
+        dir_path = Path(self.settings.data_dir) / "conversations"
+        dir_path.mkdir(parents=True, exist_ok=True)
         return dir_path
 
     def _load_conversations(self):

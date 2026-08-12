@@ -15,6 +15,7 @@ from core.settings import (
     MemorySettings,
     MobileAccessSettings,
     ModelSettings,
+    NotificationSettings,
     RagSettings,
     ResponseStyleSettings,
     SecuritySettings,
@@ -23,6 +24,7 @@ from core.settings import (
     UiSettings,
     VoiceSettings,
     _get_base_dir,
+    _get_resources_dir,
     get_feature_flags,
     get_settings,
     reset_settings,
@@ -35,11 +37,20 @@ class TestGetBaseDir:
         result = _get_base_dir()
         assert result.is_dir()
 
-    def test_frozen(self, monkeypatch):
+    def test_frozen_uses_local_app_data(self, monkeypatch, tmp_path):
         monkeypatch.setattr("sys.frozen", True, raising=False)
         monkeypatch.setattr("sys.executable", "/fake/app/main.exe", raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        monkeypatch.delenv("CELSIUS_BASE_DIR", raising=False)
         result = _get_base_dir()
-        assert result == Path("/fake/app")
+        assert result == tmp_path / "Celsius"
+
+    def test_frozen_resources_are_writable_user_models(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("sys.frozen", True, raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        monkeypatch.delenv("CELSIUS_BASE_DIR", raising=False)
+
+        assert _get_resources_dir() == tmp_path / "Celsius" / "models"
 
 
 class TestModelSettingsDefaults:
@@ -53,11 +64,11 @@ class TestModelSettingsDefaults:
 
     def test_fast_llm_model(self):
         s = ModelSettings()
-        assert s.fast_llm_model == "llama3.2-3b-q5km"
+        assert s.fast_llm_model == "qwen3-4b-q4km"
 
     def test_embedding_model(self):
         s = ModelSettings()
-        assert s.embedding_model == "paraphrase-multilingual-MiniLM-L12-v2"
+        assert s.embedding_model == "qwen3-embedding-0.6b"
 
     def test_whisper_model(self):
         s = ModelSettings()
@@ -91,14 +102,25 @@ class TestResponseStyleSettingsDefaults:
     def test_defaults_are_natural(self):
         s = ResponseStyleSettings()
         assert s.mode == "natural"
+        assert s.detail_level == "detalhado"
         assert s.temperature == 0.45
         assert s.top_p == 0.9
 
     def test_prompt_context_encourages_natural_answers(self):
         context = ResponseStyleSettings().prompt_context()
         assert "Estilo de Conversa" in context
-        assert "perguntas simples" in context
+        assert "Perguntas factuais muito simples" in context
         assert "Modo atual: natural" in context
+        assert "exemplos concretos" in context
+        assert "riscos, limites e incertezas" in context
+        assert "pergunta curta pode exigir uma resposta detalhada" in context
+        assert "Nivel de detalhe: detalhado" in context
+
+    def test_defaults_allow_complete_answers(self):
+        settings = ResponseStyleSettings()
+
+        assert settings.short_answer_max_chars == 320
+        assert settings.max_simple_sentences == 5
 
 
 class TestAssistantSettingsDefaults:
@@ -404,6 +426,7 @@ class TestVoiceSettingsDefaults:
         s = VoiceSettings()
         assert s.enabled is True
         assert s.provider == "edge-tts"
+        assert s.profile == "natural_male_br"
         assert s.voice == "pt-BR-AntonioNeural"
         assert s.rate == "+5%"
         assert s.pitch == "-2Hz"
@@ -419,6 +442,18 @@ class TestMobileAccessSettingsDefaults:
         assert s.allow_lan is False
         assert s.voice_commands_enabled is True
         assert s.use_https is True
+
+
+class TestNotificationSettingsDefaults:
+    def test_notifications_are_external_and_disabled_by_default(self):
+        s = NotificationSettings()
+
+        assert s.enabled is False
+        assert s.external_services_allowed is False
+        assert s.require_confirmation is True
+        assert s.default_channel == "whatsapp"
+        assert s.whatsapp_provider == "meta_cloud_api"
+        assert s.whatsapp_token_env_var == "CELSIUS_WHATSAPP_TOKEN"
 
 
 class TestEnums:
@@ -455,6 +490,7 @@ class TestSettingsMain:
         assert isinstance(s.response, ResponseStyleSettings)
         assert isinstance(s.voice, VoiceSettings)
         assert isinstance(s.mobile, MobileAccessSettings)
+        assert isinstance(s.notifications, NotificationSettings)
 
     def test_nested_rag_settings(self):
         s = Settings()
@@ -499,6 +535,22 @@ class TestSettingsMain:
             s = Settings()
             assert s.logs_dir == tmp_path / "logs"
 
+    def test_model_path_falls_back_to_bundled_resources(self, tmp_path):
+        models_dir = tmp_path / "user-models"
+        bundle_dir = tmp_path / "bundle"
+        bundled_model = bundle_dir / "resources" / "qwen2.5-vl-7b-q4_k_m.gguf"
+        bundled_model.parent.mkdir(parents=True)
+        bundled_model.write_bytes(b"gguf")
+
+        with patch("core.settings._get_bundle_dir", return_value=bundle_dir):
+            s = Settings(
+                base_dir=tmp_path / "data-root",
+                data_dir=tmp_path / "data-root" / "data",
+                logs_dir=tmp_path / "data-root" / "logs",
+                resources_dir=models_dir,
+            )
+            assert s.get_model_path("qwen2.5-vl-7b-q4km") == bundled_model
+
     def test_base_dir_is_path(self):
         s = Settings()
         assert isinstance(s.base_dir, Path)
@@ -531,6 +583,7 @@ class TestSettingsMain:
         )
 
         s = Settings(data_dir=data_dir)
+        s.initialize()
 
         assert s.customer.user_name == "Celso"
         assert s.customer.company_name == "Celsius Sistemas"
@@ -547,6 +600,7 @@ class TestSettingsMain:
         )
 
         s = Settings(data_dir=data_dir)
+        s.initialize()
 
         assert s.customer.company_name == "Empresa antiga"
         assert s.customer.company_description == ""
@@ -564,6 +618,7 @@ class TestSettingsMain:
         )
 
         s = Settings(data_dir=data_dir)
+        s.initialize()
 
         assert s.customer.user_name == "Nome via env"
         assert s.customer.company_name == "Empresa salva"
@@ -581,6 +636,12 @@ class TestSettingsMain:
                 "allow_lan": true,
                 "pairing_token": "abc123",
                 "use_https": false
+              },
+              "notifications": {
+                "enabled": true,
+                "external_services_allowed": true,
+                "default_channel": "email",
+                "email_provider": "smtp"
               }
             }
             """,
@@ -588,19 +649,26 @@ class TestSettingsMain:
         )
 
         s = Settings(data_dir=data_dir)
+        s.initialize()
 
         assert s.response.mode == "tecnico"
         assert s.response.temperature == 0.35
+        assert s.voice.profile == "natural_male_br"
         assert s.voice.voice == "pt-BR-FranciscaNeural"
         assert s.voice.rate == "+8%"
         assert s.mobile.enabled is True
         assert s.mobile.allow_lan is True
         assert s.mobile.pairing_token == "abc123"
         assert s.mobile.use_https is False
+        assert s.notifications.enabled is True
+        assert s.notifications.external_services_allowed is True
+        assert s.notifications.default_channel == "email"
+        assert s.notifications.email_provider == "smtp"
 
     def test_save_local_preferences(self, tmp_path):
         s = Settings(data_dir=tmp_path)
         s.response.mode = "relatorio"
+        s.voice.profile = "natural_female_br"
         s.voice.voice = "pt-BR-FranciscaNeural"
         s.modules.set_enabled(["suppliers"])
 
@@ -612,6 +680,7 @@ class TestSettingsMain:
         assert "suppliers" in data
         assert "modules" in data
         assert "mobile" in data
+        assert "notifications" in data
 
     def test_loads_module_preferences(self, tmp_path):
         from core.modules import MODULE_CHAT, MODULE_SETTINGS, MODULE_SUPPLIERS
@@ -631,6 +700,7 @@ class TestSettingsMain:
         )
 
         s = Settings(data_dir=data_dir)
+        s.initialize()
 
         assert MODULE_SUPPLIERS in s.modules.enabled
         assert MODULE_CHAT in s.modules.enabled

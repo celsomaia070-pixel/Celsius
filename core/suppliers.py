@@ -26,6 +26,11 @@ class Supplier:
     telefone: str = ""
     email: str = ""
     categoria: str = ""
+    documento: str = ""
+    produtos: str = ""
+    prazo_pagamento: str = ""
+    lead_time_dias: str = ""
+    status: str = "Ativo"
     observacoes: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -102,6 +107,11 @@ class SupplierService:
         telefone: str = "",
         email: str = "",
         categoria: str = "",
+        documento: str = "",
+        produtos: str = "",
+        prazo_pagamento: str = "",
+        lead_time_dias: str = "",
+        status: str = "Ativo",
         observacoes: str = "",
     ) -> Supplier:
         nome = nome.strip()
@@ -116,6 +126,11 @@ class SupplierService:
                 telefone=telefone.strip(),
                 email=email.strip(),
                 categoria=categoria.strip(),
+                documento=documento.strip(),
+                produtos=produtos.strip(),
+                prazo_pagamento=prazo_pagamento.strip(),
+                lead_time_dias=lead_time_dias.strip(),
+                status=status.strip() or "Ativo",
                 observacoes=observacoes.strip(),
             )
             self._suppliers[supplier.id] = supplier
@@ -130,6 +145,11 @@ class SupplierService:
         telefone: str = "",
         email: str = "",
         categoria: str = "",
+        documento: str = "",
+        produtos: str = "",
+        prazo_pagamento: str = "",
+        lead_time_dias: str = "",
+        status: str = "Ativo",
         observacoes: str = "",
     ) -> Supplier | None:
         nome = nome.strip()
@@ -146,6 +166,11 @@ class SupplierService:
             supplier.telefone = telefone.strip()
             supplier.email = email.strip()
             supplier.categoria = categoria.strip()
+            supplier.documento = documento.strip()
+            supplier.produtos = produtos.strip()
+            supplier.prazo_pagamento = prazo_pagamento.strip()
+            supplier.lead_time_dias = lead_time_dias.strip()
+            supplier.status = status.strip() or "Ativo"
             supplier.observacoes = observacoes.strip()
             supplier.updated_at = _now()
             self._save()
@@ -172,6 +197,9 @@ class SupplierService:
                 or query in supplier.contato.lower()
                 or query in supplier.email.lower()
                 or query in supplier.categoria.lower()
+                or query in supplier.documento.lower()
+                or query in supplier.produtos.lower()
+                or query in supplier.status.lower()
             ]
 
 

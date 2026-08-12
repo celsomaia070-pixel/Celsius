@@ -5,6 +5,7 @@ Detects CPU, RAM, and GPU capabilities to recommend optimal model configuration.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
@@ -304,8 +305,6 @@ def _detect_gpu_wmi() -> GpuInfo | None:
         if result.returncode != 0 or not result.stdout.strip():
             return None
 
-        import json
-
         data = json.loads(result.stdout)
         if isinstance(data, list):
             gpu = data[0] if data else None
@@ -329,7 +328,13 @@ def _detect_gpu_wmi() -> GpuInfo | None:
 
         api = "cuda" if "nvidia" in name.lower() else "vulkan"
         return GpuInfo(name=name, vram_mb=vram_mb, api=api)
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
@@ -408,6 +413,60 @@ class ModelRequirements:
 
 
 MODEL_REQUIREMENTS: dict[str, ModelRequirements] = {
+    "qwen3-4b-q4km": ModelRequirements(
+        min_ram_gb=8,
+        recommended_ram_gb=12,
+        min_vram_mb=2500,
+        recommended_vram_mb=4096,
+        min_cpu_cores=2,
+        estimated_tokens_per_sec_cpu=12,
+        estimated_tokens_per_sec_gpu=42,
+    ),
+    "qwen3-8b-q4km": ModelRequirements(
+        min_ram_gb=12,
+        recommended_ram_gb=24,
+        min_vram_mb=5000,
+        recommended_vram_mb=8192,
+        min_cpu_cores=4,
+        estimated_tokens_per_sec_cpu=7,
+        estimated_tokens_per_sec_gpu=28,
+    ),
+    "qwen3-14b-q4km": ModelRequirements(
+        min_ram_gb=20,
+        recommended_ram_gb=32,
+        min_vram_mb=7000,
+        recommended_vram_mb=12288,
+        min_cpu_cores=6,
+        estimated_tokens_per_sec_cpu=4,
+        estimated_tokens_per_sec_gpu=16,
+    ),
+    "qwen2.5-vl-3b-q4km": ModelRequirements(
+        min_ram_gb=8,
+        recommended_ram_gb=16,
+        min_vram_mb=3000,
+        recommended_vram_mb=4096,
+        min_cpu_cores=2,
+        estimated_tokens_per_sec_cpu=10,
+        estimated_tokens_per_sec_gpu=34,
+    ),
+    "deepseek-r1-distill-qwen-7b-q4km": ModelRequirements(
+        min_ram_gb=12,
+        recommended_ram_gb=24,
+        min_vram_mb=5000,
+        recommended_vram_mb=8192,
+        min_cpu_cores=4,
+        estimated_tokens_per_sec_cpu=5,
+        estimated_tokens_per_sec_gpu=20,
+    ),
+    "deepseek-r1-distill-qwen-14b-q4km": ModelRequirements(
+        min_ram_gb=20,
+        recommended_ram_gb=32,
+        min_vram_mb=7000,
+        recommended_vram_mb=12288,
+        min_cpu_cores=6,
+        estimated_tokens_per_sec_cpu=3,
+        estimated_tokens_per_sec_gpu=12,
+    ),
     "qwen2.5-vl-7b-q4km": ModelRequirements(
         min_ram_gb=12,
         recommended_ram_gb=24,

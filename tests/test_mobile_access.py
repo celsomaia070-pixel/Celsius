@@ -10,6 +10,7 @@ import pytest
 
 from core.mobile_access import (
     MobileAccessServer,
+    _create_server_ssl_context,
     _mobile_html,
     build_mobile_url,
     ensure_mobile_certificate,
@@ -53,16 +54,62 @@ def _request_bytes(url: str, token: str = "") -> tuple[bytes, str, int, int]:
 
 
 class TestMobileAccess:
+    def test_rejects_plain_http_outside_loopback(self):
+        with pytest.raises(ValueError, match="exige HTTPS"):
+            MobileAccessServer("0.0.0.0", 0, "secret", lambda *_args: True)
+
+    def test_server_ssl_context_ignores_client_only_truststore_wrapper(self, monkeypatch):
+        native_context = object()
+
+        class TruststoreContext:
+            __module__ = "pip._vendor.truststore._api"
+
+            def __init__(self, _protocol):
+                self._ctx = native_context
+
+        monkeypatch.setattr(ssl, "SSLContext", TruststoreContext)
+
+        assert _create_server_ssl_context() is native_context
+
     def test_mobile_page_uses_single_optimized_voice_button(self):
         html = _mobile_html("secret", True)
 
         assert "Falar comando" not in html
         assert "SpeechRecognition" not in html
-        assert "speechSynthesis" not in html
+        assert "speechSynthesis" in html
         assert "Gravar voz" in html
         assert "Parar e enviar" in html
+        assert "Digitar mensagem" in html
+        assert "composerBody" in html
+        assert 'aria-expanded="false"' in html
+        assert "Use quando preferir escrever" in html
+        assert "voiceOrb" in html
+        assert "Ativar escuta" in html
+        assert 'Aguardando "Celsius"' in html
+        assert "scheduleAutomaticWakeListening" in html
+        assert "command_submitted" in html
+        assert "themeToggle" in html
+        assert "celsiusMobileTheme" in html
+        assert "color-scheme: light" in html
+        assert "voiceRing" in html
+        assert "SILENCE_TO_SEND_MS" in html
+        assert "MIN_VOICE_THRESHOLD" in html
+        assert 'audioContext.state !== "running"' in html
+        assert "audioContext.resume()" in html
+        assert "noiseSuppression: true" in html
+        assert 'setVoiceVisualState("needs-gesture")' in html
+        assert "resumeVoiceConversation" in html
         assert "TARGET_SAMPLE_RATE = 16000" in html
         assert "/api/last-audio" in html
+        assert "Celsius mobile - identidade visual compartilhada com o site" in html
+        assert "--page: #F4F7F6" in html
+        assert "--surface: #FFFFFF" in html
+        assert "--primary: #087E72" in html
+        assert "--page: #101715" in html
+        assert "--primary: #42C6B7" in html
+        assert "Processado no seu PC" in html
+        assert "Fale com o Celsius" in html
+        assert "Ocultar campo" in html
 
     def test_generates_pairing_token(self):
         token = ensure_mobile_token()
@@ -96,6 +143,19 @@ class TestMobileAccess:
                 raise AssertionError("Expected unauthorized response.")
         finally:
             server.stop()
+
+    def test_mobile_page_disables_browser_cache(self):
+        server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
+        try:
+            port = server._httpd.server_address[1]
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/?token=secret", timeout=5
+            ) as response:
+                cache_control = response.headers.get("Cache-Control", "")
+        finally:
+            server.stop()
+
+        assert "no-store" in cache_control
 
     def test_accepts_authorized_command(self):
         received = []
@@ -249,6 +309,42 @@ class TestMobileAccess:
         assert response["transcript"] == "abrir estoque"
         assert response["response_version"] == 0
         assert received == [(b"audio", "audio/webm")]
+
+    def test_voice_callback_can_return_wake_word_state(self):
+        def callback(_audio: bytes, _mime_type: str):
+            return {
+                "ok": True,
+                "transcript": "Celsius",
+                "message": "Estou ouvindo",
+                "wake_detected": True,
+                "command_submitted": False,
+                "acknowledgement": "Estou ouvindo",
+            }
+
+        server = MobileAccessServer(
+            "127.0.0.1",
+            0,
+            "secret",
+            lambda *_args: True,
+            voice_command_callback=callback,
+        ).start()
+        try:
+            port = server._httpd.server_address[1]
+            response = _request_json(
+                f"http://127.0.0.1:{port}/api/voice-command",
+                token="secret",
+                payload={
+                    "audio_base64": base64.b64encode(b"audio").decode("ascii"),
+                    "mime_type": "audio/wav",
+                },
+            )
+        finally:
+            server.stop()
+
+        assert response["ok"] is True
+        assert response["wake_detected"] is True
+        assert response["command_submitted"] is False
+        assert response["response_version"] == 0
 
     def test_serves_status_over_https_with_local_certificate(self, tmp_path):
         pytest.importorskip("cryptography", reason="HTTPS local depende de cryptography")

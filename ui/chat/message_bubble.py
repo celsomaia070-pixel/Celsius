@@ -55,8 +55,6 @@ class MessageBubble(QWidget):
         self.update_content(self._full_content)
 
     def _setup_ui(self):
-        s = self._scheme
-
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 4, 0, 4)
         main_layout.setSpacing(4)
@@ -71,20 +69,19 @@ class MessageBubble(QWidget):
             container_layout.addStretch()
             self.message_widget = QWidget()
             msg_layout = QVBoxLayout(self.message_widget)
-            msg_layout.setContentsMargins(8, 0, 8, 0)
-            msg_layout.setSpacing(4)
+            msg_layout.setContentsMargins(16, 12, 16, 10)
+            msg_layout.setSpacing(6)
         else:
             self.message_widget = QWidget()
             msg_layout = QVBoxLayout(self.message_widget)
-            msg_layout.setContentsMargins(8, 0, 8, 0)
-            msg_layout.setSpacing(4)
+            msg_layout.setContentsMargins(16, 12, 16, 10)
+            msg_layout.setSpacing(6)
+
+        self.message_widget.setObjectName("messageSurface")
+        self.message_widget.setMaximumWidth(760 if self.is_user else 860)
 
         # Label: "Voce" or "Celsius"
         self.name_label = QLabel("Voce" if self.is_user else "Celsius")
-        self.name_label.setStyleSheet(
-            f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_base}px; "
-            f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
-        )
         name_row = QHBoxLayout()
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(SPACING.space_2)
@@ -93,10 +90,6 @@ class MessageBubble(QWidget):
         msg_layout.addLayout(name_row)
 
         self.status_label = QLabel()
-        self.status_label.setStyleSheet(
-            f"color: {s.text_muted}; font-size: {TYPOGRAPHY.text_sm}px; "
-            f"font-style: italic; background: transparent; border: none;"
-        )
         self.status_label.hide()
         if not self.is_user:
             msg_layout.addWidget(self.status_label)
@@ -113,15 +106,6 @@ class MessageBubble(QWidget):
         self.content_label.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.content_label.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.content_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.content_label.setStyleSheet(f"""
-            QTextEdit {{
-                background: transparent;
-                border: none;
-                color: {s.text_primary};
-                font-size: {TYPOGRAPHY.text_base}px;
-                selection-background-color: {s.accent_primary}40;
-            }}
-        """)
         self.content_label.document().contentsChanged.connect(self._adjust_height)
         self.content_label.document().documentLayout().documentSizeChanged.connect(
             lambda _: self._adjust_height()
@@ -154,6 +138,39 @@ class MessageBubble(QWidget):
             self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         else:
             self.message_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._apply_message_style()
+
+    def _apply_message_style(self):
+        s = self._scheme
+        background = s.user_bubble_bg if self.is_user else s.assistant_bubble_bg
+        foreground = s.user_bubble_text if self.is_user else s.assistant_bubble_text
+        border = s.accent_primary if self.is_user else s.border_default
+        name_color = s.text_secondary if self.is_user else s.accent_primary
+
+        self.message_widget.setStyleSheet(f"""
+            #messageSurface {{
+                background: {background};
+                border: 1px solid {border};
+                border-radius: {RADIUS.radius_lg}px;
+            }}
+        """)
+        self.name_label.setStyleSheet(
+            f"color: {name_color}; font-size: {TYPOGRAPHY.text_base}px; "
+            f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
+        )
+        self.status_label.setStyleSheet(
+            f"color: {s.accent_primary}; font-size: {TYPOGRAPHY.text_sm}px; "
+            f"font-weight: {TYPOGRAPHY.weight_semibold}; background: transparent; border: none;"
+        )
+        self.content_label.setStyleSheet(f"""
+            QTextEdit {{
+                background: transparent;
+                border: none;
+                color: {foreground};
+                font-size: {TYPOGRAPHY.text_base}px;
+                selection-background-color: {s.accent_subtle};
+            }}
+        """)
 
     def _add_attachments(self, layout):
         s = self._scheme
@@ -441,24 +458,7 @@ class MessageBubble(QWidget):
 
     def set_scheme(self, scheme):
         self._scheme = scheme
-        s = scheme
-        self.name_label.setStyleSheet(
-            f"color: {s.text_primary}; font-size: {TYPOGRAPHY.text_base}px; "
-            f"font-weight: {TYPOGRAPHY.weight_bold}; background: transparent; border: none;"
-        )
-        self.content_label.setStyleSheet(f"""
-            QTextEdit {{
-                background: transparent;
-                border: none;
-                color: {s.text_primary};
-                font-size: {TYPOGRAPHY.text_base}px;
-                selection-background-color: {s.accent_primary}40;
-            }}
-        """)
-        self.status_label.setStyleSheet(
-            f"color: {s.text_muted}; font-size: {TYPOGRAPHY.text_sm}px; "
-            f"font-style: italic; background: transparent; border: none;"
-        )
+        self._apply_message_style()
         if hasattr(self, "actions_widget"):
             # Recreate actions with new scheme
             self.actions_widget.deleteLater()

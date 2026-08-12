@@ -10,21 +10,34 @@ class TestConfig:
     def test_settings_creation(self):
         settings = Settings()
         assert settings.default_llm_model == "qwen2.5-vl-7b-q4km"
-        assert settings.embedding_model == "paraphrase-multilingual-MiniLM-L12-v2"
+        assert settings.embedding_model == "qwen3-embedding-0.6b"
         assert settings.base_dir is not None
         assert isinstance(settings.base_dir, Path)
 
     def test_gguf_models_registry(self):
-        assert len(GGUF_MODELS) >= 9
+        assert len(GGUF_MODELS) >= 14
         assert all(isinstance(m, GGUFModel) for m in GGUF_MODELS)
-        assert GGUF_MODELS[0].id == "qwen2.5-vl-7b-q4km"
-        assert "Qwen" in GGUF_MODELS[0].name
+        assert GGUF_MODELS[0].id == "qwen3-4b-q4km"
+        assert get_model_by_id("qwen3-8b-q4km") is not None
+        assert get_model_by_id("deepseek-r1-distill-qwen-7b-q4km") is not None
 
     def test_get_model_by_id(self):
         model = get_model_by_id("qwen2.5-vl-7b-q5km")
         assert model is not None
         assert model.quant == "Q5_K_M"
         assert get_model_by_id("nonexistent") is None
+
+    def test_qwen_omni_hf_file_uses_repository_casing(self):
+        model = get_model_by_id("qwen2.5-omni-7b-q4km")
+        assert model is not None
+        assert model.hf_file == "Qwen2.5-Omni-7B-Q4_K_M.gguf"
+        assert model.chat_format is None
+
+    def test_qwen_vl_higher_quantizations_use_available_repository(self):
+        for model_id in ("qwen2.5-vl-7b-q5km", "qwen2.5-vl-7b-q6k"):
+            model = get_model_by_id(model_id)
+            assert model is not None
+            assert model.hf_repo == "unsloth/Qwen2.5-VL-7B-Instruct-GGUF"
 
     def test_set_llm_model(self):
         settings = Settings()
@@ -47,8 +60,8 @@ class TestConfig:
 
     def test_model_path(self):
         settings = Settings()
-        path = settings.get_model_path("qwen2.5-vl-7b-q4km")
-        assert path.name == "qwen2.5-vl-7b-q4_k_m.gguf"
+        path = settings.get_model_path("qwen3-8b-q4km")
+        assert path.name == "qwen3-8b-instruct-q4_k_m.gguf"
 
     def test_gguf_model_display_name(self):
         model = GGUF_MODELS[0]

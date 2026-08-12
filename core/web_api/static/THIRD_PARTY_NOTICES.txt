@@ -1,0 +1,2 @@
+The interface icons are based on Lucide icons.
+Lucide is licensed under the ISC License: https://lucide.dev/license

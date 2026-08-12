@@ -1,6 +1,8 @@
 """Tests for core.sandbox (AST validation, SafeNamespace, SandboxedExecutor)."""
 
+import signal
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -162,6 +164,12 @@ class TestValidateCodeBlockedFunctions:
         ],
     )
     def test_dangerous_function_blocked(self, code):
+        err = validate_code(code)
+        assert err is not None
+        assert "Blocked" in err
+
+    def test_blocks_reported_getattr_builtins_bypass(self):
+        code = "getattr(__builtins__, 'pr' + 'int')('SANDBOX_BYPASS_OK')"
         err = validate_code(code)
         assert err is not None
         assert "Blocked" in err
@@ -404,6 +412,18 @@ class TestSandboxedExecutorBlockedCode:
         r = self._run("x = (1).__globals__")
         assert not r.success
 
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import io; io.open('sandbox_escape.txt', 'w')",
+            "import contextlib; contextlib.os.getcwd()",
+            "import random; random._os.listdir('.')",
+        ],
+    )
+    def test_safe_module_facades_do_not_expose_system_access(self, code):
+        r = self._run(code)
+        assert not r.success
+
     def test_dunder_subclasses(self):
         r = self._run("x = (1).__class__.__bases__")
         assert not r.success
@@ -415,13 +435,22 @@ class TestSandboxedExecutorBlockedCode:
 
 
 class TestSandboxedExecutorTimeout:
+    def test_cpu_limit_signal_is_reported_as_timeout(self, monkeypatch):
+        completed = SimpleNamespace(stdout="", stderr="", returncode=-getattr(signal, "SIGKILL", 9))
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: completed)
+
+        result = SandboxedExecutor(cpu_time=2)._run_in_subprocess("pass")
+
+        assert not result.success
+        assert "Timeout" in result.error
+
     @pytest.mark.skipif(
         _USE_IN_PROCESS,
         reason="In-process timeout is cooperative on Windows, cannot interrupt exec()",
     )
     def test_timeout(self):
         ex = SandboxedExecutor(cpu_time=2)
-        r = ex.execute("import time; time.sleep(60)")
+        r = ex.execute("while True:\n    pass")
         assert not r.success
         assert (
             "Timeout" in r.error or "timeout" in r.error.lower() or "timed out" in r.error.lower()

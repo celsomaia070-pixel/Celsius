@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 48" role="img" aria-label="Celsius Project AI">
+  <style>
+    .main { fill: #14211f; font: 700 25px "Segoe UI", Arial, sans-serif; }
+    .project { fill: #52615e; font: 600 18px "Segoe UI", Arial, sans-serif; }
+    .ai { fill: #087e72; font: 700 18px "Segoe UI", Arial, sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .main { fill: #edf5f2; }
+      .project { fill: #aabbb5; }
+      .ai { fill: #42c6b7; }
+    }
+  </style>
+  <text x="0" y="32" class="main">Celsius</text>
+  <text x="96" y="32" class="project">Project</text>
+  <text x="172" y="32" class="ai">AI</text>
+</svg>
