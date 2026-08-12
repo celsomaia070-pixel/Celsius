@@ -79,8 +79,7 @@ def run_ruff_check() -> bool:
             for error in errors[:10]:
                 location = error["location"]
                 print(
-                    f"    {error['filename']}:{location['row']}: "
-                    f"{error['code']} {error['message']}"
+                    f"    {error['filename']}:{location['row']}: {error['code']} {error['message']}"
                 )
             return False
         print("  No security-related lint issues found.")

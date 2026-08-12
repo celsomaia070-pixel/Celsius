@@ -7,7 +7,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -38,7 +38,7 @@ class EventHub:
         event = {
             "id": uuid.uuid4().hex,
             "type": event_type,
-            "occurred_at": datetime.now(UTC).isoformat(),
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
             "payload": payload or {},
         }
         with self._lock:

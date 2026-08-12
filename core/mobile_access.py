@@ -35,7 +35,7 @@ def get_lan_ip() -> str:
 
 
 def build_mobile_url(host: str, port: int, token: str, *, use_https: bool = False) -> str:
-    display_host = get_lan_ip() if host in {"0.0.0.0", "::"} else host
+    display_host = get_lan_ip() if host in {"0.0.0.0", "::"} else host  # nosec B104
     scheme = "https" if use_https else "http"
     return f"{scheme}://{display_host}:{port}/?token={token}"
 

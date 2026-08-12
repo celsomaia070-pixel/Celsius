@@ -210,7 +210,10 @@ def _inventory_report_summary() -> str:
         logger.error("Falha ao resumir estoque local: %s", exc, exc_info=True)
         return "Nao foi possivel consultar os itens do estoque local."
     if not items:
-        return "O inventory.json esta acessivel, mas nao possui itens cadastrados."
+        return (
+            "**Dados confirmados no inventory.json**\n\n"
+            "O arquivo esta acessivel, mas nao possui itens cadastrados."
+        )
 
     total_units = sum(item.quantidade for item in items)
     critical = sum(1 for item in items if item.precisa_repor)

@@ -1,7 +1,6 @@
 """Conversation versioning and full-text search system."""
 
 import builtins
-import hashlib
 import json
 import os
 import re
@@ -34,7 +33,7 @@ def _now_iso() -> str:
 
 
 def _generate_id() -> str:
-    return hashlib.md5(uuid.uuid4().bytes).hexdigest()[:12]
+    return uuid.uuid4().hex[:12]
 
 
 def _tokenize(text: str) -> list[str]:

@@ -180,28 +180,125 @@ SAFE_MODULE_EXPORTS: dict[str, frozenset[str]] = {
     "hashlib": frozenset(
         {"blake2b", "blake2s", "md5", "new", "sha1", "sha224", "sha256", "sha384", "sha512"}
     ),
-    "heapq": frozenset({"heapify", "heappop", "heappush", "heappushpop", "merge", "nlargest", "nsmallest"}),
+    "heapq": frozenset(
+        {"heapify", "heappop", "heappush", "heappushpop", "merge", "nlargest", "nsmallest"}
+    ),
     "io": frozenset({"BytesIO", "StringIO"}),
     "itertools": frozenset(
-        {"accumulate", "chain", "combinations", "combinations_with_replacement", "compress", "count", "cycle", "dropwhile", "filterfalse", "groupby", "islice", "pairwise", "permutations", "product", "repeat", "starmap", "takewhile", "tee", "zip_longest"}
+        {
+            "accumulate",
+            "chain",
+            "combinations",
+            "combinations_with_replacement",
+            "compress",
+            "count",
+            "cycle",
+            "dropwhile",
+            "filterfalse",
+            "groupby",
+            "islice",
+            "pairwise",
+            "permutations",
+            "product",
+            "repeat",
+            "starmap",
+            "takewhile",
+            "tee",
+            "zip_longest",
+        }
     ),
     "json": frozenset({"JSONDecodeError", "dump", "dumps", "load", "loads"}),
     "math": frozenset(name for name in dir(math) if not name.startswith("_")),
     "pprint": frozenset({"pformat", "pp", "pprint"}),
     "random": frozenset(
-        {"choice", "choices", "getrandbits", "randint", "random", "randrange", "sample", "seed", "shuffle", "uniform"}
+        {
+            "choice",
+            "choices",
+            "getrandbits",
+            "randint",
+            "random",
+            "randrange",
+            "sample",
+            "seed",
+            "shuffle",
+            "uniform",
+        }
     ),
     "re": frozenset(
-        {"ASCII", "DOTALL", "IGNORECASE", "MULTILINE", "Match", "Pattern", "VERBOSE", "compile", "escape", "findall", "finditer", "fullmatch", "match", "search", "split", "sub", "subn"}
+        {
+            "ASCII",
+            "DOTALL",
+            "IGNORECASE",
+            "MULTILINE",
+            "Match",
+            "Pattern",
+            "VERBOSE",
+            "compile",
+            "escape",
+            "findall",
+            "finditer",
+            "fullmatch",
+            "match",
+            "search",
+            "split",
+            "sub",
+            "subn",
+        }
     ),
     "statistics": frozenset(
-        {"StatisticsError", "correlation", "fmean", "geometric_mean", "harmonic_mean", "linear_regression", "mean", "median", "median_grouped", "median_high", "median_low", "mode", "multimode", "pstdev", "pvariance", "quantiles", "stdev", "variance"}
+        {
+            "StatisticsError",
+            "correlation",
+            "fmean",
+            "geometric_mean",
+            "harmonic_mean",
+            "linear_regression",
+            "mean",
+            "median",
+            "median_grouped",
+            "median_high",
+            "median_low",
+            "mode",
+            "multimode",
+            "pstdev",
+            "pvariance",
+            "quantiles",
+            "stdev",
+            "variance",
+        }
     ),
     "string": frozenset(
-        {"Formatter", "Template", "ascii_letters", "ascii_lowercase", "ascii_uppercase", "digits", "hexdigits", "octdigits", "printable", "punctuation", "whitespace"}
+        {
+            "Formatter",
+            "Template",
+            "ascii_letters",
+            "ascii_lowercase",
+            "ascii_uppercase",
+            "digits",
+            "hexdigits",
+            "octdigits",
+            "printable",
+            "punctuation",
+            "whitespace",
+        }
     ),
     "textwrap": frozenset({"TextWrapper", "dedent", "fill", "indent", "shorten", "wrap"}),
-    "typing": frozenset({"Any", "Callable", "Dict", "Iterable", "Iterator", "List", "Literal", "Optional", "Sequence", "Set", "Tuple", "Union"}),
+    "typing": frozenset(
+        {
+            "Any",
+            "Callable",
+            "Dict",
+            "Iterable",
+            "Iterator",
+            "List",
+            "Literal",
+            "Optional",
+            "Sequence",
+            "Set",
+            "Tuple",
+            "Union",
+        }
+    ),
 }
 
 
@@ -384,16 +481,13 @@ def validate_code(code: str) -> str | None:
                 if alias.name not in SAFE_MODULES:
                     return f"Blocked import: {alias.name}"
 
-        elif (
-            isinstance(node, ast.ImportFrom)
-            and node.module
-            and node.module not in SAFE_MODULES
-        ):
+        elif isinstance(node, ast.ImportFrom) and node.module and node.module not in SAFE_MODULES:
             return f"Blocked import: {node.module}"
 
         if isinstance(node, ast.Name) and (
             node.id in BLOCKED_FUNCTION_NAMES
-            or node.id in {"__builtins__", "getattr", "setattr", "delattr", "vars", "globals", "locals"}
+            or node.id
+            in {"__builtins__", "getattr", "setattr", "delattr", "vars", "globals", "locals"}
         ):
             return f"Blocked name: {node.id}"
 
@@ -430,7 +524,10 @@ def validate_code(code: str) -> str | None:
 
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             val = node.value.lower()
-            if any(pattern in val for pattern in ("__import__", "__builtins__", "builtins", "breakpoint")):
+            if any(
+                pattern in val
+                for pattern in ("__import__", "__builtins__", "builtins", "breakpoint")
+            ):
                 return f"Blocked string constant: '{node.value}'"
 
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
@@ -710,7 +807,8 @@ class SandboxedExecutor:
                 sys.stdout = stdout_buf
                 sys.stderr = stderr_buf
 
-                exec(compile(code, "<sandbox>", "exec"), safe_ns, safe_ns)
+                # The subprocess, AST allowlist and minimal builtins isolate this exec.
+                exec(compile(code, "<sandbox>", "exec"), safe_ns, safe_ns)  # nosec B102
 
                 elapsed = time.perf_counter() - t0
                 return ExecutionResult(

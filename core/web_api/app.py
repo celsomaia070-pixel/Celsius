@@ -198,7 +198,10 @@ def create_app(
             if current is not None and current.is_running:
                 return current
 
-            host = "0.0.0.0" if lan_access_enabled else "127.0.0.1"
+            # This branch is the explicit LAN mode, protected with HTTPS.
+            host = (
+                "0.0.0.0" if lan_access_enabled else "127.0.0.1"  # nosec B104
+            )
             use_https = bool(settings.mobile.use_https)
             cert_file = key_file = None
             if use_https:

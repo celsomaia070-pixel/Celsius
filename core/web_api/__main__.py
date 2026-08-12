@@ -49,7 +49,10 @@ def main() -> int:
     settings = get_settings()
     args = parser.parse_args()
     configured_lan = bool(settings.mobile.enabled and settings.mobile.allow_lan)
-    host = args.host or ("0.0.0.0" if configured_lan else "127.0.0.1")
+    # Binding all interfaces is allowed only after the explicit LAN checks below.
+    host = args.host or (
+        "0.0.0.0" if configured_lan else "127.0.0.1"  # nosec B104
+    )
     if not _is_loopback(host) and not (args.allow_lan or configured_lan):
         parser.error("Use --allow-lan para expor a API fora deste computador.")
     if not _is_loopback(host) and args.http:
@@ -67,7 +70,7 @@ def main() -> int:
         ssl_context = None
 
     scheme = "https" if use_https else "http"
-    display_host = get_lan_ip() if host in {"0.0.0.0", "::"} else host
+    display_host = get_lan_ip() if host in {"0.0.0.0", "::"} else host  # nosec B104
     print(f"Celsius Local API: {scheme}://{display_host}:{args.port}/api/docs")
     print("Use o botao de pareamento no Celsius para autorizar outro dispositivo.")
     application = create_app(

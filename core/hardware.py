@@ -5,6 +5,7 @@ Detects CPU, RAM, and GPU capabilities to recommend optimal model configuration.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
@@ -304,8 +305,6 @@ def _detect_gpu_wmi() -> GpuInfo | None:
         if result.returncode != 0 or not result.stdout.strip():
             return None
 
-        import json
-
         data = json.loads(result.stdout)
         if isinstance(data, list):
             gpu = data[0] if data else None
@@ -329,7 +328,13 @@ def _detect_gpu_wmi() -> GpuInfo | None:
 
         api = "cuda" if "nvidia" in name.lower() else "vulkan"
         return GpuInfo(name=name, vram_mb=vram_mb, api=api)
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ):
         return None
 
 

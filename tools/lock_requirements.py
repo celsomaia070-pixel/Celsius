@@ -56,7 +56,9 @@ def generate_lock() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="fail when the lock is absent or stale")
+    parser.add_argument(
+        "--check", action="store_true", help="fail when the lock is absent or stale"
+    )
     args = parser.parse_args()
     return check_lock() if args.check else generate_lock()
 

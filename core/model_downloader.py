@@ -21,10 +21,20 @@ def _file_sha256(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def _remote_sha256(repo_id: str, filename: str) -> str:
+def _resolve_revision(repo_id: str) -> str:
+    """Resolve the current repository state to an immutable commit SHA."""
+    from huggingface_hub import model_info
+
+    revision = str(model_info(repo_id, revision="main").sha or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision):
+        raise ModelIntegrityError(f"Revisao imutavel indisponivel para {repo_id}")
+    return revision
+
+
+def _remote_sha256(repo_id: str, filename: str, *, revision: str = "main") -> str:
     from huggingface_hub import get_hf_file_metadata, hf_hub_url
 
-    metadata = get_hf_file_metadata(hf_hub_url(repo_id, filename))
+    metadata = get_hf_file_metadata(hf_hub_url(repo_id, filename, revision=revision))
     etag = str(metadata.etag or "").strip('"')
     if not re.fullmatch(r"[0-9a-fA-F]{64}", etag):
         raise ModelIntegrityError(f"SHA-256 oficial indisponivel para {filename}")
@@ -155,10 +165,12 @@ def download_model(
         fn_status(f"Baixando {model.name} ({model.quant})...")
 
     try:
-        expected = model.sha256 or _remote_sha256(model.hf_repo, model.hf_file)
+        revision = _resolve_revision(model.hf_repo)
+        expected = model.sha256 or _remote_sha256(model.hf_repo, model.hf_file, revision=revision)
         path = hf_hub_download(
             repo_id=model.hf_repo,
             filename=model.hf_file,
+            revision=revision,
             local_dir=str(resources),
         )
         result = Path(path)
@@ -215,10 +227,14 @@ def download_mmproj(
         fn_status("Baixando mmproj (suporte a visao)...")
 
     try:
-        expected = model.mmproj_sha256 or _remote_sha256(model.hf_repo, model.mmproj_file)
+        revision = _resolve_revision(model.hf_repo)
+        expected = model.mmproj_sha256 or _remote_sha256(
+            model.hf_repo, model.mmproj_file, revision=revision
+        )
         path = hf_hub_download(
             repo_id=model.hf_repo,
             filename=model.mmproj_file,
+            revision=revision,
             local_dir=str(resources),
         )
         result = Path(path)

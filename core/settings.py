@@ -595,7 +595,7 @@ class MobileAccessSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CELSIUS_MOBILE_")
 
     enabled: bool = False
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec B104 - used only with explicit LAN opt-in and HTTPS
     port: int = 8787
     pairing_token: str = ""
     allow_lan: bool = False
