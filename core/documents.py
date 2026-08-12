@@ -154,12 +154,13 @@ class DocumentLibraryService:
 
     def submit_upload(self, filename: str, content: bytes, **metadata) -> tuple[dict, dict]:
         record = self._create_pending_record(filename, content, **metadata)
+        pending = self._item(record)
         job = DocumentJob(id=uuid.uuid4().hex, document_id=record.id)
         with self._lock:
             self._jobs[job.id] = job
-        self._publish("documents.changed", {"action": "created", "document": self._item(record)})
+        self._publish("documents.changed", {"action": "created", "document": pending})
         self._executor.submit(self._run_job, job.id)
-        return job.public_dict(), self._item(record)
+        return job.public_dict(), pending
 
     def import_path(self, path: Path, **metadata) -> dict:
         path = Path(path).resolve()

@@ -439,7 +439,7 @@ class TestSandboxedExecutorTimeout:
     )
     def test_timeout(self):
         ex = SandboxedExecutor(cpu_time=2)
-        r = ex.execute("import time; time.sleep(60)")
+        r = ex.execute("while True:\n    pass")
         assert not r.success
         assert (
             "Timeout" in r.error or "timeout" in r.error.lower() or "timed out" in r.error.lower()
