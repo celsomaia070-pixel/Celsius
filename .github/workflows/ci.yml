@@ -133,7 +133,7 @@ jobs:
           python -m pip install build
           python -m build --wheel
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: celsius-wheel
           path: dist/*.whl
