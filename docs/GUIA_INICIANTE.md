@@ -3,6 +3,33 @@
 Este guia e para quem esta comecando em programacao e quer rodar o Celsius no
 Windows.
 
+## Abrir a interface web (projeto ja instalado)
+
+Na pasta `E:\PythonProjectCELSIUS`, execute `abrir_web.bat` com dois cliques,
+ou use no terminal do PyCharm/PowerShell:
+
+```powershell
+cd E:\PythonProjectCELSIUS
+.\.venv\Scripts\python.exe -m core.web_api --host 127.0.0.1 --port 8790 --http
+```
+
+Deixe o terminal aberto. No navegador, abra <http://127.0.0.1:8790/app>.
+O endereco e digitado na barra do navegador, nao como comando Python.
+Use HTTP nesse acesso ao proprio PC. `/api/docs` e a documentacao tecnica;
+a interface de trabalho fica em `/app`.
+
+No primeiro acesso, crie a conta principal. Ela sera administradora.
+Novas contas sao cadastradas por esse administrador.
+Para encerrar o servidor, pressione `Ctrl+C` no terminal.
+
+Se a porta 8790 ja estiver ocupada pelo Celsius, abra o mesmo endereco.
+Para uma segunda instancia, troque `--port 8790` por `--port 8791` e abra
+<http://127.0.0.1:8791/app>. O acesso pelo celular exige servidor LAN com HTTPS;
+o comando acima atende somente o computador local.
+
+O arquivo `.env.example` mostra configuracoes opcionais. Em `.env`, os campos
+agrupados usam dois sublinhados, como `CELSIUS_WEB__PORT=8790`.
+
 ## 1. Instalar o Python
 
 1. Acesse https://www.python.org/downloads/
@@ -69,6 +96,19 @@ python -m pip install -r requirements.txt
 python -m pip install -r requirements-dev.in
 python -m playwright install chromium
 ```
+
+Quer reduzir a instalacao inicial? Instale o pacote so com o nucleo e adicione
+extras conforme precisar:
+
+```powershell
+python -m pip install -e .
+python -m pip install -e ".[all]"        # reativa PDF/OCR, voz, web e Docker
+python -m pip install -e ".[documents]"  # apenas processamento de documentos
+python -m pip install -e ".[voice]"      # apenas transcricao e TTS
+```
+
+O guia abaixo assume `requirements.txt` (conjunto completo), que e o
+recomendado para uso diario.
 
 ## 7. Rodar o Projeto
 

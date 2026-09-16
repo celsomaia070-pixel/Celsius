@@ -1,21 +1,37 @@
 import base64
 import datetime as dt
+import hashlib
 import ipaddress
 import json
+import logging
 import secrets
 import socket
 import ssl
 import threading
+import time
 from collections.abc import Callable
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from typing import Any, cast
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, quote, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from core.file_security import restrict_private_file
 
 CommandCallback = Callable[[str, str], tuple[bool, str] | bool | None]
 VoiceCommandCallback = Callable[[bytes, str], tuple[bool, str, str] | dict | str]
+PairingCodeCallback = Callable[[], str]
+logger = logging.getLogger(__name__)
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Keep upstream redirects under the mobile HTTPS origin."""
+
+    def redirect_request(self, _req, _fp, _code, _msg, _headers, _newurl):
+        return None
 
 
 def ensure_mobile_token(current: str = "") -> str:
@@ -34,10 +50,10 @@ def get_lan_ip() -> str:
         return "127.0.0.1"
 
 
-def build_mobile_url(host: str, port: int, token: str, *, use_https: bool = False) -> str:
+def build_mobile_url(host: str, port: int, pairing_code: str, *, use_https: bool = False) -> str:
     display_host = get_lan_ip() if host in {"0.0.0.0", "::"} else host  # nosec B104
     scheme = "https" if use_https else "http"
-    return f"{scheme}://{display_host}:{port}/?token={token}"
+    return f"{scheme}://{display_host}:{port}/?pair={pairing_code}"
 
 
 def ensure_mobile_certificate(
@@ -109,6 +125,18 @@ def ensure_mobile_certificate(
     return cert_path, key_path
 
 
+def mobile_certificate_fingerprint(cert_file: str | Path) -> str:
+    path = Path(cert_file)
+    if not path.is_file():
+        return ""
+    try:
+        der = ssl.PEM_cert_to_DER_cert(path.read_text(encoding="ascii"))
+        digest = hashlib.sha256(der).hexdigest().upper()
+        return ":".join(digest[index : index + 2] for index in range(0, len(digest), 2))
+    except (OSError, ValueError):
+        return ""
+
+
 def _is_loopback_host(host: str) -> bool:
     if host.lower() == "localhost":
         return True
@@ -142,6 +170,8 @@ class MobileAccessServer:
         use_https: bool = False,
         cert_file: str | Path | None = None,
         key_file: str | Path | None = None,
+        web_proxy_url: str = "",
+        web_pairing_code_callback: PairingCodeCallback | None = None,
     ):
         self.host = host
         self.port = port
@@ -154,6 +184,8 @@ class MobileAccessServer:
             raise ValueError("Acesso movel fora do computador exige HTTPS.")
         self.cert_file = Path(cert_file) if cert_file else None
         self.key_file = Path(key_file) if key_file else None
+        self.web_proxy_url = web_proxy_url.rstrip("/")
+        self.web_pairing_code_callback = web_pairing_code_callback
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._response_lock = threading.Lock()
@@ -166,6 +198,9 @@ class MobileAccessServer:
         self._last_audio_response_version = 0
         self._response_audio_version = 0
         self._audio_chunks: list[dict[str, bytes | str | int]] = []
+        self._auth_lock = threading.RLock()
+        self._pairing_codes: dict[str, float] = {}
+        self._sessions: dict[str, float] = {}
 
     @property
     def is_running(self) -> bool:
@@ -174,7 +209,40 @@ class MobileAccessServer:
     @property
     def url(self) -> str:
         port = self._httpd.server_address[1] if self._httpd else self.port
-        return build_mobile_url(self.host, port, self.token, use_https=self.use_https)
+        return build_mobile_url(
+            self.host,
+            port,
+            self._issue_pairing_code(),
+            use_https=self.use_https,
+        )
+
+    def _purge_auth(self) -> None:
+        now = time.monotonic()
+        self._pairing_codes = {
+            code: expiry for code, expiry in self._pairing_codes.items() if expiry > now
+        }
+        self._sessions = {token: expiry for token, expiry in self._sessions.items() if expiry > now}
+
+    def _issue_pairing_code(self) -> str:
+        with self._auth_lock:
+            self._purge_auth()
+            code = secrets.token_urlsafe(24)
+            self._pairing_codes[code] = time.monotonic() + 120
+            return code
+
+    def _exchange_pairing_code(self, code: str) -> str:
+        with self._auth_lock:
+            self._purge_auth()
+            if not self._pairing_codes.pop(code, None):
+                return ""
+            session = secrets.token_urlsafe(32)
+            self._sessions[session] = time.monotonic() + 12 * 60 * 60
+            return session
+
+    def _valid_session(self, token: str) -> bool:
+        with self._auth_lock:
+            self._purge_auth()
+            return bool(token and token in self._sessions)
 
     def start(self):
         if self._httpd is not None:
@@ -281,9 +349,25 @@ class MobileAccessServer:
             def do_GET(self):
                 parsed = urlparse(self.path)
                 if parsed.path == "/":
-                    token = parse_qs(parsed.query).get("token", [""])[0]
-                    page_token = token if secrets.compare_digest(token, server_ref.token) else ""
-                    self._send_html(_mobile_html(page_token, server_ref.voice_enabled))
+                    code = parse_qs(parsed.query).get("pair", [""])[0]
+                    session = server_ref._exchange_pairing_code(code) if code else ""
+                    existing_session = self._session_cookie()
+                    if not session and not server_ref._valid_session(existing_session):
+                        self._send_json(
+                            {"ok": False, "error": "pairing_required"},
+                            HTTPStatus.UNAUTHORIZED,
+                        )
+                        return
+                    if server_ref.web_proxy_url and server_ref.web_pairing_code_callback:
+                        self._open_full_web_interface(session=session)
+                        return
+                    self._send_html(
+                        _mobile_html("", server_ref.voice_enabled),
+                        session=session,
+                    )
+                    return
+                if self._is_web_proxy_path(parsed.path):
+                    self._proxy_web_request()
                     return
                 if parsed.path == "/api/status":
                     if not self._authorized():
@@ -349,6 +433,9 @@ class MobileAccessServer:
 
             def do_POST(self):
                 parsed = urlparse(self.path)
+                if self._is_web_proxy_path(parsed.path):
+                    self._proxy_web_request()
+                    return
                 if parsed.path != "/api/command":
                     if parsed.path == "/api/voice-command":
                         self._handle_voice_command()
@@ -376,10 +463,11 @@ class MobileAccessServer:
                 try:
                     result = server_ref.command_callback(message, source)
                 except Exception as exc:
+                    logger.exception("Falha ao entregar comando movel: %s", exc)
                     self._send_json(
                         {
                             "ok": False,
-                            "message": f"Erro ao entregar comando ao Celsius: {exc}",
+                            "message": "Erro interno ao entregar comando ao Celsius.",
                         },
                         HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
@@ -424,10 +512,11 @@ class MobileAccessServer:
                 try:
                     result = server_ref.voice_command_callback(audio, mime_type)
                 except Exception as exc:
+                    logger.exception("Falha ao processar voz movel: %s", exc)
                     self._send_json(
                         {
                             "ok": False,
-                            "message": f"Erro ao processar voz no Celsius: {exc}",
+                            "message": "Erro interno ao processar voz no Celsius.",
                             "transcript": "",
                         },
                         HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -460,23 +549,142 @@ class MobileAccessServer:
                 expected_auth = f"Bearer {server_ref.token}"
                 if secrets.compare_digest(auth, expected_auth):
                     return True
-                token = parse_qs(urlparse(self.path).query).get("token", [""])[0]
-                return secrets.compare_digest(token, server_ref.token)
+                return server_ref._valid_session(self._session_cookie())
+
+            @staticmethod
+            def _is_web_proxy_path(path: str) -> bool:
+                return path == "/app" or path.startswith("/app/") or path.startswith("/api/v1/")
+
+            def _open_full_web_interface(self, *, session: str) -> None:
+                """Bootstrap a web session, then redirect the phone to the full UI."""
+
+                assert server_ref.web_pairing_code_callback is not None
+                pairing_code = server_ref.web_pairing_code_callback()
+                upstream_path = f"/app?pair={quote(pairing_code, safe='')}"
+                try:
+                    _body, headers, _status = self._upstream_request("GET", upstream_path)
+                except OSError as exc:
+                    logger.warning("Falha ao abrir interface web movel: %s", exc)
+                    self._send_json(
+                        {"ok": False, "error": "web_interface_unavailable"},
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+
+                self.send_response(HTTPStatus.SEE_OTHER)
+                self.send_header("Location", "/app")
+                self._security_headers()
+                attributes = "Path=/; HttpOnly; SameSite=Strict; Max-Age=43200"
+                if server_ref.use_https:
+                    attributes += "; Secure"
+                self.send_header("Set-Cookie", f"celsius_mobile_session={session}; {attributes}")
+                for cookie in headers.get_all("Set-Cookie", []):
+                    self.send_header("Set-Cookie", cookie)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+
+            def _proxy_web_request(self) -> None:
+                if not self._authorized():
+                    self._send_json({"ok": False, "error": "unauthorized"}, HTTPStatus.UNAUTHORIZED)
+                    return
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                if length < 0 or length > 35_000_000:
+                    self._send_json(
+                        {"ok": False, "error": "payload_too_large"},
+                        HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    )
+                    return
+                body = self.rfile.read(length) if length else None
+                try:
+                    response_body, headers, status = self._upstream_request(
+                        self.command, self.path, body=body
+                    )
+                except OSError as exc:
+                    logger.warning("Falha ao encaminhar requisicao movel: %s", exc)
+                    self._send_json(
+                        {"ok": False, "error": "web_interface_unavailable"},
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+
+                self.send_response(status)
+                for name in (
+                    "Content-Type",
+                    "Cache-Control",
+                    "Content-Disposition",
+                    "ETag",
+                    "Last-Modified",
+                ):
+                    value = headers.get(name)
+                    if value:
+                        self.send_header(name, value)
+                for cookie in headers.get_all("Set-Cookie", []):
+                    self.send_header("Set-Cookie", cookie)
+                self._security_headers()
+                self.send_header("Content-Length", str(len(response_body)))
+                self.end_headers()
+                self.wfile.write(response_body)
+
+            def _upstream_request(
+                self, method: str, path: str, *, body: bytes | None = None
+            ) -> tuple[bytes, Any, int]:
+                """Relay only to the local web server; never to an arbitrary URL."""
+
+                if not server_ref.web_proxy_url:
+                    raise OSError("Proxy web local nao configurado.")
+                headers = {"Accept": self.headers.get("Accept", "*/*")}
+                for name in ("Content-Type", "Cookie", "Authorization"):
+                    value = self.headers.get(name)
+                    if value:
+                        headers[name] = value
+                request = Request(
+                    f"{server_ref.web_proxy_url}{path}",
+                    data=body,
+                    headers=headers,
+                    method=method,
+                )
+                opener = build_opener(_NoRedirect())
+                try:
+                    with opener.open(request, timeout=60) as response:
+                        return response.read(), response.headers, response.status
+                except HTTPError as exc:
+                    return exc.read(), exc.headers, exc.code
+
+            def _session_cookie(self) -> str:
+                cookie = SimpleCookie()
+                cookie.load(self.headers.get("Cookie", ""))
+                morsel = cookie.get("celsius_mobile_session")
+                return morsel.value if morsel else ""
+
+            def _security_headers(self) -> None:
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
 
             def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK):
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._security_headers()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
 
-            def _send_html(self, html: str):
+            def _send_html(self, html: str, *, session: str = ""):
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
                 self.send_header("Pragma", "no-cache")
+                self._security_headers()
+                if session:
+                    attributes = "Path=/; HttpOnly; SameSite=Strict; Max-Age=43200"
+                    if server_ref.use_https:
+                        attributes += "; Secure"
+                    self.send_header(
+                        "Set-Cookie",
+                        f"celsius_mobile_session={session}; {attributes}",
+                    )
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -485,6 +693,7 @@ class MobileAccessServer:
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", mime_type or "audio/mpeg")
                 self.send_header("Cache-Control", "no-store")
+                self._security_headers()
                 self.send_header("X-Celsius-Audio-Version", str(audio_version))
                 self.send_header("Content-Length", str(len(audio)))
                 self.end_headers()
@@ -493,7 +702,118 @@ class MobileAccessServer:
         return Handler
 
 
-def _mobile_html(token: str, voice_enabled: bool) -> str:
+class MobileAccessRuntime:
+    """Shared mobile server that can answer the phone before the LLM loads.
+
+    The server binds early during startup and forwards commands to the desktop
+    window only after it exists; until then the phone receives a friendly
+    "still starting" notice instead of a connection error.
+    """
+
+    def __init__(self) -> None:
+        self.server: MobileAccessServer | None = None
+        self.sink: object | None = None
+
+    def attach(self, server: MobileAccessServer) -> None:
+        self.server = server
+
+    def set_sink(self, sink: object) -> None:
+        self.sink = sink
+
+    def command(self, message: str, source: str) -> tuple[bool, str] | bool | None:
+        if self.sink is None:
+            return (
+                False,
+                "O Celsius ainda esta iniciando. Tente novamente em instantes.",
+            )
+        handler = getattr(self.sink, "_queue_mobile_command", None)
+        if not callable(handler):
+            return False, "O Celsius ainda esta iniciando. Tente novamente em instantes."
+        return cast(CommandCallback, handler)(message, source)
+
+    def voice(self, audio: bytes, mime_type: str) -> tuple[bool, str, str] | dict | str:
+        if self.sink is None:
+            return (
+                False,
+                "",
+                "O Celsius ainda esta iniciando. Tente novamente em instantes.",
+            )
+        handler = getattr(self.sink, "_queue_mobile_voice_command", None)
+        if not callable(handler):
+            return (
+                False,
+                "",
+                "O Celsius ainda esta iniciando. Tente novamente em instantes.",
+            )
+        return cast(VoiceCommandCallback, handler)(audio, mime_type)
+
+    def close(self) -> None:
+        if self.server is not None:
+            self.server.stop()
+        self.server = None
+        self.sink = None
+
+
+_MOBILE_RUNTIME = MobileAccessRuntime()
+
+
+def get_mobile_runtime() -> MobileAccessRuntime:
+    """Return the process-wide mobile access runtime."""
+    return _MOBILE_RUNTIME
+
+
+def start_for_settings(
+    settings: Any,
+    *,
+    command_callback: CommandCallback,
+    voice_command_callback: VoiceCommandCallback | None = None,
+) -> tuple[MobileAccessServer, str]:
+    """Start the mobile server using app settings; returns (server, notice)."""
+    host = settings.mobile.host if settings.mobile.allow_lan else "127.0.0.1"
+    cert_file = None
+    key_file = None
+    use_https = bool(settings.mobile.use_https)
+    notice = ""
+    if use_https:
+        try:
+            cert_file, key_file = ensure_mobile_certificate(
+                Path(settings.data_dir) / "mobile_access"
+            )
+        except RuntimeError as exc:
+            use_https = False
+            notice = (
+                f"\n\nAviso: HTTPS local indisponivel ({exc}). "
+                "O acesso pelo celular foi iniciado em HTTP; alguns navegadores podem bloquear o microfone."
+            )
+
+    def build(https: bool) -> MobileAccessServer:
+        return MobileAccessServer(
+            host=host,
+            port=int(settings.mobile.port),
+            token=ensure_mobile_token(settings.mobile.pairing_token),
+            command_callback=command_callback,
+            voice_enabled=bool(settings.mobile.voice_commands_enabled),
+            voice_command_callback=voice_command_callback,
+            use_https=https,
+            cert_file=cert_file if https else None,
+            key_file=key_file if https else None,
+        )
+
+    server = build(use_https)
+    try:
+        server.start()
+    except Exception as exc:
+        if not use_https:
+            raise
+        notice = (
+            f"\n\nAviso: nao foi possivel iniciar HTTPS local ({exc}). "
+            "O acesso pelo celular foi iniciado em HTTP; alguns navegadores podem bloquear o microfone."
+        )
+        server = build(False).start()
+    return server, notice
+
+
+def _mobile_html(_token: str, voice_enabled: bool) -> str:
     voice_flag = "true" if voice_enabled else "false"
     return f"""<!doctype html>
 <html lang="pt-BR">
@@ -1420,7 +1740,7 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
     <p id="status">Pronto para conectar ao Celsius.</p>
   </main>
   <script>
-    const token = new URLSearchParams(location.search).get("token") || "{token}";
+    if (location.search) history.replaceState(null, "", location.pathname);
     const voiceEnabled = {voice_flag};
     const message = document.querySelector("#message");
     const statusEl = document.querySelector("#status");
@@ -1495,9 +1815,9 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {{
-        const separator = path.includes("?") ? "&" : "?";
-        const response = await fetch(`${{path}}${{separator}}token=${{encodeURIComponent(token)}}`, {{
+        const response = await fetch(path, {{
           ...options,
+          credentials: "same-origin",
           signal: controller.signal
         }});
         let data = {{}};
@@ -1538,8 +1858,7 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       const data = await fetchJson("/api/command", {{
         method: "POST",
         headers: {{
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${{token}}`
+          "Content-Type": "application/json"
         }},
         body: JSON.stringify({{ message: text, source }})
       }});
@@ -1556,11 +1875,7 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
     document.querySelector("#send").addEventListener("click", () => sendCommand("phone_text"));
     document.querySelector("#test").addEventListener("click", async () => {{
       statusEl.textContent = "Testando conexao...";
-      const data = await fetchJson("/api/status", {{
-        headers: {{
-          "Authorization": `Bearer ${{token}}`
-        }}
-      }});
+      const data = await fetchJson("/api/status");
       statusEl.textContent = data.ok
         ? `Conexao ok com ${{data.name}}. HTTPS: ${{data.https ? "sim" : "nao"}}.`
         : (data.message || "Nao consegui confirmar a conexao.");
@@ -1591,10 +1906,9 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
     async function loadPcAudio(responseVersion, retries = 12) {{
       if (!responseVersion) return false;
       for (let attempt = 0; attempt < retries; attempt++) {{
-        const separator = "/api/last-audio".includes("?") ? "&" : "?";
-        const url = `/api/last-audio${{separator}}token=${{encodeURIComponent(token)}}&response_version=${{responseVersion}}&after_audio_version=${{lastResponseAudioVersion}}&t=${{Date.now()}}`;
+        const url = `/api/last-audio?response_version=${{responseVersion}}&after_audio_version=${{lastResponseAudioVersion}}&t=${{Date.now()}}`;
         const response = await fetch(url, {{
-          headers: {{ "Authorization": `Bearer ${{token}}` }}
+          credentials: "same-origin"
         }});
         if (response.status === 200) {{
           const blob = await response.blob();
@@ -1752,10 +2066,7 @@ def _mobile_html(token: str, voice_enabled: bool) -> str:
       if (!autoMode) recordBtn.disabled = true;
       const data = await fetchJson("/api/voice-command", {{
         method: "POST",
-        headers: {{
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${{token}}`
-        }},
+        headers: {{ "Content-Type": "application/json" }},
         body: JSON.stringify({{
           audio_base64: await blobToBase64(blob),
           mime_type: blob.type || "audio/wav"

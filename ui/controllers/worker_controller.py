@@ -53,24 +53,20 @@ class WorkerController(QObject):
         self.ai_response_started.emit()
         self.ai_status_update.emit("Pensando...")
 
-        doc_parts = []
         history = conversation_history or []
         if history:
             self.ai_status_update.emit("Carregando contexto da conversa...")
         if memories:
-            mem_texts = [m.get("text", str(m)) if isinstance(m, dict) else str(m) for m in memories]
-            doc_parts.append("MemÃ³rias relevantes:\n" + "\n".join(mem_texts))
-
-        if memories:
-            self.ai_status_update.emit("Consultando memorias relevantes...")
+            self.ai_status_update.emit("Aplicando contexto pessoal relevante...")
 
         if attachments:
             self.ai_status_update.emit("Preparando anexos...")
 
         prompt_dict = {
             "pergunta": message,
-            "documento": "\n\n".join(doc_parts) if doc_parts else "",
+            "documento": "",
             "nome_documento": "",
+            "memorias_relevantes": memories or [],
             "anexos": attachments or [],
             "modelo_solicitado": model_name or "",
             "system_prompt": system_prompt,

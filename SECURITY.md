@@ -88,10 +88,6 @@ Excecao temporaria atual: `PYSEC-2026-2447` em `diskcache`, dependencia de
 `llama-cpp-python`. Nao existe versao corrigida publicada; o Celsius nao fornece
 caminhos de cache nao confiaveis a essa biblioteca.
 
-`PYSEC-2026-311` em `chromadb` tambem e acompanhada: a vulnerabilidade exige o
-servidor HTTP Chroma e seu endpoint de criacao de colecoes. O Celsius usa somente
-o cliente persistente incorporado e nao inicia nem publica esse servidor.
-
 Antes de distribuir builds:
 
 ```powershell

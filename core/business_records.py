@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from core.file_security import restrict_private_file
 from core.modules import get_module_definition
 from core.settings import get_settings
 
@@ -84,6 +85,7 @@ class BusinessRecordService:
                 with os.fdopen(fd, "w", encoding="utf-8") as file:
                     json.dump(data, file, ensure_ascii=False, indent=2)
                 os.replace(tmp_name, self.data_file)
+                restrict_private_file(self.data_file)
             except Exception as exc:
                 logger.error("Erro ao salvar registros modulares: %s", exc)
                 with suppress(OSError):

@@ -6,6 +6,10 @@ and agent capabilities, replacing brittle keyword matching.
 
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -106,11 +110,11 @@ _KEYWORD_MAP = {
 }
 
 # Singleton for embedding model
-_embedding_model = None
+_embedding_model: "SentenceTransformer | None" = None
 _embeddings_computed = False
 
 
-def _get_embedding_model():
+def _get_embedding_model() -> "SentenceTransformer | None":
     """Lazy load SentenceTransformer model."""
     global _embedding_model
     if _embedding_model is None:
@@ -126,12 +130,12 @@ def _get_embedding_model():
     return _embedding_model
 
 
-def preload_embedding_model():
+def preload_embedding_model() -> None:
     """Pre-load embedding model on main thread to avoid GC crash in worker threads."""
     _get_embedding_model()
 
 
-def _compute_agent_embeddings():
+def _compute_agent_embeddings() -> None:
     """Pre-compute embeddings for all agent descriptions."""
     global _embeddings_computed
     if _embeddings_computed:

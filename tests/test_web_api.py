@@ -65,6 +65,91 @@ def _wait_for_job(client: TestClient, job_id: str) -> dict:
 
 
 class TestWebApi:
+    def test_login_opens_business_routes_and_cookie_websocket(self, web_settings):
+        app = create_app(
+            settings=web_settings, event_hub=EventHub(), memory_service=FakeMemoryService()
+        )
+        with TestClient(app) as client:
+            assert client.get("/app", headers=_headers()).status_code == 200
+            credentials = {"email": "owner@example.test", "password": "test-password-123"}
+            assert client.post("/api/v1/auth/register", json=credentials).status_code == 201
+            login = client.post("/api/v1/auth/login", json=credentials)
+            assert login.status_code == 200
+            assert "HttpOnly" in login.headers["set-cookie"]
+            token = login.json()["access_token"]
+            for path in (
+                "/auth/me",
+                "/session",
+                "/navigation",
+                "/chat/conversations",
+                "/models",
+                "/voice",
+                "/inventory",
+                "/memories",
+                "/notifications/unread-count",
+            ):
+                response = client.get(
+                    f"/api/v1{path}", headers={"Authorization": f"Bearer {token}"}
+                )
+                assert response.status_code == 200, (path, response.text)
+            assert client.get("/api/v1/session").status_code == 200
+            with client.websocket_connect("/api/v1/events") as socket:
+                assert socket.receive_json()["type"] == "system.connected"
+                socket.send_json({"type": "ping"})
+                assert socket.receive_json()["type"] == "pong"
+            assert client.post("/api/v1/auth/logout").status_code == 200
+            assert (
+                client.get(
+                    "/api/v1/session", headers={"Authorization": f"Bearer {token}"}
+                ).status_code
+                == 401
+            )
+            assert (
+                client.post(
+                    "/api/v1/auth/refresh", json={"refresh_token": login.json()["refresh_token"]}
+                ).status_code
+                == 401
+            )
+            # Pairing identifies the device; it cannot bypass an existing user login.
+            assert client.get("/api/v1/session", headers=_headers()).status_code == 401
+
+    def test_invalid_user_token_does_not_fall_back_to_pairing_cookie(self, web_settings):
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            client.get("/app", headers=_headers())
+            response = client.get("/api/v1/session", headers={"Authorization": "Bearer invalid"})
+            assert response.status_code == 401
+
+    def test_registration_requires_paired_first_use_then_admin(self, web_settings):
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            body = {"email": "owner@example.test", "password": "test-password-123"}
+            assert client.post("/api/v1/auth/register", json=body).status_code == 401
+            client.get("/app", headers=_headers())
+            assert client.post("/api/v1/auth/register", json=body).status_code == 201
+            assert (
+                client.post(
+                    "/api/v1/auth/register", json={**body, "email": "other@example.test"}
+                ).status_code
+                == 401
+            )
+            client.post("/api/v1/auth/login", json=body)
+            assert (
+                client.post(
+                    "/api/v1/auth/register", json={**body, "email": "other@example.test"}
+                ).status_code
+                == 201
+            )
+            assert len(app.state.user_service.list_users()) == 2
+            client.post("/api/v1/auth/login", json={**body, "email": "other@example.test"})
+            assert client.get("/api/v1/admin/dashboard/users").status_code == 403
+            assert (
+                client.post(
+                    "/api/v1/auth/register", json={**body, "email": "third@example.test"}
+                ).status_code
+                == 403
+            )
+
     def test_lan_mode_does_not_publish_api_documentation(self, web_settings):
         with TestClient(
             create_app(
@@ -99,7 +184,7 @@ class TestWebApi:
     def test_web_shell_pairs_local_browser_without_exposing_token(self, web_settings):
         app = create_app(settings=web_settings, event_hub=EventHub())
         with TestClient(app) as client:
-            page = client.get("/app?token=test-pairing-token")
+            page = client.get("/app", headers=_headers())
             session = client.get("/api/v1/session")
             stylesheet = client.get("/app/assets/app.css")
             script = client.get("/app/assets/app.js")
@@ -157,13 +242,45 @@ class TestWebApi:
 
         payload = response.json()
         assert response.status_code == 200
-        assert payload["url"] == ("https://192.168.1.50:8790/app?token=test-pairing-token")
+        assert payload["url"].startswith("https://192.168.1.50:8790/app?pair=")
+        assert "test-pairing-token" not in payload["url"]
         assert payload["qr_code"].startswith("data:image/png;base64,")
         assert payload["lan_access_enabled"] is True
         assert payload["external_service"] is False
         assert payload["https"] is True
         assert payload["interface"] == "desktop-responsive"
         assert payload["voice_input"] is True
+
+    def test_mobile_pairing_starts_https_companion_when_web_is_loopback_only(
+        self, web_settings, monkeypatch
+    ):
+        monkeypatch.setattr("core.web_api.mobile.get_lan_ip", lambda: "192.168.1.50")
+        app = create_app(
+            settings=web_settings,
+            event_hub=EventHub(),
+            lan_access_enabled=False,
+        )
+        companion = type(
+            "Companion",
+            (),
+            {
+                "url": "https://192.168.1.50:8787/?pair=one-time-code",
+                "use_https": True,
+                "port": 8787,
+                "_httpd": None,
+            },
+        )()
+        app.state.ensure_mobile_access = lambda *, allow_lan: companion
+        with TestClient(app) as client:
+            response = client.get("/api/v1/mobile/pairing", headers=_headers())
+
+        payload = response.json()
+        assert response.status_code == 200
+        assert payload["url"] == companion.url
+        assert payload["qr_code"].startswith("data:image/png;base64,")
+        assert payload["lan_access_enabled"] is True
+        assert payload["lan_ip"] == "192.168.1.50"
+        assert payload["interface"] == "mobile-companion"
 
     def test_modules_expose_configuration_without_hiding_catalog(self, web_settings):
         with TestClient(create_app(settings=web_settings, event_hub=EventHub())) as client:
@@ -185,7 +302,7 @@ class TestWebApi:
 
     def test_session_uses_existing_company_profile(self, web_settings):
         with TestClient(create_app(settings=web_settings, event_hub=EventHub())) as client:
-            response = client.get("/api/v1/session?token=test-pairing-token")
+            response = client.get("/api/v1/session", headers=_headers())
 
         assert response.status_code == 200
         assert response.json()["company"]["name"] == "Empresa Teste"
@@ -277,15 +394,52 @@ class TestWebApi:
 
     def test_websocket_requires_pairing_and_answers_ping(self, web_settings):
         app = create_app(settings=web_settings, event_hub=EventHub())
-        with (
-            TestClient(app) as client,
-            client.websocket_connect("/api/v1/events?token=test-pairing-token") as websocket,
-        ):
-            assert websocket.receive_json()["type"] == "system.connected"
-            websocket.send_json({"type": "ping", "payload": {"sequence": 7}})
-            response = websocket.receive_json()
+        with TestClient(app) as client:
+            client.get("/app", headers=_headers())
+            with client.websocket_connect("/api/v1/events") as websocket:
+                assert websocket.receive_json()["type"] == "system.connected"
+                websocket.send_json({"type": "ping", "payload": {"sequence": 7}})
+                response = websocket.receive_json()
 
         assert response == {"type": "pong", "payload": {"sequence": 7}}
+
+    def test_pairing_code_is_single_use_and_redirects_to_clean_url(self, web_settings, monkeypatch):
+        monkeypatch.setattr("core.web_api.mobile.get_lan_ip", lambda: "192.168.1.50")
+        app = create_app(settings=web_settings, event_hub=EventHub(), lan_access_enabled=True)
+        with TestClient(app) as client:
+            pairing = client.get("/api/v1/mobile/pairing", headers=_headers()).json()
+            pair_query = pairing["url"].split("?", maxsplit=1)[1]
+            first = client.get(f"/app?{pair_query}", follow_redirects=False)
+            second = client.get(f"/app?{pair_query}", follow_redirects=False)
+
+        assert first.status_code == 303
+        assert first.headers["location"] == "/app"
+        assert "celsius_session=" in first.headers["set-cookie"]
+        assert second.status_code == 401
+
+    def test_rejects_unknown_host_and_cross_origin_request(self, web_settings):
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            unknown_host = client.get("/app", headers={"Host": "malicious.example"})
+            cross_origin = client.get(
+                "/api/v1/session",
+                headers={**_headers(), "Origin": "https://malicious.example"},
+            )
+
+        assert unknown_host.status_code == 400
+        assert cross_origin.status_code == 403
+
+    def test_query_token_no_longer_authenticates_http_or_websocket(self, web_settings):
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            response = client.get("/api/v1/session?token=test-pairing-token")
+            with (
+                pytest.raises(WebSocketDisconnect),
+                client.websocket_connect("/api/v1/events?token=test-pairing-token"),
+            ):
+                pass
+
+        assert response.status_code == 401
 
     def test_websocket_rejects_client_without_pairing(self, web_settings):
         app = create_app(settings=web_settings, event_hub=EventHub())

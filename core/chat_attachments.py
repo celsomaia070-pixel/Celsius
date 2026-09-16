@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
+from core.file_security import restrict_private_file
+from core.file_validation import UnsafeFileContentError, validate_file_content
+
 StatusCallback = Callable[[str], None]
 
 
@@ -104,12 +107,17 @@ class AttachmentStore:
             raise AttachmentError(
                 f"O arquivo excede o limite local de {self.max_bytes // (1024 * 1024)} MB."
             )
+        try:
+            validate_file_content(clean_name, content)
+        except UnsafeFileContentError as exc:
+            raise AttachmentError(str(exc)) from exc
 
         attachment_id = uuid.uuid4().hex
         path = (self.root / f"{attachment_id}{suffix}").resolve()
         if path.parent != self.root:
             raise AttachmentError("Destino de arquivo invalido.")
         path.write_bytes(content)
+        restrict_private_file(path)
         stored = StoredAttachment(attachment_id, clean_name, path, len(content))
         with self._lock:
             self._items[attachment_id] = stored

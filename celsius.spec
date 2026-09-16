@@ -29,6 +29,7 @@ def model_artifacts(model_id):
 
 
 datas = []
+binaries = []
 
 llama_cpp_spec = importlib.util.find_spec("llama_cpp")
 if llama_cpp_spec is None or not llama_cpp_spec.submodule_search_locations:
@@ -44,8 +45,20 @@ llama_cpp_libraries = sorted(
 if not llama_cpp_libraries:
     raise RuntimeError(f"Bibliotecas nativas do llama_cpp ausentes em {llama_cpp_lib_dir}")
 for library in llama_cpp_libraries:
-    # Keep the exact directory expected by llama_cpp._ctypes_extensions.
-    datas.append((str(library), "llama_cpp/lib"))
+    # Keep the exact directory expected by llama_cpp._ctypes_extensions.  These
+    # must be binaries, not plain data files: PyInstaller's ctypes loader then
+    # registers their dependency directory before mtmd.dll is imported.
+    binaries.append((str(library), "llama_cpp/lib"))
+
+faster_whisper_spec = importlib.util.find_spec("faster_whisper")
+if faster_whisper_spec is None or not faster_whisper_spec.submodule_search_locations:
+    raise RuntimeError("Pacote faster_whisper nao encontrado no ambiente de build.")
+
+faster_whisper_dir = Path(next(iter(faster_whisper_spec.submodule_search_locations)))
+faster_whisper_assets = faster_whisper_dir / "assets"
+if not faster_whisper_assets.is_dir():
+    raise RuntimeError(f"Assets do faster_whisper ausentes em {faster_whisper_assets}")
+datas.append((str(faster_whisper_assets), "faster_whisper/assets"))
 
 if BUNDLE_MODELS:
     for fname in model_artifacts(MODEL_ID):
@@ -56,8 +69,10 @@ if BUNDLE_MODELS:
             if digest.exists():
                 datas.append((str(digest), "resources"))
 
-for dll in (PROJECT_ROOT / "resources").glob("*.dll"):
-    datas.append((str(dll), "resources"))
+# Todas as libs nativas corretas vem do wheel llama_cpp (llama_cpp/lib).
+# DLLs antigas em resources/ conflitam com a resolucao de dependencia do
+# Windows dentro do bundle (mtmd.dll -> llama.dll), causando WinError 127.
+# Portanto nenhuma .dll de resources/ deve ser empacotada.
 
 public_key = PROJECT_ROOT / "resources" / "license_public_key.pem"
 if public_key.exists():
@@ -70,14 +85,13 @@ datas.append((str(PROJECT_ROOT / "pyproject.toml"), "."))
 a = Analysis(
     ["main.py"],
     pathex=[str(PROJECT_ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=[
         "PySide6.QtCore",
         "PySide6.QtWidgets",
         "PySide6.QtGui",
         "sentence_transformers",
-        "chromadb",
         "duckduckgo_search",
         "speech_recognition",
         "sounddevice",
@@ -166,9 +180,21 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[str(PROJECT_ROOT / "installer" / "runtime_llama_cpp.py")],
-    excludes=[],
+    # The application does not use Arrow tables. Keeping PyArrow in the bundle
+    # only makes pandas probe a native optional dependency during start-up,
+    # which has caused access violations on some client Windows installations.
+    excludes=["pyarrow"],
     noarchive=False,
 )
+
+# PyInstaller can inherit ICU DLLs from the build machine's development tools.
+# They are unrelated to Celsius and shadow the Windows ICU used by PySide6,
+# making QtCore fail with WinError 127 in the generated executable.
+a.binaries = [
+    entry
+    for entry in a.binaries
+    if entry[0].casefold() not in {"icuuc.dll", "icudt78.dll"}
+]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 

@@ -151,3 +151,26 @@ class TestInventoryTools:
         result = _tool_itens_estoque_baixo()
         assert "Oleo 20W50" in result
         assert "Parafuso M8" not in result
+
+
+class TestInventoryPromptRetrieval:
+    def test_unrelated_question_does_not_read_or_inject_inventory(self, monkeypatch):
+        import ai.engine
+
+        captured = {}
+        monkeypatch.setattr(
+            ai.engine,
+            "_obter_contexto_estoque",
+            lambda _query: pytest.fail("unrelated chat must not scan inventory"),
+        )
+
+        def fake_loop(prompt, **_kwargs):
+            captured.update(prompt)
+            return "Resposta", []
+
+        monkeypatch.setattr(ai.engine, "loop_react", fake_loop)
+
+        result = ai.engine.gerar_resposta({"pergunta": "Explique energia solar"})
+
+        assert result == "Resposta"
+        assert not captured.get("documento")

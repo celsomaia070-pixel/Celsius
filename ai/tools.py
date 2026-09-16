@@ -1878,6 +1878,7 @@ def executar_ferramenta(
     argumentos: dict,
     *,
     require_approval: bool = False,
+    approval_scope: str = "",
 ) -> str:
     """Execute a tool with validation, retry, circuit breaker, metrics, and graceful degradation."""
     metrics = get_metrics()
@@ -1886,7 +1887,11 @@ def executar_ferramenta(
         return f"Ferramenta '{nome}' nao encontrada."
 
     if require_approval and nome in SENSITIVE_TOOLS:
-        request = get_tool_approval_store().request(nome, argumentos)
+        request = get_tool_approval_store().request(
+            nome,
+            argumentos,
+            scope=approval_scope,
+        )
         return approval_message(request)
 
     if nome == "gerar_grafico":

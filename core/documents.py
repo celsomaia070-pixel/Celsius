@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from core.business_records import BusinessRecord, BusinessRecordService, get_business_record_service
+from core.file_security import restrict_private_file
+from core.file_validation import UnsafeFileContentError, validate_file_content
 from core.modules import MODULE_KNOWLEDGE
 from core.settings import get_settings
 
@@ -96,6 +98,10 @@ class DocumentLibraryService:
         if len(content) > self.max_bytes_for(clean_name):
             limit = self.max_bytes_for(clean_name) // (1024 * 1024)
             raise DocumentLibraryError(f"O arquivo excede o limite local de {limit} MB.")
+        try:
+            validate_file_content(clean_name, content)
+        except UnsafeFileContentError as exc:
+            raise DocumentLibraryError(str(exc)) from exc
         return clean_name, suffix
 
     def _create_pending_record(
@@ -116,6 +122,7 @@ class DocumentLibraryService:
         temporary_path = stored_path.with_suffix(f"{stored_path.suffix}.tmp")
         temporary_path.write_bytes(content)
         os.replace(temporary_path, stored_path)
+        restrict_private_file(stored_path)
         fields = {
             "titulo": (title or Path(clean_name).stem).strip(),
             "tipo": document_type.strip() or "Outro",

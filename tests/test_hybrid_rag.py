@@ -1,7 +1,6 @@
 """Tests for ai.rag (RAGService: BM25, dense search, hybrid, re-ranking).
 
-These tests mock the heavy ML dependencies (SentenceTransformer, CrossEncoder,
-ChromaDB) so they run without GPU or model downloads.
+These tests mock the heavy ML dependencies so they run without GPU or model downloads.
 """
 
 import gc
@@ -76,7 +75,7 @@ def rag_service(tmp_dir):
 
 
 def _seed_bm25(service, documents: list[str], doc_name: str = "test_doc"):
-    """Seed the BM25 index directly (bypasses ChromaDB)."""
+    """Seed the BM25 index directly (bypasses the local vector store)."""
     from ai.rag import _tokenize_for_bm25
 
     ids = [f"{doc_name}_chunk_{i}" for i in range(len(documents))]

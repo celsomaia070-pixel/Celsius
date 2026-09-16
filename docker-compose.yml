@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  celsius:
+    build: .
+    container_name: celsius-ai
+    restart: unless-stopped
+    ports:
+      - "${CELSIUS_PORT:-8790}:8790"
+    volumes:
+      - celsius-data:/app/data
+      - celsius-models:/app/models
+    environment:
+      - CELSIUS_HOST=${CELSIUS_HOST:-0.0.0.0}
+      - CELSIUS_PORT=${CELSIUS_PORT:-8790}
+      - CELSIUS_DATA_DIR=/app/data
+      - CELSIUS_LOG_LEVEL=${CELSIUS_LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8790/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 2G
+
+volumes:
+  celsius-data:
+    driver: local
+  celsius-models:
+    driver: local

@@ -66,6 +66,16 @@ const state = {
   voiceInputTimer: null,
   voiceInputSpeechDetected: false,
   voiceInputSilenceStartedAt: 0,
+  // Auth & Admin
+  authToken: localStorage.getItem("celsius_auth_token") || "",
+  refreshToken: localStorage.getItem("celsius_refresh_token") || "",
+  currentUser: null,
+  adminVisible: false,
+  adminStats: null,
+  adminUsers: [],
+  notificationsVisible: false,
+  notificationItems: [],
+  notificationCount: 0,
 };
 
 const elements = {
@@ -382,6 +392,46 @@ const elements = {
   caseNotes: document.querySelector("#case-notes"),
   toastRegion: document.querySelector("#toast-region"),
   themeColor: document.querySelector('meta[name="theme-color"]'),
+  loginScreen: document.querySelector("#login-screen"),
+  appShell: document.querySelector("#app-shell"),
+  loginForm: document.querySelector("#login-form"),
+  loginEmail: document.querySelector("#login-email"),
+  loginPassword: document.querySelector("#login-password"),
+  loginError: document.querySelector("#login-error"),
+  registerForm: document.querySelector("#register-form"),
+  registerName: document.querySelector("#register-name"),
+  registerEmail: document.querySelector("#register-email"),
+  registerPassword: document.querySelector("#register-password"),
+  registerError: document.querySelector("#register-error"),
+  showRegister: document.querySelector("#show-register"),
+  showLogin: document.querySelector("#show-login"),
+  adminButton: document.querySelector("#admin-button"),
+  adminView: document.querySelector("#admin-view"),
+  adminSummary: document.querySelector("#admin-summary"),
+  adminRefresh: document.querySelector("#admin-refresh"),
+  adminUsers: document.querySelector("#admin-users"),
+  adminConversations: document.querySelector("#admin-conversations"),
+  adminMessages: document.querySelector("#admin-messages"),
+  adminStorage: document.querySelector("#admin-storage"),
+  adminUserList: document.querySelector("#admin-user-list"),
+  adminActivityList: document.querySelector("#admin-activity-list"),
+  adminHealth: document.querySelector("#admin-health"),
+  adminAddUser: document.querySelector("#admin-add-user"),
+  adminUsersList: document.querySelector("#admin-users-list"),
+  notificationBell: document.querySelector("#notification-bell"),
+  notificationBadge: document.querySelector("#notification-badge"),
+  notificationsPanel: document.querySelector("#notifications-panel"),
+  notificationsRefresh: document.querySelector("#notifications-refresh"),
+  notificationsMarkAll: document.querySelector("#notifications-mark-all"),
+  notificationsClose: document.querySelector("#notifications-close"),
+  notificationsList: document.querySelector("#notifications-list"),
+  notificationsEmpty: document.querySelector("#notifications-empty"),
+  userMenu: document.querySelector("#user-menu"),
+  userAvatarBtn: document.querySelector("#user-avatar-btn"),
+  userDisplayName: document.querySelector("#user-display-name"),
+  userDropdown: document.querySelector("#user-dropdown"),
+  userProfileBtn: document.querySelector("#user-profile-btn"),
+  userLogoutBtn: document.querySelector("#user-logout-btn"),
 };
 
 const svg = {
@@ -398,6 +448,9 @@ const svg = {
 
 function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  if (state.authToken) {
+    headers.set("Authorization", `Bearer ${state.authToken}`);
+  }
   if (options.json !== undefined) {
     headers.set("Content-Type", "application/json");
     options.body = JSON.stringify(options.json);
@@ -412,7 +465,7 @@ function api(path, options = {}) {
     }
     if (!response.ok) {
       if (response.status === 401) {
-        window.location.assign("/app");
+        showLoginScreen();
       }
       throw new Error(data.error || data.detail || `Erro HTTP ${response.status}`);
     }
@@ -422,6 +475,9 @@ function api(path, options = {}) {
 
 async function apiBinary(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  if (state.authToken) {
+    headers.set("Authorization", `Bearer ${state.authToken}`);
+  }
   if (options.json !== undefined) {
     headers.set("Content-Type", "application/json");
     options.body = JSON.stringify(options.json);
@@ -467,9 +523,12 @@ async function openMobilePairing() {
     elements.mobilePairStatus.textContent = data.lan_access_enabled
       ? "Pronto para conectar"
       : "Acesso pela rede ainda nao esta ativo";
+    const fingerprint = data.certificate_fingerprint
+      ? ` Certificado SHA-256: ${data.certificate_fingerprint}`
+      : "";
     elements.mobilePairNote.textContent = data.lan_access_enabled
-      ? "Mantenha o computador e o celular conectados a mesma rede."
-      : "Reinicie o servidor Celsius com o acesso pela rede local habilitado.";
+      ? `Mantenha o computador e o celular conectados a mesma rede.${fingerprint}`
+      : "Nao foi possivel abrir o acesso pela rede local.";
   } catch (error) {
     elements.mobilePairStatus.textContent = "Nao foi possivel preparar o pareamento";
     elements.mobilePairNote.textContent = error.message;
@@ -571,6 +630,7 @@ function showView(view) {
   const quotesActive = view === "quotes" && state.quotesVisible;
   const reportsActive = view === "reports" && state.reportsVisible;
   const casesActive = view === "cases_deadlines" && state.casesVisible;
+  const adminActive = view === "admin" && state.adminVisible;
   const relationshipsActive = customersActive || suppliersActive;
   if (relationshipsActive) state.relationshipKind = customersActive ? "customers" : "suppliers";
   state.activeView = agendaActive
@@ -589,10 +649,12 @@ function showView(view) {
                 ? "reports"
                 : casesActive
                   ? "cases_deadlines"
-                  : "chat";
+                  : adminActive
+                    ? "admin"
+                    : "chat";
   const moduleActive = agendaActive || documentsActive || relationshipsActive || inventoryActive || productsActive || quotesActive || reportsActive || casesActive;
-  elements.chatStage.hidden = moduleActive;
-  elements.composerBand.hidden = moduleActive;
+  elements.chatStage.hidden = moduleActive || adminActive;
+  elements.composerBand.hidden = moduleActive || adminActive;
   elements.agendaView.hidden = !agendaActive;
   elements.documentsView.hidden = !documentsActive;
   elements.relationshipsView.hidden = !relationshipsActive;
@@ -601,7 +663,8 @@ function showView(view) {
   elements.quotesView.hidden = !quotesActive;
   elements.reportsView.hidden = !reportsActive;
   elements.casesView.hidden = !casesActive;
-  elements.chatButton.classList.toggle("active", !moduleActive);
+  elements.adminView.hidden = !adminActive;
+  elements.chatButton.classList.toggle("active", !moduleActive && !adminActive);
   elements.agendaButton.classList.toggle("active", agendaActive);
   elements.documentsButton.classList.toggle("active", documentsActive);
   elements.customersButton.classList.toggle("active", customersActive);
@@ -611,7 +674,8 @@ function showView(view) {
   elements.quotesButton.classList.toggle("active", quotesActive);
   elements.reportsButton.classList.toggle("active", reportsActive);
   elements.casesButton.classList.toggle("active", casesActive);
-  elements.chatButton.toggleAttribute("aria-current", !moduleActive);
+  elements.adminButton.classList.toggle("active", adminActive);
+  elements.chatButton.toggleAttribute("aria-current", !moduleActive && !adminActive);
   elements.agendaButton.toggleAttribute("aria-current", agendaActive);
   elements.documentsButton.toggleAttribute("aria-current", documentsActive);
   elements.customersButton.toggleAttribute("aria-current", customersActive);
@@ -621,6 +685,7 @@ function showView(view) {
   elements.quotesButton.toggleAttribute("aria-current", quotesActive);
   elements.reportsButton.toggleAttribute("aria-current", reportsActive);
   elements.casesButton.toggleAttribute("aria-current", casesActive);
+  elements.adminButton.toggleAttribute("aria-current", adminActive);
   elements.conversationTitle.textContent = agendaActive
     ? "Agenda"
     : documentsActive
@@ -639,7 +704,9 @@ function showView(view) {
                   ? "Relatorios"
                   : casesActive
                     ? "Processos e prazos"
-                    : state.chatTitle;
+                    : adminActive
+                      ? "Painel Administrativo"
+                      : state.chatTitle;
   closeSidebar();
   if (agendaActive) loadAgenda();
   if (documentsActive) loadDocuments();
@@ -649,6 +716,7 @@ function showView(view) {
   if (quotesActive) loadQuotes();
   if (reportsActive) loadReports();
   if (casesActive) loadCases();
+  if (adminActive) loadAdminDashboard();
 }
 
 async function loadNavigation() {
@@ -3332,6 +3400,7 @@ function connectEvents() {
   });
   socket.addEventListener("close", () => {
     setConnected(false);
+    if (!state.authToken) return;
     window.setTimeout(connectEvents, state.reconnectDelay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 1.7, 8000);
   });
@@ -3520,14 +3589,171 @@ function bindEvents() {
   elements.messages.addEventListener("scroll", () => {
     elements.scrollLatest.hidden = isNearBottom();
   });
+  elements.loginForm.addEventListener("submit", handleLogin);
+  elements.registerForm.addEventListener("submit", handleRegister);
+  elements.showRegister.addEventListener("click", (event) => {
+    event.preventDefault();
+    elements.loginForm.hidden = true;
+    elements.registerForm.hidden = false;
+  });
+  elements.showLogin.addEventListener("click", (event) => {
+    event.preventDefault();
+    elements.loginForm.hidden = false;
+    elements.registerForm.hidden = true;
+  });
+  elements.adminButton.addEventListener("click", () => showView("admin"));
+  elements.adminRefresh.addEventListener("click", loadAdminDashboard);
+  elements.adminAddUser.addEventListener("click", () => {
+    elements.loginScreen.hidden = false;
+    elements.appShell.hidden = true;
+    elements.loginForm.hidden = true;
+    elements.registerForm.hidden = false;
+    window.scrollTo(0, 0);
+  });
+  elements.userAvatarBtn.addEventListener("click", () => {
+    elements.userDropdown.hidden = !elements.userDropdown.hidden;
+  });
+  elements.userProfileBtn.addEventListener("click", () => {
+    elements.userDropdown.hidden = true;
+    showToast("Perfil: alteracao de dados disponivel na versao final.", "info");
+  });
+  elements.userLogoutBtn.addEventListener("click", handleLogout);
+  document.addEventListener("click", (event) => {
+    if (elements.userDropdown && !elements.userDropdown.hidden && !elements.userMenu.contains(event.target)) {
+      elements.userDropdown.hidden = true;
+    }
+  });
+  elements.notificationBell.addEventListener("click", toggleNotificationsPanel);
+  elements.notificationsClose.addEventListener("click", () => {
+    state.notificationsVisible = false;
+    elements.notificationsPanel.hidden = true;
+  });
+  elements.notificationsRefresh.addEventListener("click", () => {
+    loadNotifications().then(() => renderNotificationsList());
+  });
+  elements.notificationsMarkAll.addEventListener("click", markAllNotificationsRead);
 }
 
-async function initialize() {
-  const savedTheme = localStorage.getItem("celsius-theme-v2");
-  const legacyTheme = localStorage.getItem("celsius-theme");
-  setTheme(savedTheme || (legacyTheme === "dark" ? "green" : legacyTheme) || "light");
-  bindEvents();
-  updateSendState();
+/* ============================================
+   AUTH
+   ============================================ */
+
+function showLoginScreen() {
+  state.authToken = "";
+  state.refreshToken = "";
+  state.currentUser = null;
+  if (state.websocket) {
+    state.websocket.close();
+    state.websocket = null;
+  }
+  localStorage.removeItem("celsius_auth_token");
+  localStorage.removeItem("celsius_refresh_token");
+  elements.loginScreen.hidden = false;
+  elements.appShell.hidden = true;
+  elements.loginForm.hidden = false;
+  elements.registerForm.hidden = true;
+  elements.loginError.hidden = true;
+  elements.registerError.hidden = true;
+}
+
+function showAppScreen() {
+  elements.loginScreen.hidden = true;
+  elements.appShell.hidden = false;
+}
+
+function storeTokens(accessToken, refreshToken) {
+  state.authToken = accessToken;
+  state.refreshToken = refreshToken || "";
+  localStorage.setItem("celsius_auth_token", accessToken);
+  if (refreshToken) localStorage.setItem("celsius_refresh_token", refreshToken);
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const email = elements.loginEmail.value.trim();
+  const password = elements.loginPassword.value;
+  if (!email || !password) {
+    elements.loginError.textContent = "Preencha email e senha.";
+    elements.loginError.hidden = false;
+    return;
+  }
+  try {
+    const data = await api("/auth/login", {
+      method: "POST",
+      json: { email, password },
+    });
+    storeTokens(data.access_token, data.refresh_token);
+    elements.loginForm.reset();
+    await enterApp();
+  } catch (error) {
+    elements.loginError.textContent = error.message;
+    elements.loginError.hidden = false;
+  }
+}
+
+async function handleRegister(event) {
+  event.preventDefault();
+  const displayName = elements.registerName.value.trim();
+  const email = elements.registerEmail.value.trim();
+  const password = elements.registerPassword.value;
+  if (!email || !password || password.length < 8) {
+    elements.registerError.textContent = "Informe email valido e senha com pelo menos 8 caracteres.";
+    elements.registerError.hidden = false;
+    return;
+  }
+  try {
+    const addingUser = Boolean(state.currentUser && state.currentUser.role === "admin");
+    await api("/auth/register", {
+      method: "POST",
+      json: { email, password, display_name: displayName },
+    });
+    if (addingUser) {
+      elements.registerForm.reset();
+      showAppScreen();
+      await loadAdminDashboard();
+      showToast("Usuario criado.", "success");
+      return;
+    }
+    const data = await api("/auth/login", {
+      method: "POST",
+      json: { email, password },
+    });
+    storeTokens(data.access_token, data.refresh_token);
+    elements.registerForm.reset();
+    await enterApp();
+  } catch (error) {
+    elements.registerError.textContent = error.message;
+    elements.registerError.hidden = false;
+  }
+}
+
+async function handleLogout() {
+  try {
+    if (state.authToken) await api("/auth/logout", { method: "POST" });
+  } catch (_error) {
+    // Ignore logout API errors; clear local state regardless.
+  }
+  showLoginScreen();
+  if (elements.userDropdown) elements.userDropdown.hidden = true;
+  resetConversation();
+}
+
+async function enterApp() {
+  showAppScreen();
+  elements.userDropdown.hidden = true;
+  elements.adminButton.hidden = true;
+  state.adminVisible = false;
+  try {
+    const user = await api("/auth/me");
+    state.currentUser = user;
+    elements.userDisplayName.textContent = user.display_name || user.email.split("@")[0];
+    if (user.role === "admin") {
+      elements.adminButton.hidden = false;
+      state.adminVisible = true;
+    }
+  } catch (_error) {
+    // If /auth/me fails, keep the app usable and just hide admin.
+  }
   await Promise.all([
     loadSession(),
     loadNavigation(),
@@ -3536,6 +3762,229 @@ async function initialize() {
     loadVoiceCapabilities(),
   ]);
   await Promise.all([loadAgenda(), loadDueReminders(), loadDocuments(), loadInventory(), loadProducts()]);
+  await loadNotifications();
+  connectEvents();
+  elements.input.focus();
+}
+
+/* ============================================
+   ADMIN DASHBOARD
+   ============================================ */
+
+async function loadAdminDashboard() {
+  try {
+    const [stats, userActivity, activity, health] = await Promise.all([
+      api("/admin/dashboard/stats"),
+      api("/admin/dashboard/users"),
+      api("/admin/dashboard/activity?limit=15"),
+      api("/admin/dashboard/health"),
+    ]);
+    elements.adminUsers.textContent = String(stats.total_users);
+    elements.adminConversations.textContent = String(stats.total_conversations);
+    elements.adminMessages.textContent = String(stats.total_messages);
+    elements.adminStorage.textContent = `${stats.storage_used_mb || 0} MB`;
+    elements.adminSummary.textContent = `${stats.active_users} usuarios ativos de ${stats.total_users}, ${stats.admin_users} administradores`;
+    renderAdminUserActivity(userActivity || []);
+    renderAdminRecentActivity(activity || []);
+    renderAdminHealth(health);
+    await loadAdminUsersTable();
+  } catch (error) {
+    showToast(`Admin: ${error.message}`, "error");
+  }
+}
+
+function renderAdminUserActivity(users) {
+  elements.adminUserList.innerHTML = "";
+  users.slice(0, 8).forEach((user) => {
+    const item = document.createElement("div");
+    item.className = "admin-user-item";
+    item.innerHTML = `
+      <div class="user-info">
+        <span class="user-email"></span>
+        <span class="user-stats"></span>
+      </div>
+      <span class="user-role ${user.role || "user"}"></span>`;
+    item.querySelector(".user-email").textContent = user.display_name || user.email;
+    item.querySelector(".user-stats").textContent = `${user.message_count} msgs em ${user.conversation_count} conversas`;
+    item.querySelector(".user-role").textContent = user.role || "user";
+    elements.adminUserList.appendChild(item);
+  });
+  if (!(users || []).length) {
+    elements.adminUserList.innerHTML = '<p class="muted-note">Nenhum usuario registrado.</p>';
+  }
+}
+
+function renderAdminRecentActivity(activities) {
+  elements.adminActivityList.innerHTML = "";
+  (activities || []).forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = "admin-activity-item";
+    item.innerHTML = '<span class="activity-path"></span><div class="activity-time"></div>';
+    item.querySelector(".activity-path").textContent = entry.description || entry.activity_type || "";
+    item.querySelector(".activity-time").textContent = entry.timestamp || "";
+    elements.adminActivityList.appendChild(item);
+  });
+  if (!(activities || []).length) {
+    elements.adminActivityList.innerHTML = '<p class="muted-note">Sem atividade recente.</p>';
+  }
+}
+
+function renderAdminHealth(health) {
+  elements.adminHealth.innerHTML = "";
+  const items = [
+    ["Status", health.status || "unknown", health.status === "healthy" ? "ok" : "warn"],
+    ["Diretorio de dados", health.data_dir_exists ? "ok" : "ausente", health.data_dir_exists ? "ok" : "error"],
+    ["Usuarios", health.users_dir_exists ? "ok" : "ausente", health.users_dir_exists ? "ok" : "error"],
+    ["Conversas", health.conversations_dir_exists ? "ok" : "ausente", health.conversations_dir_exists ? "ok" : "error"],
+    ["Relatorios", health.reports_dir_exists ? "ok" : "ausente", health.reports_dir_exists ? "ok" : "error"],
+  ];
+  items.forEach(([label, value, cls]) => {
+    const row = document.createElement("div");
+    row.className = "admin-health-item";
+    row.innerHTML = `<span class="health-label"></span><span class="health-status"><span class="health-dot ${cls}"></span><span></span></span>`;
+    row.querySelector(".health-label").textContent = label;
+    row.querySelector(".health-status span:last-child").textContent = value;
+    elements.adminHealth.appendChild(row);
+  });
+}
+
+async function loadAdminUsersTable() {
+  try {
+    const users = await api("/auth/users");
+    elements.adminUsersList.innerHTML = "";
+    (users || []).forEach((user) => {
+      const row = document.createElement("tr");
+      const statusLabel = user.is_active ? "Ativo" : "Inativo";
+      const roleLabel = user.role || "user";
+      row.innerHTML = `
+        <td><strong></strong><span class="cell-sub"></span></td>
+        <td><span class="user-role ${roleLabel}"></span></td>
+        <td></td>
+        <td class="cell-time"></td>
+        <td><button class="icon-button compact admin-toggle-user" type="button" title="Desativar/Reativar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button></td>`;
+      row.querySelector("strong").textContent = user.display_name || user.email;
+      row.querySelector(".cell-sub").textContent = user.email;
+      row.querySelector(".user-role").textContent = roleLabel;
+      row.querySelectorAll("td")[2].textContent = statusLabel;
+      row.querySelector(".cell-time").textContent = user.last_login || "Nunca";
+      const toggleBtn = row.querySelector(".admin-toggle-user");
+      toggleBtn.addEventListener("click", async () => {
+        try {
+          await api(`/auth/users/${user.id}`, {
+            method: "PUT",
+            json: { is_active: !user.is_active },
+          });
+          await loadAdminUsersTable();
+          await loadAdminDashboard();
+        } catch (error) {
+          showToast(`Falha ao atualizar usuario: ${error.message}`, "error");
+        }
+      });
+      elements.adminUsersList.appendChild(row);
+    });
+  } catch (error) {
+    showToast(`Usuarios: ${error.message}`, "error");
+  }
+}
+
+/* ============================================
+   NOTIFICATIONS
+   ============================================ */
+
+async function loadNotifications() {
+  try {
+    const [items, countData] = await Promise.all([
+      api("/notifications/?limit=50"),
+      api("/notifications/unread-count"),
+    ]);
+    state.notificationItems = items || [];
+    state.notificationCount = (countData && countData.count) || 0;
+    elements.notificationBadge.textContent = String(state.notificationCount);
+    elements.notificationBadge.hidden = state.notificationCount === 0;
+    if (state.notificationsVisible) renderNotificationsList();
+  } catch (_error) {
+    // Notifications are optional; silence errors during startup.
+  }
+}
+
+function renderNotificationsList() {
+  elements.notificationsList.innerHTML = "";
+  elements.notificationsEmpty.hidden = state.notificationItems.length > 0;
+  state.notificationItems.forEach((notification) => {
+    const item = document.createElement("div");
+    item.className = `notification-item${notification.read ? "" : " unread"}`;
+    item.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span class="notification-title"></span>
+        <span class="notification-priority ${notification.priority || "medium"}"></span>
+      </div>
+      <div class="notification-message"></div>
+      <div class="notification-time"></div>`;
+    item.querySelector(".notification-title").textContent = notification.title || (notification.type || "Notificacao");
+    item.querySelector(".notification-priority").textContent = notification.priority || "medium";
+    item.querySelector(".notification-message").textContent = notification.message || "";
+    item.querySelector(".notification-time").textContent = notification.created_at || "";
+    if (!notification.read) {
+      item.addEventListener("click", async () => {
+        try {
+          await api(`/notifications/${notification.id}/read`, { method: "POST" });
+          await loadNotifications();
+        } catch (_error) {
+          // ignore
+        }
+      });
+    }
+    elements.notificationsList.appendChild(item);
+  });
+}
+
+function toggleNotificationsPanel() {
+  state.notificationsVisible = !state.notificationsVisible;
+  elements.notificationsPanel.hidden = !state.notificationsVisible;
+  if (state.notificationsVisible) {
+    loadNotifications().then(() => renderNotificationsList());
+  }
+}
+
+async function markAllNotificationsRead() {
+  try {
+    await api("/notifications/read-all", { method: "POST" });
+    await loadNotifications();
+  } catch (error) {
+    showToast(`Notificacoes: ${error.message}`, "error");
+  }
+}
+
+async function initialize() {
+  const savedTheme = localStorage.getItem("celsius-theme-v2");
+  const legacyTheme = localStorage.getItem("celsius-theme");
+  setTheme(savedTheme || (legacyTheme === "dark" ? "green" : legacyTheme) || "light");
+  bindEvents();
+  updateSendState();
+  if (!state.authToken) {
+    showLoginScreen();
+    return;
+  }
+  try {
+    const user = await api("/auth/me");
+    state.currentUser = user;
+    elements.userDisplayName.textContent = user.display_name || user.email.split("@")[0];
+    elements.adminButton.hidden = user.role !== "admin";
+    state.adminVisible = user.role === "admin";
+    showAppScreen();
+  } catch (_error) {
+    showLoginScreen();
+    return;
+  }
+  await Promise.all([
+    loadSession(),
+    loadNavigation(),
+    loadConversations(),
+    loadModels(),
+    loadVoiceCapabilities(),
+  ]);
+  await Promise.all([loadAgenda(), loadDueReminders(), loadDocuments(), loadInventory(), loadProducts()]);
+  await loadNotifications();
   state.agendaRefreshTimer = window.setInterval(() => {
     if (state.activeView === "agenda") loadAgenda();
     if (state.activeView === "documents" || state.documentItems.some((item) => item.status === "Processando")) {
@@ -3546,7 +3995,9 @@ async function initialize() {
     }
     if (state.activeView === "inventory") loadInventory();
     if (state.activeView === "products_services") loadProducts();
+    if (state.adminVisible && state.activeView === "admin") loadAdminDashboard();
     loadDueReminders();
+    loadNotifications();
   }, 15_000);
   connectEvents();
   elements.input.focus();

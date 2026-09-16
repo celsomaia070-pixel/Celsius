@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core.model_catalog import DEFAULT_LLM_MODEL
+
 
 @dataclass(frozen=True)
 class GGUFModel:
@@ -231,8 +233,8 @@ class Settings:
 
     enabled_modules: tuple[str, ...] = ("conversas", "estoque")
 
-    default_llm_model: str = "qwen2.5-vl-7b-q4km"
-    llm_model: str = "qwen2.5-vl-7b-q4km"
+    default_llm_model: str = DEFAULT_LLM_MODEL
+    llm_model: str = DEFAULT_LLM_MODEL
     fast_llm_model: str = "qwen3-4b-q4km"  # Small fast model for simple tasks
     embedding_model: str = "qwen3-embedding-0.6b"
     whisper_model: str = "small"

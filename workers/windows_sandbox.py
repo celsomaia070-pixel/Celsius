@@ -8,6 +8,7 @@ import ctypes
 import ctypes.wintypes
 import logging
 import os
+import secrets
 import struct
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from core.sandbox import build_restricted_wrapper
 JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
 JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008
-JOB_OBJECT_LIMIT_JOB_TIME = 0x00000010
+JOB_OBJECT_LIMIT_JOB_TIME = 0x00000004
 JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x00000400
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 
@@ -107,6 +108,8 @@ def _configure_job_limits(job_handle: ctypes.wintypes.HANDLE, config: WindowsSan
         flags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
     if config.job_memory_limit_mb > 0:
         flags |= JOB_OBJECT_LIMIT_JOB_MEMORY
+    if config.cpu_time_limit_seconds > 0:
+        flags |= JOB_OBJECT_LIMIT_JOB_TIME
 
     struct_data = struct.pack(
         "<qqII"  # PerProcess(8) + PerJob(8) + Flags(4) + pad(4) = 24
@@ -118,7 +121,7 @@ def _configure_job_limits(job_handle: ctypes.wintypes.HANDLE, config: WindowsSan
         "QQQQ",  # ProcMem(8) + JobMem(8) + PeakProc(8) + PeakJob(8) = 32
         # BasicLimitInformation
         0,  # PerProcessUserTimeLimit
-        0,  # PerJobUserTimeLimit
+        max(0, config.cpu_time_limit_seconds) * 10_000_000,  # 100-nanosecond units
         flags,  # LimitFlags
         0,  # padding
         4 * 1024 * 1024,  # MinimumWorkingSetSize (4MB)
@@ -183,14 +186,29 @@ def executar_codigo_windows(
 
     temp_path = None
     try:
+        startup_gate = secrets.token_urlsafe(32)
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".py", delete=False, encoding="utf-8"
         ) as f:
+            f.write(
+                "import sys\n"
+                f"if sys.stdin.readline().strip() != {startup_gate!r}:\n"
+                "    raise SystemExit('Security error: sandbox startup not authorized')\n"
+            )
             f.write(build_restricted_wrapper(codigo))
             temp_path = f.name
 
         env = _sandbox_env()
-        cmd = [sys.executable, "-I", "-B", temp_path]
+        # Windows venv launchers spawn a second process, forbidden by our Job Object.
+        # Restricted code uses stdlib only and does not need the venv's packages.
+        executable = getattr(sys, "_base_executable", sys.executable)
+        if getattr(sys, "frozen", False) or not os.path.isfile(executable):
+            return WindowsSandboxResult(
+                stdout="",
+                stderr="Security error: interpretador isolado indisponivel.",
+                returncode=-1,
+            )
+        cmd = [executable, "-I", "-B", temp_path]
 
         job_handle = _create_job_object()
         try:
@@ -202,6 +220,7 @@ def executar_codigo_windows(
 
             process = subprocess.Popen(
                 cmd,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -236,7 +255,11 @@ def executar_codigo_windows(
                         returncode=-1,
                     )
 
-                stdout, stderr = process.communicate(timeout=timeout + 5)
+                # The child cannot reach user code until the Job Object is active.
+                stdout, stderr = process.communicate(
+                    input=f"{startup_gate}\n",
+                    timeout=timeout + 5,
+                )
                 stdout = stdout[:max_output]
                 stderr = stderr[:max_output]
 

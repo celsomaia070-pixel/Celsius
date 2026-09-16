@@ -39,6 +39,7 @@ data/
 logs/
 cache/
 chroma_db/
+rag_vectors.sqlite3*
 conversations/
 voices/
 resources/*
@@ -49,6 +50,8 @@ memorias.json
 *_embeddings_cache.npy
 *.json.lock
 inventory.json
+inventory.db*
+memorias.db*
 temp_audio.wav
 temp_kfu_voice.mp3
 

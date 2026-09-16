@@ -53,6 +53,16 @@ class TestGetBaseDir:
         assert _get_resources_dir() == tmp_path / "Celsius" / "models"
 
 
+def test_dotenv_example_maps_to_real_fields(tmp_path):
+    from core.settings import Settings
+
+    env = tmp_path / ".env"
+    env.write_text("CELSIUS_WEB__PORT=8798\nCELSIUS_TELEMETRY__ENABLED=false\n", encoding="utf-8")
+    settings = Settings(_env_file=env)
+    assert settings.web.port == 8798
+    assert settings.telemetry.enabled is False
+
+
 class TestModelSettingsDefaults:
     def test_default_llm_model(self):
         s = ModelSettings()

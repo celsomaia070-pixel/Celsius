@@ -292,6 +292,7 @@ class ChatCoordinator:
                 "modelo_solicitado": model_id or self.settings.llm_model,
                 "system_prompt": self._system_prompt(),
                 "historico": history,
+                "approval_scope": job.conversation_id,
             }
             prepare_prompt_attachments(prompt, settings=self.settings, fn_status=on_status)
             check_cancelled()
@@ -311,6 +312,8 @@ class ChatCoordinator:
                 )
             check_cancelled()
             response = str(response or "").strip()
+            # A completed job guarantees that its temporary uploads are gone.
+            self.attachments.discard(job.attachment_ids)
             assistant_message = self.conversations.add_message(
                 job.conversation_id,
                 "assistant",
@@ -359,12 +362,14 @@ class ChatCoordinator:
     def _load_memories(self, message: str, on_status: Callable[[str], None]) -> list[str]:
         if not self.settings.features.memory:
             return []
-        on_status("Consultando memorias relevantes...")
         if self.memory_service is None:
             from core.memory import get_memory_service
 
             self.memory_service = get_memory_service()
-        return self.memory_service.search(message)
+        memories = self.memory_service.search(message)
+        if memories:
+            on_status("Aplicando contexto pessoal relevante...")
+        return memories
 
     def _system_prompt(self) -> str:
         return (

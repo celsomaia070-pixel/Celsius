@@ -15,11 +15,7 @@ if str(ROOT) not in sys.path:
 
 # Transitive dependency of llama-cpp-python. No fixed diskcache release exists.
 # It is not used with untrusted cache paths in Celsius; remove when a patch ships.
-TEMPORARY_AUDIT_EXCEPTIONS = (
-    "PYSEC-2026-2447",
-    # The affected Chroma HTTP server is never started or exposed by Celsius.
-    "PYSEC-2026-311",
-)
+TEMPORARY_AUDIT_EXCEPTIONS = ("PYSEC-2026-2447",)
 
 
 def run_pip_audit() -> bool:
@@ -73,20 +69,44 @@ def run_ruff_check() -> bool:
             timeout=60,
         )
         findings = json.loads(result.stdout or "[]")
-        errors = [item for item in findings if item.get("code", "").startswith("S")]
+        errors = findings
         if errors:
-            print(f"  Found {len(errors)} security-related issues:")
+            print(f"  Found {len(errors)} lint issues:")
             for error in errors[:10]:
                 location = error["location"]
                 print(
                     f"    {error['filename']}:{location['row']}: {error['code']} {error['message']}"
                 )
             return False
-        print("  No security-related lint issues found.")
-        return True
+        print("  No lint issues found.")
+        return result.returncode == 0
     except (FileNotFoundError, json.JSONDecodeError) as error:
         print(f"[ERROR] {error}")
         return False
+
+
+def run_bandit() -> bool:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bandit",
+            "-r",
+            "core",
+            "workers",
+            "ai",
+            "ui",
+            "processors",
+            "-c",
+            "pyproject.toml",
+            "--severity-level",
+            "medium",
+        ],
+        cwd=ROOT,
+        check=False,
+        timeout=120,
+    )
+    return result.returncode == 0
 
 
 def check_sandbox_validation() -> bool:
@@ -168,6 +188,7 @@ def main() -> int:
     results = {
         "pip_audit": run_pip_audit(),
         "ruff": run_ruff_check(),
+        "bandit": run_bandit(),
         "ast_validation": check_sandbox_validation(),
         "circuit_breakers": check_circuit_breakers(),
         "metrics": check_metrics(),

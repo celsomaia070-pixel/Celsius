@@ -11,6 +11,7 @@ from ai.react import (
     loop_react,
 )
 from core.commands import executar_comando
+from core.inventory import get_inventory_service
 from core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -158,71 +159,33 @@ def _is_lista_estoque_query(pergunta: str) -> bool:
 def _responder_lista_estoque_direta(pergunta: str) -> str | None:
     if not _is_lista_estoque_query(pergunta):
         return None
-    settings = get_settings()
-    inventory_file = settings.inventory_file
-    if not inventory_file.exists():
-        return "Nao ha dados de estoque registrados."
-
-    import json
-
     try:
-        with open(inventory_file, encoding="utf-8") as f:
-            dados = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return "Nao foi possivel ler o arquivo de estoque."
-
-    if isinstance(dados, dict):
-        itens = dados.get("itens") or dados.get("items", [])
-    elif isinstance(dados, list):
-        itens = dados
-    else:
-        return "Nao foi possivel interpretar os dados de estoque."
-
+        itens = get_inventory_service().get_all_items()
+    except Exception:
+        return "Nao foi possivel ler os dados de estoque."
     if not itens:
-        return "O estoque esta vazio. Nenhum item cadastrado."
+        return "Nao ha dados de estoque registrados."
 
     linhas = ["Item | Quantidade | Categoria"]
     linhas.append("-" * 40)
     for item in itens:
-        nome = item.get("nome") or item.get("name", "?")
-        qtd = item.get("quantidade") or item.get("quantity", 0)
-        categoria = item.get("categoria") or item.get("category", "")
-        linhas.append(f"{nome} | {qtd} | {categoria}")
+        linhas.append(f"{item.nome} | {item.quantidade} | {item.categoria}")
     return "\n".join(linhas)
 
 
 def _obter_contexto_estoque(pergunta: str) -> str:
-    settings = get_settings()
-    inventory_file = settings.inventory_file
-    if not inventory_file.exists():
-        return ""
-
-    import json
-
     try:
-        with open(inventory_file, encoding="utf-8") as f:
-            dados = json.load(f)
-    except (OSError, json.JSONDecodeError):
+        itens = get_inventory_service().get_all_items()
+    except Exception:
         return ""
-
-    if isinstance(dados, dict):
-        itens = dados.get("itens") or dados.get("items", [])
-    elif isinstance(dados, list):
-        itens = dados
-    else:
-        return ""
-
     if not itens:
         return ""
 
     linhas = [f"Dados do estoque do usuario ({len(itens)} itens):"]
     for item in itens[:50]:
-        nome = item.get("nome") or item.get("name", "?")
-        qtd = item.get("quantidade") or item.get("quantity", 0)
-        categoria = item.get("categoria") or item.get("category", "")
-        status = item.get("status", "")
+        status = item.coluna.label
         extra = f" | Status: {status}" if status else ""
-        linhas.append(f"- {nome}: {qtd} unidades ({categoria}){extra}")
+        linhas.append(f"- {item.nome}: {item.quantidade} unidades ({item.categoria}){extra}")
     if len(itens) > 50:
         linhas.append(f"... e mais {len(itens) - 50} itens.")
     return "\n".join(linhas)
@@ -322,17 +285,18 @@ def gerar_resposta(
     from core.tool_approval import get_tool_approval_store
 
     approval_store = get_tool_approval_store()
+    approval_scope = str(prompt_dict.get("approval_scope", "")).strip()
     approval_command = approval_store.parse_command(pergunta_direta)
     if approval_command:
         action, code = approval_command
         if action == "CANCELAR":
             response = (
                 "Acao cancelada. Nenhuma ferramenta foi executada."
-                if approval_store.cancel(code)
+                if approval_store.cancel(code, scope=approval_scope)
                 else "Essa autorizacao nao existe ou ja expirou."
             )
         else:
-            pending = approval_store.consume(code)
+            pending = approval_store.consume(code, scope=approval_scope)
             if pending is None:
                 response = "Essa autorizacao nao existe, ja foi usada ou expirou."
             else:
@@ -370,13 +334,8 @@ def gerar_resposta(
                 fn_chunk(resposta_estoque)
             return resposta_estoque
 
-        contexto_estoque = _obter_contexto_estoque(pergunta_direta)
-        if contexto_estoque:
-            if fn_status:
-                fn_status("Consultando estoque...")
-            prompt_dict["documento"] = contexto_estoque
-            prompt_dict["nome_documento"] = "Dados do Estoque"
-            texto_doc = contexto_estoque
+        # Inventory is retrieved by deterministic handlers or an inventory tool.
+        # Injecting the complete JSON here made every unrelated prompt slower.
 
     history = _normalizar_historico_recente(prompt_dict.get("historico", []), pergunta_direta)
 

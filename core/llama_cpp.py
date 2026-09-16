@@ -17,6 +17,7 @@ from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler, Qwen25VLChatHandler
 
 from core.config import get_model_by_id
+from core.file_validation import validate_image_content
 from core.inference_guard import LockedIterator
 from core.metrics import MetricNames, get_metrics
 from core.network_security import validate_public_http_url
@@ -58,6 +59,7 @@ class _PILImageLoaderMixin:
             image_bytes = base64.b64decode(data)
             if len(image_bytes) > max_bytes:
                 raise ValueError("Imagem excede o limite de 20 MB.")
+            validate_image_content(image_bytes)
             if PIL_AVAILABLE:
                 try:
                     img = Image.open(io.BytesIO(image_bytes))
@@ -89,6 +91,7 @@ class _PILImageLoaderMixin:
                 payload = response.read(max_bytes + 1)
             if len(payload) > max_bytes:
                 raise ValueError("Imagem excede o limite de 20 MB.")
+            validate_image_content(payload)
             return payload
 
 

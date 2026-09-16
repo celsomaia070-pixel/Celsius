@@ -245,7 +245,7 @@ class ItemDialog(QDialog):
         layout.addWidget(title)
 
         for label_text, attr, placeholder in [
-            ("Nome", "nome", "Ex: Parafuso M8"),
+            ("Nome", "nome", "Ex: Exemplo Item"),
             ("Categoria", "categoria", "Ex: Pecas, Ferramentas"),
         ]:
             lbl = QLabel(label_text)

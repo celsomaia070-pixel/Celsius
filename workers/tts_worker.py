@@ -53,7 +53,7 @@ class VozWorker(QThread):
         if self._streaming and self.texto:
             self._input_queue.put((self.texto, False))
 
-    def run(self):
+    def run(self) -> None:
         gc.disable()
         try:
             if (
@@ -87,7 +87,7 @@ class VozWorker(QThread):
             gc.enable()
             self._cleanup()
 
-    async def _generate_and_play_segments(self):
+    async def _generate_and_play_segments(self) -> None:
         segments = self._speech_segments()
         if not segments:
             return
@@ -112,10 +112,10 @@ class VozWorker(QThread):
     def _speech_segments(self) -> list[str]:
         return split_tts_fast_start(self.texto)
 
-    def _generate_and_play_stream(self):
+    def _generate_and_play_stream(self) -> None:
         audio_queue: queue.Queue[tuple[bytes, str] | Exception | None] = queue.Queue(maxsize=3)
 
-        def synthesize_loop():
+        def synthesize_loop() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -161,13 +161,14 @@ class VozWorker(QThread):
         self._stream_closed.set()
         synth_thread.join(timeout=1)
 
-    def _write_segment_audio(self, audio: bytes):
+    def _write_segment_audio(self, audio: bytes) -> None:
         self._cleanup()
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp:
+        suffix = ".wav" if audio.startswith(b"RIFF") and b"WAVE" in audio[:16] else ".mp3"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
             self._arquivo_voz = temp.name
         Path(self._arquivo_voz).write_bytes(audio)
 
-    def _reproduzir(self):
+    def _reproduzir(self) -> None:
         if self._should_stop or not self._arquivo_voz or not os.path.exists(self._arquivo_voz):
             return
 
@@ -191,13 +192,13 @@ class VozWorker(QThread):
         finally:
             self._cleanup()
 
-    def _cleanup(self):
+    def _cleanup(self) -> None:
         if self._arquivo_voz and os.path.exists(self._arquivo_voz):
             with contextlib.suppress(Exception):
                 os.remove(self._arquivo_voz)
         self._arquivo_voz = None
 
-    def stop(self):
+    def stop(self) -> None:
         self._should_stop = True
         if self._streaming:
             self._stream_closed.set()
@@ -208,13 +209,13 @@ class VozWorker(QThread):
         self.quit()
         self.wait(1000)
 
-    def enqueue_text(self, text: str, *, continuation: bool = True):
+    def enqueue_text(self, text: str, *, continuation: bool = True) -> None:
         cleaned = naturalize_tts_text(text)
         if not self._streaming or self._should_stop or self._stream_closed.is_set() or not cleaned:
             return
         self._input_queue.put((cleaned, continuation))
 
-    def finish_stream(self):
+    def finish_stream(self) -> None:
         if not self._streaming or self._stream_closed.is_set():
             return
         self._stream_closed.set()

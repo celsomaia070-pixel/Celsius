@@ -4,6 +4,8 @@ Estimates token usage and manages context to prevent overflow.
 Uses character-based estimation (1 token ~ 4 chars for English, ~2 chars for CJK).
 """
 
+from collections.abc import Callable
+
 from core.settings import get_settings
 
 # Approximate chars per token (varies by language and tokenizer)
@@ -148,7 +150,9 @@ class ContextBudget:
 
         return system_msgs + conv_msgs
 
-    def summarize_if_needed(self, messages: list[dict], summarize_fn=None) -> list[dict]:
+    def summarize_if_needed(
+        self, messages: list[dict], summarize_fn: Callable[[str], str] | None = None
+    ) -> list[dict]:
         """Summarize old messages if over budget.
 
         Args:

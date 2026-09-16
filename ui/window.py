@@ -25,9 +25,9 @@ from core.agenda import get_agenda_service
 from core.inventory import get_inventory_service
 from core.memory import get_memory_service
 from core.mobile_access import (
-    MobileAccessServer,
-    ensure_mobile_certificate,
     ensure_mobile_token,
+    get_mobile_runtime,
+    start_for_settings,
 )
 from core.modules import get_module_definition, sidebar_modules
 from core.settings import get_settings
@@ -637,59 +637,31 @@ class ModernChatWindow(QMainWindow):
         self._restart_mobile_access(show_message=False)
 
     def _restart_mobile_access(self, show_message: bool = True, show_pairing: bool = True):
-        self._stop_mobile_access()
-        if not self.settings.mobile.enabled:
-            return
-
-        token = ensure_mobile_token(self.settings.mobile.pairing_token)
-        self.settings.mobile.pairing_token = token
-        self.settings.save_local_preferences()
-
-        host = self.settings.mobile.host if self.settings.mobile.allow_lan else "127.0.0.1"
-        cert_file = key_file = None
-        use_https = self.settings.mobile.use_https
+        runtime = get_mobile_runtime()
+        existing = runtime.server
         https_warning = ""
-        if use_https:
-            try:
-                cert_file, key_file = ensure_mobile_certificate(
-                    self.settings.data_dir / "mobile_access"
-                )
-            except RuntimeError as exc:
-                use_https = False
-                https_warning = (
-                    f"\n\nAviso: HTTPS local indisponivel ({exc}). "
-                    "O acesso pelo celular foi iniciado em HTTP; alguns navegadores podem bloquear o microfone."
-                )
-
-        server = MobileAccessServer(
-            host=host,
-            port=self.settings.mobile.port,
-            token=token,
-            command_callback=self._queue_mobile_command,
-            voice_enabled=self.settings.mobile.voice_commands_enabled,
-            voice_command_callback=self._queue_mobile_voice_command,
-            use_https=use_https,
-            cert_file=cert_file,
-            key_file=key_file,
+        reuse = (
+            existing is not None and existing.is_running and self._mobile_server_matches(existing)
         )
-        try:
-            self._mobile_server = server.start()
-        except Exception as exc:
-            if not use_https:
-                raise
-            https_warning = (
-                f"\n\nAviso: nao foi possivel iniciar HTTPS local ({exc}). "
-                "O acesso pelo celular foi iniciado em HTTP; alguns navegadores podem bloquear o microfone."
+        if reuse:
+            self._mobile_server = existing
+        else:
+            self._stop_mobile_access()
+            if not self.settings.mobile.enabled:
+                return
+
+            token = ensure_mobile_token(self.settings.mobile.pairing_token)
+            self.settings.mobile.pairing_token = token
+            self.settings.save_local_preferences()
+
+            server, https_warning = start_for_settings(
+                self.settings,
+                command_callback=runtime.command,
+                voice_command_callback=runtime.voice,
             )
-            self._mobile_server = MobileAccessServer(
-                host=host,
-                port=self.settings.mobile.port,
-                token=token,
-                command_callback=self._queue_mobile_command,
-                voice_enabled=self.settings.mobile.voice_commands_enabled,
-                voice_command_callback=self._queue_mobile_voice_command,
-                use_https=False,
-            ).start()
+            runtime.attach(server)
+            self._mobile_server = server
+        runtime.set_sink(self)
         if show_message:
             self.chat_view.add_assistant_message(
                 "Acesso pelo celular ativo nesta rede:\n\n"
@@ -699,6 +671,19 @@ class ModernChatWindow(QMainWindow):
             )
         if show_pairing:
             self._show_mobile_pairing_dialog()
+
+    def _mobile_server_matches(self, server) -> bool:
+        expected_host = self.settings.mobile.host if self.settings.mobile.allow_lan else "127.0.0.1"
+        expected_port = int(self.settings.mobile.port)
+        expected_https = bool(self.settings.mobile.use_https)
+        expected_token = ensure_mobile_token(self.settings.mobile.pairing_token)
+        return (
+            server.port == expected_port
+            and server.use_https == expected_https
+            and server.host == expected_host
+            and server.token == expected_token
+            and self.settings.mobile.voice_commands_enabled == server.voice_enabled
+        )
 
     def _show_mobile_pairing_dialog(self):
         if not self._mobile_server:
@@ -737,9 +722,12 @@ class ModernChatWindow(QMainWindow):
             )
 
     def _stop_mobile_access(self):
-        if self._mobile_server:
+        runtime = get_mobile_runtime()
+        if runtime.server is not None:
+            runtime.close()
+        elif self._mobile_server:
             self._mobile_server.stop()
-            self._mobile_server = None
+        self._mobile_server = None
 
     def _queue_mobile_command(self, message: str, source: str):
         if self._ai_busy:

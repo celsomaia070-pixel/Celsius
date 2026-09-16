@@ -7,7 +7,12 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QThread, Signal
 
-from core.sandbox import build_restricted_wrapper, validate_code
+from core.sandbox import (
+    DockerSandboxExecutor,
+    build_restricted_wrapper,
+    resolve_sandbox_backend,
+    validate_code,
+)
 
 
 @dataclass
@@ -193,16 +198,43 @@ def _sandbox_env() -> dict[str, str]:
     return env
 
 
-def executar_codigo(codigo: str, timeout: int = 30, max_output: int = 50000) -> CodeResult:
+def _default_sandbox_backend() -> str:
+    """Return the configured sandbox backend, falling back to ``auto``."""
+    try:
+        from core.settings import get_settings
+
+        return get_settings().security.sandbox_backend
+    except Exception:
+        return "auto"
+
+
+def executar_codigo(
+    codigo: str, timeout: int = 30, max_output: int = 50000, backend: str | None = None
+) -> CodeResult:
     """Execute Python code in a sandboxed subprocess with resource limits.
 
     On Windows: uses Job Objects for CPU time + memory limits.
     On Unix: uses resource.setrlimit + privilege drop.
+    When ``CELSIUS_SECURITY_SANDBOX_BACKEND=docker`` (and the Docker daemon is
+    running), execution happens in an ephemeral, network-isolated container.
     """
     # Static analysis
     error = _validate_code(codigo)
     if error:
         return CodeResult("", f"Security error: {error}", -1)
+
+    if backend is None:
+        backend = _default_sandbox_backend()
+
+    resolved_backend = resolve_sandbox_backend(backend)
+    if resolved_backend == "docker":
+        executor = DockerSandboxExecutor(cpu_time=timeout, max_output=max_output)
+        result = executor.execute(codigo)
+        return CodeResult(
+            stdout=result.output,
+            stderr=result.error,
+            returncode=0 if result.success else 1,
+        )
 
     # Windows path: use Job Objects sandbox
     if sys.platform == "win32":

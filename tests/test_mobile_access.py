@@ -5,16 +5,21 @@ import json
 import ssl
 import urllib.error
 import urllib.request
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from core.mobile_access import (
+    MobileAccessRuntime,
     MobileAccessServer,
     _create_server_ssl_context,
     _mobile_html,
     build_mobile_url,
     ensure_mobile_certificate,
     ensure_mobile_token,
+    get_mobile_runtime,
+    start_for_settings,
 )
 
 
@@ -81,6 +86,8 @@ class TestMobileAccess:
         assert "Parar e enviar" in html
         assert "Digitar mensagem" in html
         assert "composerBody" in html
+        assert "token=" not in html
+        assert "Bearer ${token}" not in html
         assert 'aria-expanded="false"' in html
         assert "Use quando preferir escrever" in html
         assert "voiceOrb" in html
@@ -120,7 +127,7 @@ class TestMobileAccess:
     def test_builds_https_mobile_url(self):
         url = build_mobile_url("127.0.0.1", 8787, "secret", use_https=True)
 
-        assert url == "https://127.0.0.1:8787/?token=secret"
+        assert url == "https://127.0.0.1:8787/?pair=secret"
 
     def test_generates_local_https_certificate(self, tmp_path):
         pytest.importorskip("cryptography", reason="HTTPS local depende de cryptography")
@@ -147,10 +154,7 @@ class TestMobileAccess:
     def test_mobile_page_disables_browser_cache(self):
         server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
         try:
-            port = server._httpd.server_address[1]
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/?token=secret", timeout=5
-            ) as response:
+            with urllib.request.urlopen(server.url, timeout=5) as response:
                 cache_control = response.headers.get("Cache-Control", "")
         finally:
             server.stop()
@@ -275,7 +279,7 @@ class TestMobileAccess:
             server.stop()
 
         assert data["ok"] is False
-        assert "falha simulada" in data["message"]
+        assert data["message"] == "Erro interno ao entregar comando ao Celsius."
 
     def test_accepts_authorized_voice_command(self):
         received = []
@@ -371,3 +375,133 @@ class TestMobileAccess:
 
         assert response["ok"] is True
         assert response["https"] is True
+
+
+def _fake_mobile_settings(
+    *,
+    data_dir: Path,
+    port: int = 0,
+    allow_lan: bool = False,
+    https: bool = False,
+    token: str = "s3cret",
+    voice: bool = True,
+):
+    mobile = SimpleNamespace(
+        host="127.0.0.1",
+        port=port,
+        allow_lan=allow_lan,
+        use_https=https,
+        voice_commands_enabled=voice,
+        pairing_token=token,
+    )
+    return SimpleNamespace(data_dir=data_dir, mobile=mobile)
+
+
+class TestMobileAccessRuntime:
+    def test_answers_starting_notice_before_sink_is_attached(self):
+        runtime = MobileAccessRuntime()
+
+        ok, message = runtime.command("olar", "phone")
+        ok_voice, transcript, message_voice = runtime.voice(b"audio", "audio/wav")
+
+        assert ok is False
+        assert "iniciando" in message
+        assert ok_voice is False
+        assert transcript == ""
+        assert "iniciando" in message_voice
+
+    def test_forwards_commands_to_attached_sink(self):
+        runtime = MobileAccessRuntime()
+
+        class Sink:
+            def _queue_mobile_command(self, message, source):
+                return True, f"recebido {source}: {message}"
+
+            def _queue_mobile_voice_command(self, audio, mime_type):
+                return True, "voz", f"voz {mime_type}"
+
+        runtime.set_sink(Sink())
+
+        ok, message = runtime.command("abrir agenda", "phone")
+        ok_voice, transcript, message_voice = runtime.voice(b"audio", "audio/wav")
+
+        assert ok is True
+        assert message == "recebido phone: abrir agenda"
+        assert ok_voice is True
+        assert transcript == "voz"
+        assert message_voice == "voz audio/wav"
+
+    def test_close_stops_server_and_clears_sink(self):
+        runtime = MobileAccessRuntime()
+
+        class Sink:
+            def _queue_mobile_command(self, message, source):
+                return True, message
+
+        runtime.set_sink(Sink())
+        assert runtime.sink is not None
+        runtime.close()
+
+        assert runtime.server is None
+        assert runtime.sink is None
+        ok, _message = runtime.command("x", "phone")
+        assert ok is False
+
+
+class TestStartForSettings:
+    def test_starts_loopback_http_server_and_returns_notice(self, tmp_path):
+        server, notice = start_for_settings(
+            _fake_mobile_settings(data_dir=tmp_path),
+            command_callback=lambda message, source: (True, "ok"),
+        )
+        try:
+            assert server.is_running
+            assert server._httpd.server_address[1] != 0
+            assert server.host == "127.0.0.1"
+            assert server.use_https is False
+            assert notice == ""
+            response = _request_json(
+                f"http://127.0.0.1:{server._httpd.server_address[1]}/api/command",
+                token="s3cret",
+                payload={"message": "abrir agenda", "source": "phone"},
+            )
+        finally:
+            server.stop()
+
+        assert response["ok"] is True
+        assert response["message"] == "ok"
+
+    def test_serves_runtime_commands_before_window_attaches(self, tmp_path):
+        runtime = get_mobile_runtime()
+        runtime.close()
+        server, _notice = start_for_settings(
+            _fake_mobile_settings(data_dir=tmp_path),
+            command_callback=runtime.command,
+            voice_command_callback=runtime.voice,
+        )
+        runtime.attach(server)
+        try:
+            port = server._httpd.server_address[1]
+            response = _request_json(
+                f"http://127.0.0.1:{port}/api/command",
+                token="s3cret",
+                payload={"message": "abrir agenda", "source": "phone"},
+            )
+        finally:
+            runtime.close()
+
+        assert response["ok"] is False
+        assert "iniciando" in response["message"]
+
+    def test_preserves_loopback_https_when_certificate_available(self, tmp_path):
+        pytest.importorskip("cryptography", reason="HTTPS local depende de cryptography")
+
+        server, notice = start_for_settings(
+            _fake_mobile_settings(data_dir=tmp_path, https=True),
+            command_callback=lambda message, source: (True, "ok"),
+        )
+        try:
+            assert server.use_https is True
+            assert "Aviso" not in notice
+        finally:
+            server.stop()

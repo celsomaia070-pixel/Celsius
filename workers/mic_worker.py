@@ -3,15 +3,20 @@ import logging
 import os
 import queue
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import sounddevice as sd
+from numpy.typing import NDArray
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 from core.settings import get_settings
 
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
+
 # Singleton for faster-whisper model
-_whisper_model = None
+_whisper_model: "WhisperModel | None" = None
 logger = logging.getLogger(__name__)
 
 # Otimizar threads CPU
@@ -31,18 +36,18 @@ class MicWorker(QRunnable):
 
     MAX_DURATION_SECONDS = 30
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.settings = get_settings()
         self.fs = 16000
-        self.dados_audio = queue.Queue()
+        self.dados_audio: queue.Queue[NDArray[np.int16]] = queue.Queue()
         self.rodando = True
-        self._lock_stream = None
+        self._lock_stream: sd.InputStream | None = None
         self.signals = MicWorkerSignals()
-        self._start_time = None
+        self._start_time: float | None = None
         self._last_level_emit = 0.0
 
-    def _get_model(self):
+    def _get_model(self) -> "WhisperModel":
         global _whisper_model
         if _whisper_model is None:
             model_name = self.settings.whisper_model
@@ -57,7 +62,9 @@ class MicWorker(QRunnable):
             logger.info("Modelo faster-whisper carregado com sucesso")
         return _whisper_model
 
-    def callback_audio(self, indata, frames, time_info, status):
+    def callback_audio(
+        self, indata: NDArray[np.int16], frames: int, time_info: object, status: object
+    ) -> None:
         if self.rodando:
             self.dados_audio.put(indata.copy())
             now = time.time()
@@ -68,7 +75,7 @@ class MicWorker(QRunnable):
                 self._last_level_emit = now
 
     @Slot()
-    def run(self):
+    def run(self) -> None:
         gc.disable()
         lista_frames = []
         try:
@@ -169,7 +176,7 @@ class MicWorker(QRunnable):
 
             logger.info("Iniciando transcricao faster-whisper")
             t0 = time.time()
-            segments, info = model.transcribe(
+            segments, transcription_info = model.transcribe(
                 audio_float32,
                 language="pt",
                 beam_size=3,
@@ -200,7 +207,7 @@ class MicWorker(QRunnable):
         finally:
             gc.enable()
 
-    def stop(self):
+    def stop(self) -> None:
         self.rodando = False
         if self._lock_stream:
             try:
@@ -211,7 +218,7 @@ class MicWorker(QRunnable):
             self._lock_stream = None
 
 
-def preload_whisper_model():
+def preload_whisper_model() -> None:
     """Pre-load faster-whisper model in background."""
     global _whisper_model
     if _whisper_model is None:

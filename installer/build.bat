@@ -55,19 +55,19 @@ echo   Celsius - Build %BUILD_FLAVOR% / %BUILD_TARGET%
 echo ============================================================
 
 echo [1/7] Preparando ferramentas...
+"%PYTHON_EXE%" "%PROJECT_ROOT%\tools\sync_requirements.py" --check
+if errorlevel 1 exit /b 1
+"%PYTHON_EXE%" "%PROJECT_ROOT%\tools\lock_requirements.py" --check
+if errorlevel 1 exit /b 1
 "%PYTHON_EXE%" -m pip install --upgrade pip --quiet
 if errorlevel 1 exit /b 1
 "%PYTHON_EXE%" -m pip install -r "%PROJECT_ROOT%\pylock.toml"
 if errorlevel 1 exit /b 1
-"%PYTHON_EXE%" -m pip install pyinstaller ruff pytest --quiet
+"%PYTHON_EXE%" -m pip install pyinstaller -r "%PROJECT_ROOT%\requirements-dev.in" --quiet
 if errorlevel 1 exit /b 1
 
 echo [2/7] Validando codigo e testes...
 pushd "%PROJECT_ROOT%"
-"%PYTHON_EXE%" -m ruff check .
-if errorlevel 1 goto :failure_popd
-"%PYTHON_EXE%" -m pytest -q
-if errorlevel 1 goto :failure_popd
 
 echo [3/7] Executando preflight de release...
 "%PYTHON_EXE%" tools\release_preflight.py --flavor %BUILD_FLAVOR%
@@ -101,6 +101,7 @@ echo [7/7] Gerando instalador com Inno Setup...
 set "ISCC_PATH="
 if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC_PATH=C:\Program Files\Inno Setup 6\ISCC.exe"
+if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if "%ISCC_PATH%"=="" (
     echo [ERRO] Inno Setup 6 nao encontrado.
     echo O executavel foi gerado em: %DIST_DIR%\Celsius\Celsius.exe

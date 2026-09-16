@@ -14,8 +14,9 @@ from typing import Any
 class EventHub:
     """Publish Celsius state changes to connected async clients from any thread."""
 
-    def __init__(self, *, queue_size: int = 100):
+    def __init__(self, *, queue_size: int = 100, max_subscribers: int = 16):
         self.queue_size = max(1, queue_size)
+        self.max_subscribers = max(1, max_subscribers)
         self._lock = threading.Lock()
         self._next_subscriber_id = 0
         self._subscribers: dict[int, tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = {}
@@ -25,6 +26,8 @@ class EventHub:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=self.queue_size)
         with self._lock:
+            if len(self._subscribers) >= self.max_subscribers:
+                raise ConnectionError("Limite de clientes em tempo real atingido.")
             subscriber_id = self._next_subscriber_id
             self._next_subscriber_id += 1
             self._subscribers[subscriber_id] = (loop, queue)
@@ -33,6 +36,11 @@ class EventHub:
         finally:
             with self._lock:
                 self._subscribers.pop(subscriber_id, None)
+
+    @property
+    def subscriber_count(self) -> int:
+        with self._lock:
+            return len(self._subscribers)
 
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         event = {

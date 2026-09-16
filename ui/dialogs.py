@@ -1487,7 +1487,7 @@ class ConfiguracoesDialog(QDialog):
         mobile.allow_lan = self.check_mobile_lan.isChecked()
         mobile.voice_commands_enabled = self.check_mobile_voice.isChecked()
         mobile.use_https = self.check_mobile_https.isChecked()
-        mobile.host = "0.0.0.0"
+        mobile.host = "0.0.0.0"  # nosec B104 -- explicit LAN setting; server enforces HTTPS
         try:
             mobile.port = max(1024, min(65535, int(self.input_mobile_port.text().strip())))
         except ValueError:

@@ -6,8 +6,15 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-from core.json_persistence import atomic_write_json, locked_path, read_json
+from core.json_persistence import locked_path
 from core.settings import get_settings
+from core.sqlite_store import (
+    connect,
+    db_path_for,
+    init_schema,
+    migrate_inventory_json,
+    row_to_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +147,7 @@ class InventoryService:
     def __init__(self, settings=None, data_file: Path | None = None):
         self.settings = settings or get_settings()
         self.data_file = Path(data_file) if data_file else self.settings.inventory_file
+        self._db_path = db_path_for(self.data_file)
         self._items: dict[str, ItemEstoque] = {}
         self._movimentacoes: list[Movimentacao] = []
         self._lock = threading.RLock()
@@ -159,7 +167,7 @@ class InventoryService:
                 logger.warning("Listener error: %s", e)
 
     def _load(self):
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
 
     def _load_unlocked(self):
@@ -167,12 +175,14 @@ class InventoryService:
         self._movimentacoes = []
         self._load_error = None
         try:
-            raw = read_json(self.data_file, {"items": [], "movimentacoes": []})
-            for item_data in raw.get("items", []):
-                item = ItemEstoque.from_dict(item_data)
-                self._items[item.id] = item
-            for mov_data in raw.get("movimentacoes", []):
-                self._movimentacoes.append(Movimentacao.from_dict(mov_data))
+            with connect(self._db_path) as conn:
+                init_schema(conn)
+                migrate_inventory_json(self.data_file, conn)
+                for row in conn.execute("SELECT * FROM inventory_items"):
+                    item = ItemEstoque.from_dict(row_to_dict(row))
+                    self._items[item.id] = item
+                for row in conn.execute("SELECT * FROM inventory_movements ORDER BY rowid"):
+                    self._movimentacoes.append(Movimentacao.from_dict(row_to_dict(row)))
             self._file_signature = self._signature()
         except Exception as error:
             self._load_error = error
@@ -180,7 +190,7 @@ class InventoryService:
 
     def _signature(self) -> tuple[int, int] | None:
         try:
-            stat = self.data_file.stat()
+            stat = self._db_path.stat()
             return stat.st_mtime_ns, stat.st_size
         except FileNotFoundError:
             return None
@@ -188,7 +198,7 @@ class InventoryService:
     def _refresh_if_changed(self):
         if self._signature() == self._file_signature:
             return
-        with locked_path(self.data_file):
+        with locked_path(self._db_path):
             if self._signature() != self._file_signature:
                 self._load_unlocked()
 
@@ -197,11 +207,45 @@ class InventoryService:
             raise RuntimeError(
                 "O estoque nao foi salvo porque o arquivo existente esta invalido."
             ) from self._load_error
-        data = {
-            "items": [item.to_dict() for item in self._items.values()],
-            "movimentacoes": [m.to_dict() for m in self._movimentacoes[-200:]],
-        }
-        atomic_write_json(self.data_file, data)
+        with connect(self._db_path) as conn:
+            init_schema(conn)
+            conn.execute("DELETE FROM inventory_items")
+            for item in self._items.values():
+                conn.execute(
+                    "INSERT INTO inventory_items "
+                    "(id, nome, categoria, quantidade, estoque_min, estoque_max, "
+                    "localizacao, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        item.id,
+                        item.nome,
+                        item.categoria,
+                        int(item.quantidade),
+                        int(item.estoque_min),
+                        int(item.estoque_max),
+                        item.localizacao,
+                        item.created_at,
+                        item.updated_at,
+                    ),
+                )
+            conn.execute("DELETE FROM inventory_movements")
+            for movement in self._movimentacoes[-200:]:
+                conn.execute(
+                    "INSERT INTO inventory_movements "
+                    "(id, item_id, item_nome, tipo, quantidade, quantidade_anterior, "
+                    "quantidade_nova, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        movement.id,
+                        movement.item_id,
+                        movement.item_nome,
+                        movement.tipo,
+                        int(movement.quantidade),
+                        int(movement.quantidade_anterior),
+                        int(movement.quantidade_nova),
+                        movement.timestamp,
+                    ),
+                )
         self._file_signature = self._signature()
 
     def get_all_items(self) -> list[ItemEstoque]:
@@ -234,7 +278,7 @@ class InventoryService:
         estoque_min: int,
         estoque_max: int,
     ) -> ItemEstoque:
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             item_id = str(uuid.uuid4())[:8]
             item = ItemEstoque(
@@ -252,7 +296,7 @@ class InventoryService:
             return item
 
     def remover_item(self, item_id: str) -> bool:
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             if item_id in self._items:
                 del self._items[item_id]
@@ -269,7 +313,7 @@ class InventoryService:
         estoque_min: int = None,
         estoque_max: int = None,
     ) -> ItemEstoque | None:
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             item = self._items.get(item_id)
             if not item:
@@ -289,7 +333,7 @@ class InventoryService:
             return item
 
     def entrada(self, item_id: str, quantidade: int) -> Movimentacao | None:
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             item = self._items.get(item_id)
             if not item or quantidade <= 0:
@@ -313,7 +357,7 @@ class InventoryService:
             return mov
 
     def saida(self, item_id: str, quantidade: int) -> Movimentacao | None:
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             item = self._items.get(item_id)
             if not item or quantidade <= 0 or quantidade > item.quantidade:
@@ -339,7 +383,7 @@ class InventoryService:
             return mov
 
     def mover_item(self, item_id: str, nova_coluna: ColunaKanban) -> bool:
-        with self._lock, locked_path(self.data_file):
+        with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             item = self._items.get(item_id)
             if not item:

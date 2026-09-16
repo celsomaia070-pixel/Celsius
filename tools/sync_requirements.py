@@ -30,11 +30,37 @@ def _header(group: str) -> str:
     )
 
 
+#: Optional groups that provide full application features. They are merged into
+#: the compatibility requirement files so development, CI and the installer
+#: keep installing the complete runtime (``pip install celsius`` itself stays
+#: lean; use ``celsius[all]`` to restore every feature).
+APP_EXTRA_GROUPS = ("docker", "documents", "voice", "web")
+
+
+def runtime_requirements(project: dict) -> list[str]:
+    """Base dependencies plus every app feature extra, deduplicated in order."""
+    optional = project["optional-dependencies"]
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def _add(group_lines: list[str]) -> None:
+        for req in group_lines:
+            if req not in seen:
+                seen.add(req)
+                lines.append(req)
+
+    _add(project["dependencies"])
+    for name in APP_EXTRA_GROUPS:
+        if name in optional:
+            _add(optional[name])
+    return lines
+
+
 def render_files() -> dict[Path, str]:
     with PYPROJECT.open("rb") as handle:
         project = tomllib.load(handle)["project"]
 
-    runtime = "\n".join(project["dependencies"]) + "\n"
+    runtime = "\n".join(runtime_requirements(project)) + "\n"
     development = "\n".join(project["optional-dependencies"]["dev"]) + "\n"
     return {
         ROOT / "requirements.in": _header("runtime") + runtime,

@@ -12,6 +12,8 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
+from core.file_security import restrict_private_file
+
 _LOCKS_GUARD = threading.Lock()
 _PATH_LOCKS: dict[Path, threading.RLock] = {}
 
@@ -88,6 +90,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
+        restrict_private_file(path)
     except Exception:
         with suppress(FileNotFoundError):
             os.unlink(tmp_name)

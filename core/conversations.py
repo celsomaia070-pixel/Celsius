@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from core.file_security import restrict_private_file
 from core.telemetry import (
     MetricNames,
     record_metric,
@@ -63,6 +64,7 @@ class ConversationVersion:
         """Save a versioned backup, pruning old versions beyond _MAX_VERSIONS."""
         path = self.version_dir / f"v{version}.json"
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        restrict_private_file(path)
         self._prune(version)
         return path
 
@@ -446,6 +448,7 @@ class ConversationManager:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(conversation, f, ensure_ascii=False, indent=2)
         os.replace(tmp_name, path)
+        restrict_private_file(path)
 
     @staticmethod
     def _auto_title(conv: dict[str, Any]) -> str:

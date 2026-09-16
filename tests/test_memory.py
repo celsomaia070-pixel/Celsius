@@ -30,10 +30,9 @@ class TestMemoryService:
         memory_service.add("O usuario odeia brocolis")
         memory_service.add("O usuario programa em Python")
 
-        # With only 3 memories (below inject_all_memories_limit=15),
-        # all are returned regardless of query
+        # Only relevant memories are returned, even when the collection is small.
         results = memory_service.search("pizza")
-        assert len(results) == 3
+        assert results == ["O usuario gosta de pizza"]
 
         # Test with enough memories to trigger semantic search
         memory_service.clear()
@@ -41,6 +40,18 @@ class TestMemoryService:
             memory_service.add(f"Memoria numero {i} sobre assunto {chr(65 + i % 26)}")
         results = memory_service.search("Memoria numero 5")
         assert len(results) <= 10  # top_memories limit
+
+    def test_unrelated_query_does_not_load_embedding_model(self, temp_settings, monkeypatch):
+        service = MemoryService(temp_settings)
+        service._memories = [{"texto": "O usuario gosta de cafe"}]
+        service._file_signature = service._signature()
+        monkeypatch.setattr(
+            MemoryService,
+            "_model_instance",
+            property(lambda _self: pytest.fail("embedding model should stay lazy")),
+        )
+
+        assert service.search("explique energia solar") == []
 
     def test_search_empty(self, memory_service):
         results = memory_service.search("anything")

@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 from typing import Literal
@@ -12,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.file_security import restrict_private_file
 from core.json_persistence import atomic_write_json
+from core.model_catalog import DEFAULT_LLM_MODEL
 from core.modules import default_enabled_module_ids, normalize_module_ids
 
 ASSISTANT_NAME = "Celsius"
@@ -247,7 +249,7 @@ class CompanyModulesSettings(BaseSettings):
     first_setup_completed: bool = False
     module_configs: dict[str, dict] = Field(default_factory=dict)
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context: object) -> None:
         self.enabled = normalize_module_ids(self.enabled)
 
     def to_storage(self) -> dict:
@@ -262,7 +264,7 @@ class CompanyModulesSettings(BaseSettings):
                 setattr(self, field, data[field])
         self.enabled = normalize_module_ids(self.enabled)
 
-    def set_enabled(self, module_ids) -> None:
+    def set_enabled(self, module_ids: Iterable[str]) -> None:
         self.enabled = normalize_module_ids(module_ids)
 
     def is_enabled(self, module_id: str) -> bool:
@@ -286,8 +288,8 @@ class ModelSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CELSIUS_MODEL_")
 
     model_mode: str = "equilibrado"
-    default_llm_model: str = "qwen2.5-vl-7b-q4km"
-    llm_model: str = "qwen2.5-vl-7b-q4km"
+    default_llm_model: str = DEFAULT_LLM_MODEL
+    llm_model: str = DEFAULT_LLM_MODEL
     fast_llm_model: str = "qwen3-4b-q4km"
     quality_llm_model: str = "qwen3-14b-q4km"
     reasoning_llm_model: str = "deepseek-r1-distill-qwen-7b-q4km"
@@ -478,6 +480,7 @@ class SecuritySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CELSIUS_SECURITY_")
 
     sandbox_enabled: bool = True
+    sandbox_backend: Literal["local", "docker", "auto"] = "local"
     sandbox_max_memory_mb: int = 256
     sandbox_max_cpu_seconds: int = 30
     sandbox_allowed_imports: tuple[str, ...] = (
@@ -664,6 +667,13 @@ class FeatureFlags(BaseSettings):
     model_router: bool = True
 
 
+class WebSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_WEB_")
+
+    host: str = "127.0.0.1"
+    port: int = Field(default=8790, ge=1, le=65535)
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -697,6 +707,7 @@ class Settings(BaseSettings):
     mobile: MobileAccessSettings = Field(default_factory=MobileAccessSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
+    web: WebSettings = Field(default_factory=WebSettings)
 
     memorias_file: Path = Field(default_factory=lambda: _get_base_dir() / "memorias.json")
     chats_file: Path = Field(default_factory=lambda: _get_base_dir() / "chats.json")
@@ -704,7 +715,7 @@ class Settings(BaseSettings):
     audio_temp_file: Path = Field(default_factory=lambda: _get_base_dir() / "temp_kfu_voice.mp3")
     audio_mic_file: Path = Field(default_factory=lambda: _get_base_dir() / "temp_audio.wav")
 
-    def model_post_init(self, __context) -> None:
+    def model_post_init(self, __context: object) -> None:
         pass
 
     def initialize(self) -> None:
@@ -806,6 +817,10 @@ class Settings(BaseSettings):
     def fast_llm_model(self) -> str:
         return self.model.fast_llm_model
 
+    @fast_llm_model.setter
+    def fast_llm_model(self, value: str) -> None:
+        self.model.fast_llm_model = value
+
     @property
     def quality_llm_model(self) -> str:
         return self.model.quality_llm_model
@@ -817,10 +832,6 @@ class Settings(BaseSettings):
     @property
     def vision_llm_model(self) -> str:
         return self.model.vision_llm_model
-
-    @fast_llm_model.setter
-    def fast_llm_model(self, value: str) -> None:
-        self.model.fast_llm_model = value
 
     @property
     def embedding_model(self) -> str:

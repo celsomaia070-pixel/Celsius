@@ -617,3 +617,144 @@ class TestBlockedModulesSet:
             "fractions",
         ]:
             assert mod in SAFE_MODULES
+
+
+# ---------------------------------------------------------------------------
+# Docker sandbox backend (mock the docker SDK; daemon is not required here)
+# ---------------------------------------------------------------------------
+
+
+class _FakeContainer:
+    def __init__(self, output: str, status: int = 0) -> None:
+        self._output = output
+        self._status = status
+        self.removed = False
+
+    def wait(self, timeout=None) -> dict:
+        return {"StatusCode": self._status}
+
+    def logs(self, stdout=None, stderr=None) -> bytes:
+        return self._output.encode("utf-8")
+
+    def remove(self, force=False) -> None:
+        self.removed = True
+
+
+class _FakeCollection:
+    def __init__(self, container) -> None:
+        self._container = container
+        self.last_kwargs: dict = {}
+        self.command: list[str] | None = None
+        self.image: str | None = None
+
+    def run(self, image, command=None, **kwargs):
+        self.image = image
+        self.command = command
+        self.last_kwargs = kwargs
+        return self._container
+
+
+class _FakeClient:
+    def __init__(self, container) -> None:
+        self.containers = _FakeCollection(container)
+
+
+class _FakeDockerModule:
+    def __init__(self, container) -> None:
+        self._container = container
+        self.client: _FakeClient | None = None
+
+    def from_env(self, timeout=None):
+        self.client = _FakeClient(self._container)
+        return self.client
+
+
+class TestDockerSandboxExecutor:
+    def test_runs_code_in_ephemeral_container(self, monkeypatch):
+        from core.sandbox import DockerSandboxExecutor
+
+        fake = _FakeDockerModule(_FakeContainer("42"))
+        monkeypatch.setitem(sys.modules, "docker", fake)
+
+        result = DockerSandboxExecutor().execute("print(21 * 2)")
+
+        assert result.success is True
+        assert "42" in result.output
+        assert fake.client is not None
+        assert fake.client.containers.image == "python:3.12-slim"
+        assert fake.client.containers.command[0] == "python"
+        assert fake.client.containers.command[:3] == ["python", "-u", "-c"]
+        assert fake.client.containers.last_kwargs["network_disabled"] is True
+        assert fake.client.containers.last_kwargs["read_only"] is True
+
+    def test_docker_executor_still_runs_ast_validation(self, monkeypatch):
+        from core.sandbox import DockerSandboxExecutor
+
+        fake = _FakeDockerModule(_FakeContainer(""))
+        monkeypatch.setitem(sys.modules, "docker", fake)
+
+        result = DockerSandboxExecutor().execute("import os")
+
+        assert result.success is False
+        assert "Security error" in result.error
+        assert fake.client is None  # container never started
+
+    def test_container_is_removed_on_timeout(self, monkeypatch):
+        from core.sandbox import DockerSandboxExecutor
+
+        container = _FakeContainer("")
+
+        def _raise(*_args, **_kwargs):
+            raise TimeoutError("wait timed out")
+
+        container.wait = _raise  # type: ignore[method-assign]
+        fake = _FakeDockerModule(container)
+        monkeypatch.setitem(sys.modules, "docker", fake)
+
+        result = DockerSandboxExecutor(cpu_time=1).execute("print(1)")
+
+        assert result.success is False
+        assert "Timeout" in result.error
+        assert container.removed is True
+
+
+class TestSandboxBackendResolution:
+    def test_local_backend_resolution(self):
+        from core.sandbox import (
+            SANDBOX_BACKEND_LOCAL,
+            resolve_sandbox_backend,
+        )
+
+        assert resolve_sandbox_backend(SANDBOX_BACKEND_LOCAL) == SANDBOX_BACKEND_LOCAL
+
+    def test_build_local_executor(self):
+        from core.sandbox import (
+            SANDBOX_BACKEND_LOCAL,
+            SandboxedExecutor,
+            build_sandbox_executor,
+        )
+
+        executor = build_sandbox_executor(SANDBOX_BACKEND_LOCAL)
+        assert isinstance(executor, SandboxedExecutor)
+
+    def test_auto_falls_back_to_local_without_docker(self, monkeypatch):
+        from core.sandbox import (
+            SandboxedExecutor,
+            build_sandbox_executor,
+            docker_daemon_running,
+        )
+
+        monkeypatch.setattr("core.sandbox.docker_daemon_running", lambda: False)
+        executor = build_sandbox_executor("auto")
+        assert isinstance(executor, SandboxedExecutor)
+
+    def test_docker_resolution_prefers_daemon(self, monkeypatch):
+        from core.sandbox import (
+            DockerSandboxExecutor,
+            build_sandbox_executor,
+            docker_daemon_running,
+        )
+
+        monkeypatch.setattr("core.sandbox.docker_daemon_running", lambda: True)
+        executor = build_sandbox_executor("docker")
+        assert isinstance(executor, DockerSandboxExecutor)

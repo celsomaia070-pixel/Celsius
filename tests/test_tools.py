@@ -10,7 +10,9 @@ from ai.react import (
     _extract_textual_tool_call,
     _inventory_chart_arguments,
     _response_has_generated_chart,
+    _is_chart_request,
     _try_direct_business_chart,
+    _try_direct_stock_movement,
     _filtrar_ferramentas,
     _try_direct_business_report,
     loop_react,
@@ -207,6 +209,40 @@ class TestChartToolCompatibility:
 
 
 class TestBusinessDataToolAccess:
+    def test_stock_item_named_rosca_is_not_mistaken_for_chart(self):
+        assert not _is_chart_request("de baixa em 1 item tranca rosca")
+        assert _is_chart_request("gere um grafico de rosca do estoque")
+
+    def test_natural_stock_output_resolves_item_before_llm(self, monkeypatch):
+        item = type("StockItem", (), {"id": "tr1", "nome": "Tranca rosca"})()
+        inventory_service = type("InventoryService", (), {"get_all_items": lambda _self: [item]})()
+        captured = {}
+
+        def fake_execute(name, arguments, **kwargs):
+            captured.update(name=name, arguments=arguments, kwargs=kwargs)
+            return "Aprovacao solicitada"
+
+        monkeypatch.setattr("core.inventory.get_inventory_service", lambda: inventory_service)
+        monkeypatch.setattr(ai.react, "executar_ferramenta", fake_execute)
+
+        result = _try_direct_stock_movement(
+            "de saida em 1 item tranca rosca do estoque",
+            approval_scope="conversation-1",
+        )
+
+        assert result == "Aprovacao solicitada"
+        assert captured["name"] == "saida_estoque"
+        assert captured["arguments"] == {"item_id": "tr1", "quantidade": 1}
+        assert captured["kwargs"] == {
+            "require_approval": True,
+            "approval_scope": "conversation-1",
+        }
+
+    def test_unrelated_question_does_not_expose_business_database_tools(self):
+        names = {tool.nome for tool in _filtrar_ferramentas("Explique energia solar")}
+
+        assert not names
+
     def test_report_request_exposes_inventory_and_report_tools(self):
         names = {tool.nome for tool in _filtrar_ferramentas("Gere um relatorio do estoque em PDF")}
 
@@ -235,10 +271,11 @@ class TestBusinessDataToolAccess:
             return "Relatorio gerado localmente."
 
         monkeypatch.setattr(ai.react, "executar_ferramenta", fake_execute)
+        monkeypatch.setattr(ai.react, "_get_report_content_display", lambda _s, _t: "")
 
         result = _try_direct_business_report("Crie um relatorio do estoque em PDF")
 
-        assert result.startswith("Relatorio gerado localmente.")
+        assert "Relatorio gerado localmente." in result
         assert "Dados confirmados no inventory.json" in result
         assert captured["name"] == "gerar_relatorio_local"
         assert captured["arguments"]["fonte"] == "Estoque"

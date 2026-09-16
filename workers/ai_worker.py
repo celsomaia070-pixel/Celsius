@@ -153,11 +153,11 @@ class WorkerManager:
         self.pool.start(worker)
         return worker
 
-    def _cleanup_worker(self, worker: AIWorker):
+    def _cleanup_worker(self, worker: AIWorker) -> None:
         if worker in self._active_workers:
             self._active_workers.remove(worker)
 
-    def cancel_all(self):
+    def cancel_all(self) -> None:
         for worker in self._active_workers:
             worker.setAutoDelete(True)
         self.pool.clear()

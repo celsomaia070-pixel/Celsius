@@ -250,6 +250,7 @@ def main():
     from core.container import get_container, reset_container
     from core.llama_cpp import start_llama_server, stop_llama_server
     from core.logging_config import setup_logging
+    from core.mobile_access import ensure_mobile_token, get_mobile_runtime, start_for_settings
     from core.settings import get_feature_flags, get_settings
     from core.telemetry import init_telemetry, shutdown_telemetry
     from ui.window import ModernChatWindow
@@ -299,6 +300,33 @@ def main():
 
     get_container()
     features = get_feature_flags()
+
+    # Start the mobile access early so the phone link opens while the model
+    # is still loading. Commands are answered with a "still starting" notice
+    # until the main window is created and adopts the shared server.
+    if settings.mobile.enabled:
+        runtime = get_mobile_runtime()
+        token = ensure_mobile_token(settings.mobile.pairing_token)
+        settings.mobile.pairing_token = token
+        with contextlib.suppress(OSError):
+            settings.save_local_preferences()
+        try:
+            server, _https_warning = start_for_settings(
+                settings,
+                command_callback=runtime.command,
+                voice_command_callback=runtime.voice,
+            )
+            runtime.attach(server)
+            update_startup_status("Acesso pelo celular disponivel.")
+            logger.info("Acesso pelo celular disponivel durante a inicializacao")
+        except Exception as exc:
+            logger.warning(
+                "Nao foi possivel iniciar o acesso movel durante a inicializacao: %s", exc
+            )
+
+    def _stop_early_mobile() -> None:
+        with contextlib.suppress(Exception):
+            get_mobile_runtime().close()
 
     # Log hardware observations (informational only — never overrides user model)
     if settings.hardware.auto_detect:
@@ -372,6 +400,7 @@ def main():
                 QMessageBox.Yes | QMessageBox.No,
             )
             if answer != QMessageBox.Yes:
+                _stop_early_mobile()
                 startup_progress.close()
                 return 1
             update_startup_status("Preparando download do modelo...")
@@ -389,6 +418,7 @@ def main():
             n_batch=settings.model.n_batch,
             n_threads=settings.model.n_threads,
         ):
+            _stop_early_mobile()
             startup_progress.close()
             QMessageBox.critical(
                 None,
@@ -398,6 +428,7 @@ def main():
             )
             return 1
     except FileNotFoundError as e:
+        _stop_early_mobile()
         startup_progress.close()
         QMessageBox.critical(
             None,
@@ -425,6 +456,7 @@ def main():
     app.processEvents()
 
     def _safe_shutdown():
+        _stop_early_mobile()
         if web_api_server is not None:
             with contextlib.suppress(Exception):
                 web_api_server.stop()

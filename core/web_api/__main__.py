@@ -35,7 +35,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Executa a API local do Celsius.")
     parser.add_argument("--host", default=None)
-    parser.add_argument("--port", type=int, default=8790)
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument(
         "--allow-lan",
         action="store_true",
@@ -48,17 +48,20 @@ def main() -> int:
     )
     settings = get_settings()
     args = parser.parse_args()
+    args.port = args.port if args.port is not None else settings.web.port
+    if not 1 <= args.port <= 65535:
+        parser.error("A porta deve estar entre 1 e 65535.")
     configured_lan = bool(settings.mobile.enabled and settings.mobile.allow_lan)
     # Binding all interfaces is allowed only after the explicit LAN checks below.
     host = args.host or (
-        "0.0.0.0" if configured_lan else "127.0.0.1"  # nosec B104
+        "0.0.0.0" if configured_lan else settings.web.host  # nosec B104
     )
     if not _is_loopback(host) and not (args.allow_lan or configured_lan):
         parser.error("Use --allow-lan para expor a API fora deste computador.")
     if not _is_loopback(host) and args.http:
         parser.error("HTTP so e permitido em loopback. A rede local exige HTTPS.")
 
-    use_https = bool(not _is_loopback(host) and settings.mobile.use_https and not args.http)
+    use_https = not _is_loopback(host)
     cert_file = key_file = None
     if use_https:
         cert_file, key_file = ensure_mobile_certificate(
@@ -71,7 +74,9 @@ def main() -> int:
 
     scheme = "https" if use_https else "http"
     display_host = get_lan_ip() if host in {"0.0.0.0", "::"} else host  # nosec B104
-    print(f"Celsius Local API: {scheme}://{display_host}:{args.port}/api/docs")
+    print(f"Celsius Web: {scheme}://{display_host}:{args.port}/app")
+    if not use_https:
+        print(f"Documentacao da API: {scheme}://{display_host}:{args.port}/api/docs")
     print("Use o botao de pareamento no Celsius para autorizar outro dispositivo.")
     application = create_app(
         settings=settings,

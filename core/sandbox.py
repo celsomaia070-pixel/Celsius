@@ -849,3 +849,170 @@ class SandboxedExecutor:
                     watcher.join(timeout=1)
                 metrics.inc(MetricNames.WORKER_JOBS_TOTAL)
                 metrics.observe(MetricNames.WORKER_JOB_DURATION_SECONDS, elapsed)
+
+
+# ── Docker backend (optional) ────────────────────────────────
+
+SANDBOX_BACKEND_LOCAL = "local"
+SANDBOX_BACKEND_DOCKER = "docker"
+
+
+def docker_available() -> bool:
+    """Report whether the optional ``docker`` SDK is importable."""
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("docker") is not None
+    except ImportError:
+        return False
+
+
+def docker_daemon_running() -> bool:
+    """Return True when the Docker SDK is present and the daemon responds."""
+    if not docker_available():
+        return False
+    try:
+        import docker
+
+        socket_timeout = 2.0
+        client = docker.from_env(timeout=socket_timeout)
+        return bool(client.ping())
+    except Exception:
+        return False
+
+
+def resolve_sandbox_backend(backend: str = "auto") -> str:
+    """Resolve a backend name to a usable one, falling back to the local sandbox."""
+    if backend == SANDBOX_BACKEND_DOCKER and docker_daemon_running():
+        return SANDBOX_BACKEND_DOCKER
+    return SANDBOX_BACKEND_LOCAL
+
+
+def build_sandbox_executor(
+    backend: str = "auto",
+    cpu_time: int = 30,
+    memory_mb: int = 256,
+    max_output: int = 50_000,
+):
+    """Create the best available sandbox executor for *backend*.
+
+    ``auto`` prefers Docker when the daemon is running and falls back to the
+    hardened local subprocess sandbox otherwise.
+    """
+    resolved = resolve_sandbox_backend(backend)
+    if resolved == SANDBOX_BACKEND_DOCKER:
+        return DockerSandboxExecutor(
+            cpu_time=cpu_time,
+            memory_mb=memory_mb,
+            max_output=max_output,
+        )
+    return SandboxedExecutor(cpu_time=cpu_time, memory_mb=memory_mb, max_output=max_output)
+
+
+class DockerSandboxExecutor:
+    """Run Python code in an ephemeral, isolated Docker container.
+
+    Requires the optional ``docker`` SDK (extra ``celsius[docker]``) and a
+    running Docker daemon. The container is read-only, runs without network
+    access and without privileges, and is removed after execution.
+
+    Usage::
+
+        executor = DockerSandboxExecutor(cpu_time=30, memory_mb=256)
+        result = executor.execute("print(1 + 2)")
+    """
+
+    def __init__(
+        self,
+        image: str = "python:3.12-slim",
+        cpu_time: int = 30,
+        memory_mb: int = 256,
+        max_output: int = 50_000,
+        network_disabled: bool = True,
+    ) -> None:
+        self.image = image
+        self.cpu_time = cpu_time
+        self.memory_mb = memory_mb
+        self.max_output = max_output
+        self.network_disabled = network_disabled
+
+    def execute(self, code: str) -> ExecutionResult:
+        """Run *code* inside an ephemeral container and return an ExecutionResult."""
+        metrics = get_metrics()
+
+        with trace_span("sandbox.docker.execute", {"sandbox.cpu_time": self.cpu_time}):
+            error = validate_code(code)
+            if error:
+                metrics.inc(MetricNames.WORKER_ERRORS_TOTAL, error_type="validation")
+                logger.warning("Code validation failed: %s", error)
+                return ExecutionResult(error=f"Security error: {error}", success=False)
+
+            t0 = time.perf_counter()
+            try:
+                result = self._run_in_container(code)
+            except Exception as exc:
+                elapsed = time.perf_counter() - t0
+                metrics.inc(MetricNames.WORKER_ERRORS_TOTAL, error_type="docker")
+                logger.warning("Docker sandbox execution failed: %s", exc)
+                return ExecutionResult(
+                    error=f"Docker execution error: {exc}",
+                    execution_time=elapsed,
+                    success=False,
+                )
+            elapsed = time.perf_counter() - t0
+            result.execution_time = elapsed
+            metrics.inc(MetricNames.WORKER_JOBS_TOTAL, status="ok" if result.success else "error")
+            metrics.observe(MetricNames.WORKER_JOB_DURATION_SECONDS, elapsed)
+            return result
+
+    def _run_in_container(self, code: str) -> ExecutionResult:
+        import contextlib
+
+        import docker  # optional SDK; see extra "celsius[docker]"
+
+        wrapper = build_restricted_wrapper(code)
+        command = ["python", "-u", "-c", wrapper]
+        mem_limit = f"{self.memory_mb}m"
+        cpu_period = 100_000
+        cpu_quota = max(cpu_period, self.cpu_time * cpu_period)
+
+        client = docker.from_env()
+        t0 = time.perf_counter()
+        container = client.containers.run(
+            self.image,
+            command=command,
+            detach=True,
+            network_disabled=self.network_disabled,
+            mem_limit=mem_limit,
+            cpu_period=cpu_period,
+            cpu_quota=cpu_quota,
+            read_only=True,
+            tmpfs={"/tmp": "size=16m"},
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges"],
+            auto_remove=False,
+        )
+        try:
+            try:
+                status = container.wait(timeout=self.cpu_time + 10)
+                stdout = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+            except Exception as exc:
+                stdout = ""
+                status = {"StatusCode": -1}
+                ans = f"Timeout: execution exceeded time limit. ({exc})"
+            else:
+                ans = ""
+            elapsed = time.perf_counter() - t0
+            return ExecutionResult(
+                output=stdout[: self.max_output],
+                error=ans[: self.max_output],
+                success=status.get("StatusCode") == 0,
+                execution_time=elapsed,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                container.remove(force=True)
+
+    def available(self) -> bool:
+        """Report whether the Docker daemon is reachable."""
+        return docker_daemon_running()

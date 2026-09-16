@@ -2,7 +2,7 @@
 
 Implements:
 - Semantic chunking (respects document structure)
-- Dense vector search via ChromaDB
+- Dense vector search via a local SQLite vector store
 - BM25 keyword search via rank-bm25
 - Hybrid scoring: configurable weighted combination of BM25 + dense
 - Cross-encoder re-ranking using sentence-transformers CrossEncoder
@@ -12,9 +12,9 @@ Implements:
 
 import re
 import threading
+from pathlib import Path
 from typing import Any
 
-import chromadb
 import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
@@ -22,6 +22,7 @@ from sentence_transformers import CrossEncoder
 from core.circuit_breaker import get_circuit_breaker
 from core.embeddings import create_sentence_transformer
 from core.settings import get_settings
+from core.vector_store import LocalVectorCollection
 
 try:
     from core.logging_config import get_logger
@@ -32,7 +33,7 @@ except Exception:
 
     logger = logging.getLogger(__name__)
 
-# Circuit breaker for RAG search (ChromaDB + embeddings)
+# Circuit breaker for RAG search (local vectors + embeddings)
 _rag_search_cb = get_circuit_breaker("rag:search", failure_threshold=5, recovery_timeout=60)
 _rag_index_cb = get_circuit_breaker("rag:index", failure_threshold=3, recovery_timeout=120)
 
@@ -43,7 +44,7 @@ def _tokenize_for_bm25(text: str) -> list[str]:
 
 
 class RAGService:
-    """Thread-safe Hybrid RAG service with ChromaDB, BM25, and cross-encoder re-ranking."""
+    """Thread-safe hybrid RAG with local vectors, BM25 and cross-encoder reranking."""
 
     CHUNK_SIZE = 600
     CHUNK_OVERLAP = 80
@@ -55,9 +56,10 @@ class RAGService:
         self.settings = settings or get_settings()
         self._model: Any | None = None
         self._cross_encoder: CrossEncoder | None = None
-        self._client: chromadb.PersistentClient | None = None
-        self._collection: chromadb.Collection | None = None
+        self._client: LocalVectorCollection | None = None
+        self._collection: LocalVectorCollection | None = None
         self._lock = threading.RLock()
+        self._legacy_rebuild_checked = False
 
         # BM25 state
         self._bm25: BM25Okapi | None = None
@@ -126,12 +128,8 @@ class RAGService:
         with self._lock:
             if self._client is None:
                 data_dir = getattr(self.settings, "data_dir", self.settings.base_dir)
-                persist_dir = data_dir / "chroma_db"
-                self._client = chromadb.PersistentClient(path=str(persist_dir))
-                self._collection = self._client.get_or_create_collection(
-                    name="documentos",
-                    metadata={"hnsw:space": "cosine"},
-                )
+                self._client = LocalVectorCollection(data_dir / "rag_vectors.sqlite3")
+                self._collection = self._client
                 self._bm25_dirty = True
 
     @property
@@ -166,6 +164,44 @@ class RAGService:
         except Exception as e:
             logger.warning("bm25_rebuild_failed error=%s", e)
             self._bm25 = None
+
+    def _rebuild_managed_documents_once(self) -> None:
+        """Rebuild the derived index from source files after the Chroma migration."""
+        if self._legacy_rebuild_checked or self.collection.count() > 0:
+            return
+        self._legacy_rebuild_checked = True
+        try:
+            from core.business_records import BusinessRecordService
+            from core.modules import MODULE_KNOWLEDGE
+            from processors import processar_arquivo
+
+            records = BusinessRecordService(settings=self.settings).list_by_module(MODULE_KNOWLEDGE)
+            storage_dir = Path(self.settings.data_dir) / "documents" / "files"
+            for record in records:
+                stored_name = record.fields.get("arquivo_local", "")
+                original_name = record.fields.get("nome_arquivo", record.title)
+                source_path = (storage_dir / stored_name).resolve()
+                if not stored_name or source_path.parent != storage_dir.resolve():
+                    continue
+                if not source_path.is_file():
+                    continue
+                text = str(processar_arquivo(str(source_path), base_dir=source_path.parent)).strip()
+                if len(text) < 10 or text.lower().startswith(("erro", "formato '")):
+                    continue
+                self.index_document(
+                    text,
+                    original_name,
+                    {
+                        "record_id": record.id,
+                        "category": record.fields.get("categoria", ""),
+                        "document_type": record.fields.get("tipo", "Outro"),
+                        "origin": record.fields.get("origem", ""),
+                    },
+                )
+            if records:
+                logger.info("local_vector_index_rebuilt document_count=%s", len(records))
+        except Exception as exc:
+            logger.warning("local_vector_index_rebuild_failed error=%s", exc)
 
     def _chunk_text_semantic(self, text: str) -> list[str]:
         """Semantic chunking that respects document structure.
@@ -260,7 +296,7 @@ class RAGService:
         query: str,
         n_results: int,
     ) -> tuple[list[str], list[str], list[float], list[dict[str, Any]]]:
-        """Run dense vector search against ChromaDB.
+        """Run dense vector search against the local vector store.
 
         Returns (doc_ids, documents, distances).
         """
@@ -473,6 +509,7 @@ class RAGService:
         with self._lock:
             top_k = top_k or self.TOP_K
 
+            self._rebuild_managed_documents_once()
             if self.collection.count() == 0:
                 return []
 

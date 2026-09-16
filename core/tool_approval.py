@@ -11,7 +11,32 @@ from dataclasses import dataclass
 from typing import Any
 
 APPROVAL_REQUIRED_PREFIX = "__CELSIUS_APPROVAL_REQUIRED__"
-SENSITIVE_TOOLS = frozenset({"executar_codigo", "navegar_web", "remover_documento"})
+
+# Every tool that crosses the local trust boundary or changes persisted data
+# requires an explicit, one-time user confirmation.
+SENSITIVE_TOOLS = frozenset(
+    {
+        "abrir_no_navegador",
+        "adicionar_item_estoque",
+        "cadastrar_cliente",
+        "cadastrar_fornecedor",
+        "cadastrar_orcamento",
+        "cadastrar_processo_prazo",
+        "cadastrar_produto_servico",
+        "criar_compromisso_agenda",
+        "entrada_estoque",
+        "executar_codigo",
+        "indexar_documento",
+        "marcar_lembrete_agenda",
+        "navegar_web",
+        "pesquisar_google",
+        "pesquisar_noticias",
+        "pesquisar_web",
+        "remover_documento",
+        "saida_estoque",
+        "salvar_memoria",
+    }
+)
 _COMMAND = re.compile(r"^\s*(AUTORIZAR|CANCELAR)\s+([A-Z0-9]{6,12})\s*$", re.IGNORECASE)
 
 
@@ -21,6 +46,7 @@ class PendingToolApproval:
     tool: str
     arguments: dict[str, Any]
     created_at: float
+    scope: str = ""
 
 
 class ToolApprovalStore:
@@ -29,11 +55,23 @@ class ToolApprovalStore:
         self._pending: dict[str, PendingToolApproval] = {}
         self._lock = threading.RLock()
 
-    def request(self, tool: str, arguments: dict[str, Any]) -> PendingToolApproval:
+    def request(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        scope: str = "",
+    ) -> PendingToolApproval:
         with self._lock:
             self._purge()
             code = secrets.token_hex(4).upper()
-            request = PendingToolApproval(code, tool, dict(arguments), time.monotonic())
+            request = PendingToolApproval(
+                code,
+                tool,
+                dict(arguments),
+                time.monotonic(),
+                scope.strip(),
+            )
             self._pending[code] = request
             return request
 
@@ -43,13 +81,18 @@ class ToolApprovalStore:
             return None
         return match.group(1).upper(), match.group(2).upper()
 
-    def consume(self, code: str) -> PendingToolApproval | None:
+    def consume(self, code: str, *, scope: str = "") -> PendingToolApproval | None:
         with self._lock:
             self._purge()
+            pending = self._pending.get(code.upper())
+            if pending is None:
+                return None
+            if pending.scope and pending.scope != scope.strip():
+                return None
             return self._pending.pop(code.upper(), None)
 
-    def cancel(self, code: str) -> bool:
-        return self.consume(code) is not None
+    def cancel(self, code: str, *, scope: str = "") -> bool:
+        return self.consume(code, scope=scope) is not None
 
     def _purge(self) -> None:
         cutoff = time.monotonic() - self.ttl_seconds

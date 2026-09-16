@@ -36,17 +36,23 @@ dependencies = [
     "pydantic>=2.5,<3.0",
     "pydantic-settings>=2.1,<3.0",
     "python-dotenv>=1.0,<2.0",
-    "duckduckgo-search>=8.1,<9.0",
-    "feedparser>=6.0,<7.0",
-    "playwright>=1.40,<2.0",
-    "SpeechRecognition>=3.10,<4.0",
-    "sounddevice>=0.4,<1.0",
     "scipy>=1.10,<2.0",
     "edge-tts>=7.2,<8.0",
-    "pygame-ce>=2.2,<3.0",
-    "pydub>=0.25,<1.0",
-    "openai-whisper>=20230918",
-    "faster-whisper>=1.0,<2.0",
+    "rank-bm25>=0.2,<1.0",
+]
+
+# Capacidades opcionais. O nucleo (``pip install celsius``) fica leve; para
+# restaurar o conjunto completo use ``pip install celsius[all]``. Os scripts de
+# instalacao (requirements.in/requirements.txt) continuam gerando o conjunto
+# completo para manter desenvolvimento, CI e instalador inalterados.
+# Importante: os modulos que usam essas dependencias as importam de forma
+# lazy (veja core/extras.py e os processors), entao a instalacao base nao
+# quebra quando um binario extra esta ausente.
+[project.optional-dependencies]
+docker = [
+    "docker>=7.0,<10.0",
+]
+documents = [
     "pypdf>=6.15,<7.0",
     "pdfplumber>=0.11,<1.0",
     "pypdfium2>=4.30,<6.0",
@@ -54,18 +60,57 @@ dependencies = [
     "onnxruntime>=1.19,<2.0",
     "python-docx>=0.8,<2.0",
     "Pillow>=12.3,<13.0",
-    "qrcode[pil]>=7.4,<9.0",
     "odfpy>=1.4,<2.0",
     "fpdf2>=2.7,<4.0",
     "matplotlib>=3.8,<4.0",
-    "chromadb>=1.5,<2.0",
-    "rank-bm25>=0.2,<1.0",
+]
+voice = [
+    "openai-whisper>=20230918",
+    "faster-whisper>=1.0,<2.0",
+    "SpeechRecognition>=3.10,<4.0",
+    "sounddevice>=0.4,<1.0",
+    "pygame-ce>=2.2,<3.0",
+    "pydub>=0.25,<1.0",
+]
+web = [
+    "playwright>=1.40,<2.0",
+    "duckduckgo-search>=8.1,<9.0",
+    "feedparser>=6.0,<7.0",
+    "qrcode[pil]>=7.4,<9.0",
     "cryptography>=50.0,<51.0",
     "fastapi>=0.139,<1.0",
     "uvicorn>=0.49,<1.0",
+    "PyJWT>=2.8,<3.0",
+    "passlib[bcrypt]>=1.7,<2.0",
 ]
-
-[project.optional-dependencies]
+all = [
+    "docker>=7.0,<10.0",
+    "pypdf>=6.15,<7.0",
+    "pdfplumber>=0.11,<1.0",
+    "pypdfium2>=4.30,<6.0",
+    "rapidocr>=3.8,<4.0",
+    "onnxruntime>=1.19,<2.0",
+    "python-docx>=0.8,<2.0",
+    "Pillow>=12.3,<13.0",
+    "odfpy>=1.4,<2.0",
+    "fpdf2>=2.7,<4.0",
+    "matplotlib>=3.8,<4.0",
+    "openai-whisper>=20230918",
+    "faster-whisper>=1.0,<2.0",
+    "SpeechRecognition>=3.10,<4.0",
+    "sounddevice>=0.4,<1.0",
+    "pygame-ce>=2.2,<3.0",
+    "pydub>=0.25,<1.0",
+    "playwright>=1.40,<2.0",
+    "duckduckgo-search>=8.1,<9.0",
+    "feedparser>=6.0,<7.0",
+    "qrcode[pil]>=7.4,<9.0",
+    "cryptography>=50.0,<51.0",
+    "fastapi>=0.139,<1.0",
+    "uvicorn>=0.49,<1.0",
+    "PyJWT>=2.8,<3.0",
+    "passlib[bcrypt]>=1.7,<2.0",
+]
 dev = [
     "pytest>=9.0.3,<10.0",
     "pytest-qt>=4.2,<5.0",
@@ -128,7 +173,6 @@ markers = [
 filterwarnings = [
     "ignore:'asyncio.get_event_loop_policy'.*:DeprecationWarning:pytest_asyncio.plugin",
     "ignore:'asyncio.set_event_loop_policy'.*:DeprecationWarning:pytest_asyncio.plugin",
-    "ignore:'asyncio.iscoroutinefunction'.*:DeprecationWarning:chromadb.telemetry.opentelemetry",
 ]
 
 [tool.ruff]
@@ -160,6 +204,10 @@ ignore = [
 "tests/*" = ["S101", "T201", "F401", "F841", "I001", "E702", "E731", "SIM102"]
 "ui/**/*.py" = ["N802"]
 "ui/theme/tokens.py" = ["N815"]
+"core/web_api/auth_users.py" = ["B008"]
+"core/web_api/chat_history.py" = ["B008"]
+"core/web_api/admin_dashboard.py" = ["B008"]
+"core/web_api/notifications_api.py" = ["B008"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -168,7 +216,7 @@ skip-magic-trailing-comma = false
 line-ending = "lf"
 
 [tool.mypy]
-python_version = "3.10"
+# Infer the Python version from the interpreter used for this check.
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -193,10 +241,6 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "llama_cpp.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "chromadb.*"
 ignore_missing_imports = true
 
 [tool.pre-commit]

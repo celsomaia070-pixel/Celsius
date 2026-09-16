@@ -80,6 +80,18 @@ Ao adicionar uma funcionalidade:
 `requirements.in`, `requirements.txt` e `requirements-dev.in` existem para
 compatibilidade com instaladores e sao gerados automaticamente.
 
+As dependencias de runtime sao separadas por extras opcionais em
+`[project.optional-dependencies]`:
+
+- `documents`, `voice`, `web`, `docker`: funcionalidades opcionais.
+- `all`: union de todas acima.
+- `dev`, `test`, `security`: ferramentas de desenvolvimento.
+
+A instalacao base (`pip install celsius`) fica leve; os arquivos
+`requirements.in`/`requirements.txt` gerados continuam incluindo o conjunto
+completo (base + extras de aplicacao), de modo que desenvolvimento, CI e o
+instalador se comportam como antes.
+
 Ao adicionar ou atualizar uma dependencia:
 
 ```powershell
@@ -87,7 +99,18 @@ python tools\sync_requirements.py
 python tools\sync_requirements.py --check
 ```
 
-O CI falha quando esses arquivos ficam diferentes do `pyproject.toml`.
+Dependencias opcionais sao importadas de forma lazy pelos modulos que as usam.
+Ao criar um extra novo, inclua suas sondas em `core/extras.py` para que a UI
+possa orientar o usuario a instalar o grupo faltante.
+
+O CI falha quando esses arquivos ficam diferentes do `pyproject.toml`, e quando
+o `pylock.toml` (bloqueio PEP 751) estiver desatualizado. Após mudar o
+`requirements.in`, regenere o lock com:
+
+```powershell
+python tools\lock_requirements.py
+python tools\lock_requirements.py --check
+```
 
 ## Git
 
@@ -107,7 +130,7 @@ Nao commite:
 - `dist/`
 - `resources/`
 - `cache/`
-- `chroma_db/`
+- `rag_vectors.sqlite3*`
 - `conversations/`
 - `logs/`
 - `keys/`

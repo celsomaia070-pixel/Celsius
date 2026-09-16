@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -48,8 +49,32 @@ def _check(condition: bool, message: str, errors: list[str]) -> None:
         errors.append(message)
 
 
-def run(flavor: str) -> int:
+def run_quality_checks() -> bool:
+    commands = (
+        ["tools/sync_requirements.py", "--check"],
+        ["tools/lock_requirements.py", "--check"],
+        ["-m", "ruff", "check", "."],
+        ["-m", "ruff", "format", "--check", "."],
+        ["-m", "pytest", "-q"],
+    )
+    for command in commands:
+        print(f"Validando: {' '.join(command)}", flush=True)
+        if subprocess.run([sys.executable, *command], cwd=ROOT, check=False).returncode:
+            return False
+    advisory = ["-m", "mypy", "core", "workers", "ai", "--ignore-missing-imports"]
+    print(f"Validando (nao bloqueante): {' '.join(advisory)}", flush=True)
+    if subprocess.run([sys.executable, *advisory], cwd=ROOT, check=False).returncode:
+        print("[AVISO] mypy encontrou erros. A release segue, mas corrija a tipagem.")
+    return True
+
+
+def run(flavor: str, *, quality: bool = True) -> int:
     errors: list[str] = []
+    if quality and not run_quality_checks():
+        print("[ERRO] Qualidade reprovada. Release bloqueada.")
+        return 1
+    if not quality:
+        print("[AVISO] Apenas ambiente: este resultado NAO aprova uma release.")
 
     for relative in REQUIRED_PROJECT_FILES:
         path = ROOT / relative
@@ -115,7 +140,12 @@ def run(flavor: str) -> int:
         "Spec configura o caminho nativo do llama_cpp no executavel",
         errors,
     )
-    forbidden_data = ("inventory.json", "memorias.json", "chroma_db")
+    forbidden_data = (
+        "inventory.json",
+        "memorias.json",
+        "chroma_db",
+        "rag_vectors.sqlite3",
+    )
     for forbidden in forbidden_data:
         _check(
             forbidden not in spec_text,
@@ -133,6 +163,7 @@ def run(flavor: str) -> int:
     result = {
         "ok": not errors,
         "flavor": flavor,
+        "quality_checked": quality,
         "errors": errors,
         "data_dir": str(settings.data_dir),
         "model": settings.model.llm_model,
@@ -144,8 +175,13 @@ def run(flavor: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--flavor", choices=("thin", "offline"), default="thin")
+    parser.add_argument(
+        "--environment-only",
+        action="store_true",
+        help="Inspeciona arquivos e dependencias; nao aprova release.",
+    )
     args = parser.parse_args()
-    return run(args.flavor)
+    return run(args.flavor, quality=not args.environment_only)
 
 
 if __name__ == "__main__":

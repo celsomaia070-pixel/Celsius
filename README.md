@@ -21,7 +21,7 @@ quando disponivel e fallback para CPU.
 - Entrada por voz com Whisper.
 - Saida por voz com `edge-tts`.
 - Anexos de PDF, DOCX, ODT, ODS, ODP, imagens e audio.
-- RAG hibrido com ChromaDB, embeddings e BM25.
+- RAG hibrido local com indice vetorial SQLite, embeddings e BM25.
 - Memoria semantica de longo prazo.
 - Pesquisa e navegacao web.
 - Execucao controlada de codigo em sandbox.
