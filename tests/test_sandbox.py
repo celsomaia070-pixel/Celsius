@@ -686,6 +686,40 @@ class TestDockerSandboxExecutor:
         assert fake.client.containers.command[:3] == ["python", "-u", "-c"]
         assert fake.client.containers.last_kwargs["network_disabled"] is True
         assert fake.client.containers.last_kwargs["read_only"] is True
+        assert fake.client.containers.last_kwargs["pids_limit"] == 64
+        assert fake.client.containers.last_kwargs["tmpfs"]["/tmp"] == "size=16m"
+        assert fake.client.containers.last_kwargs["tmpfs"]["/dev/shm"] == "size=64m"
+        assert "size" in fake.client.containers.last_kwargs["storage_opt"]
+
+    def test_docker_image_digest_pinned(self, monkeypatch):
+        from core.sandbox import DockerSandboxExecutor
+
+        fake = _FakeDockerModule(_FakeContainer("42"))
+        monkeypatch.setitem(sys.modules, "docker", fake)
+
+        DockerSandboxExecutor(image_digest="sha256:abc123").execute("print(1)")
+
+        assert fake.client is not None
+        assert fake.client.containers.image == "python:3.12-slim@sha256:abc123"
+
+    def test_docker_disk_and_pids_limits_configurable(self, monkeypatch):
+        from core.sandbox import DockerSandboxExecutor
+
+        fake = _FakeDockerModule(_FakeContainer("42"))
+        monkeypatch.setitem(sys.modules, "docker", fake)
+
+        DockerSandboxExecutor(
+            pids_limit=8,
+            disk_mb=32,
+            shm_mb=16,
+            image_digest="sha256:def456",
+        ).execute("print(1)")
+
+        kwargs = fake.client.containers.last_kwargs  # type: ignore[union-attr]
+        assert kwargs["pids_limit"] == 8
+        assert kwargs["tmpfs"]["/tmp"] == "size=32m"
+        assert kwargs["tmpfs"]["/dev/shm"] == "size=16m"
+        assert fake.client.containers.image == "python:3.12-slim@sha256:def456"  # type: ignore[union-attr]
 
     def test_docker_executor_still_runs_ast_validation(self, monkeypatch):
         from core.sandbox import DockerSandboxExecutor

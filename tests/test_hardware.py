@@ -160,7 +160,7 @@ class TestModeDetermination:
 
 class TestModelRequirements:
     def test_model_requirements_exist(self):
-        for model_id in ["qwen3-8b-q4km", "qwen3-4b-q4km", "qwen2.5-vl-7b-q4km"]:
+        for model_id in ["qwen3-8b-q4km", "gemma3-4b-q4km", "qwen2.5-vl-7b-q4km"]:
             reqs = get_model_requirements(model_id)
             assert reqs is not None
             assert reqs.min_ram_gb > 0
@@ -168,7 +168,7 @@ class TestModelRequirements:
 
     def test_7b_needs_more_ram_than_3b(self):
         reqs_8b = get_model_requirements("qwen3-8b-q4km")
-        reqs_4b = get_model_requirements("qwen3-4b-q4km")
+        reqs_4b = get_model_requirements("gemma3-4b-q4km")
         assert reqs_8b.min_ram_gb > reqs_4b.min_ram_gb
 
 
@@ -187,7 +187,7 @@ class TestEstimateTokensPerSec:
         gpu = GpuInfo(name="Nenhum", vram_mb=0, api="none")
         profile = HardwareProfile(cpu=cpu, ram_mb=16384, gpu=gpu, mode=PerformanceMode.LEVE)
 
-        tps = estimate_tokens_per_sec("qwen3-4b-q4km", profile)
+        tps = estimate_tokens_per_sec("gemma3-4b-q4km", profile)
         assert tps > 0
         assert tps >= 3  # Should be usable on CPU
 

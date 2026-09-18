@@ -121,7 +121,7 @@ def test_document_content_is_not_elevated_to_system_prompt(monkeypatch):
 
     class FakeManager:
         def route_and_invoke(self, *_args, **_kwargs):
-            return "qwen3-4b-q4km", FakeLlama()
+            return "gemma3-4b-q4km", FakeLlama()
 
         def get_current_complexity(self):
             return "simple"

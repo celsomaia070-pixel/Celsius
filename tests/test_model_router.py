@@ -87,7 +87,6 @@ class TestModelProfiles:
 
     def test_known_models(self):
         for mid in [
-            "qwen3-4b-q4km",
             "qwen3-8b-q4km",
             "qwen2.5-vl-7b-q4km",
             "qwen2.5-coder-7b-q5km",
@@ -104,8 +103,8 @@ class TestModelProfiles:
         assert get_model_profile("nonexistent-model") is None
 
     def test_fast_model_is_fastest(self):
-        fast = MODEL_PROFILES["qwen3-4b-q4km"]
-        assert fast.speed_rating == 1.0
+        fast = MODEL_PROFILES["gemma3-4b-q4km"]
+        assert fast.speed_rating == 0.9
 
     def test_vision_models_support_vision(self):
         for mid in ["qwen2.5-vl-3b-q4km", "qwen2.5-vl-7b-q4km", "gemma3-4b-q4km"]:
@@ -233,7 +232,7 @@ class TestModelRouterSimpleQueries:
         router = ModelRouter()
         decision = router.route("hello")
         assert decision.complexity == Complexity.SIMPLE
-        assert decision.model_id == "qwen3-4b-q4km"
+        assert decision.model_id == "gemma3-4b-q4km"
 
     def test_short_question_simple(self):
         router = ModelRouter()
@@ -341,7 +340,7 @@ class TestModelRouterDecisionDetails:
         monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         simple = router.route("hi")
-        assert simple.model_id == "qwen3-4b-q4km"
+        assert simple.model_id == "gemma3-4b-q4km"
 
         complex_q = router.route(
             "criar codigo python detalhado com analise, relatorio completo, "
@@ -391,7 +390,7 @@ class TestModelRouterGetModelForQuery:
         monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         model = router.get_model_for_query("oi")
-        assert model == "qwen3-4b-q4km"
+        assert model == "gemma3-4b-q4km"
 
 
 class TestModelRouterCascade:

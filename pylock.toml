@@ -1,4 +1,4 @@
-# Celsius requirements.in sha256: 9d07d8cc106ad88396bfc6a1cb7223ae7879fca63900e3f86de56e9825ca8dbd
+# Celsius requirements.in sha256: 44843935c92691f0740fb8190b78fd768ba0de9844ce936b0b8a1b465b2f2396
 lock-version = "1.0"
 created-by = "pip"
 
@@ -300,6 +300,17 @@ url = "https://files.pythonhosted.org/packages/8c/2b/a8cb687b92a2690d2ad171f0c2f
 sha256 = "361fe48ce7ef613adbe30f664e3765dd71029c6cb57427279eff8ad6df2eb211"
 
 [[packages]]
+name = "et-xmlfile"
+version = "2.0.0"
+
+[[packages.wheels]]
+name = "et_xmlfile-2.0.0-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl"
+
+[packages.wheels.hashes]
+sha256 = "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa"
+
+[[packages]]
 name = "fastapi"
 version = "0.141.1"
 
@@ -345,14 +356,14 @@ sha256 = "2cab2d43b95a954f920f18aebce7a4dbbb3f539780b127e2aa114f579821e01d"
 
 [[packages]]
 name = "filelock"
-version = "3.32.7"
+version = "4.0.0"
 
 [[packages.wheels]]
-name = "filelock-3.32.7-py3-none-any.whl"
-url = "https://files.pythonhosted.org/packages/15/df/31098c5aeb4d966b553641472bd55fcf5fdfac953549894b8a765ba44e91/filelock-3.32.7-py3-none-any.whl"
+name = "filelock-4.0.0-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/01/fb/0e4489505dac46a0487ba925ea4b046612f1a40f432d63a000421de78549/filelock-4.0.0-py3-none-any.whl"
 
 [packages.wheels.hashes]
-sha256 = "65ff0d0190ea42038b32bda4b77834fb05be2cad4c5b9b01aa4dfb3614536e52"
+sha256 = "a850aa9ec2acba8db9ca2e9fcf8a327fbc2f85e432725715b37bd76b7dd1f798"
 
 [[packages]]
 name = "flatbuffers"
@@ -400,14 +411,14 @@ sha256 = "3e0761f4d1a44f1d1a47996511752cf3dcec5bbdd9cc2b4fe595caf97754b7a0"
 
 [[packages]]
 name = "fsspec"
-version = "2026.7.0"
+version = "2026.9.0"
 
 [[packages.wheels]]
-name = "fsspec-2026.7.0-py3-none-any.whl"
-url = "https://files.pythonhosted.org/packages/fd/3c/6a2bf344106328fd04963664a60b9bb6496fc25df8e962fcdc1367285fb9/fsspec-2026.7.0-py3-none-any.whl"
+name = "fsspec-2026.9.0-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl"
 
 [packages.wheels.hashes]
-sha256 = "b57ddbafedfaef7018c1ecab32aa200a9d7ca26b77965f64e48b70061249d279"
+sha256 = "8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f"
 
 [[packages]]
 name = "googleapis-common-protos"
@@ -488,25 +499,25 @@ sha256 = "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
 
 [[packages]]
 name = "huggingface-hub"
-version = "1.31.0"
+version = "1.32.0"
 
 [[packages.wheels]]
-name = "huggingface_hub-1.31.0-py3-none-any.whl"
-url = "https://files.pythonhosted.org/packages/c3/7f/3f886a625043b77312b80da2f2bf00b5ecbf5a73061af1aa0259cd258c9d/huggingface_hub-1.31.0-py3-none-any.whl"
+name = "huggingface_hub-1.32.0-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/1b/cf/d98dd561d6d0d7b7d7a64d1563f8aaaa7c235daee41c1c9bcc3da62420ed/huggingface_hub-1.32.0-py3-none-any.whl"
 
 [packages.wheels.hashes]
-sha256 = "9dbb6a503cbe2494ea666695207e7262d410659e09134059deb83e5480864667"
+sha256 = "b0c7c80561969d9cdacdd55fce67ba9584cca0b9d4ea80957a3a5c1445fac5c8"
 
 [[packages]]
 name = "idna"
-version = "3.19"
+version = "3.20"
 
 [[packages.wheels]]
-name = "idna-3.19-py3-none-any.whl"
-url = "https://files.pythonhosted.org/packages/57/b0/0e52c878c53f245edd3a11020f20979b3f490f245af532c7cae3027754b5/idna-3.19-py3-none-any.whl"
+name = "idna-3.20-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl"
 
 [packages.wheels.hashes]
-sha256 = "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4"
+sha256 = "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
 
 [[packages]]
 name = "jinja2"
@@ -642,14 +653,14 @@ sha256 = "a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c"
 
 [[packages]]
 name = "multidict"
-version = "6.8.0"
+version = "6.9.0"
 
 [[packages.wheels]]
-name = "multidict-6.8.0-cp314-cp314-win_amd64.whl"
-url = "https://files.pythonhosted.org/packages/b9/7c/11234bcba62c22a58f2ba168499cfe3531f49de3edd5090d04a8c6cdc936/multidict-6.8.0-cp314-cp314-win_amd64.whl"
+name = "multidict-6.9.0-cp314-cp314-win_amd64.whl"
+url = "https://files.pythonhosted.org/packages/96/07/f20f633396700043a804fc1d7c397928e79d9955516b7621639219c6aace/multidict-6.9.0-cp314-cp314-win_amd64.whl"
 
 [packages.wheels.hashes]
-sha256 = "45cc39ba50fb0754a4359b90f8229ae08598fe2266abe3521b4e5a9ba916534a"
+sha256 = "ccf9f7f07e9ab6e24f68ccb2b4da8ded65c1fbc5390ebd897a5fe55cdd4c064f"
 
 [[packages]]
 name = "narwhals"
@@ -749,6 +760,17 @@ url = "https://files.pythonhosted.org/packages/21/f0/9fa6e85cb10c8eb36a0222d27e5
 
 [packages.wheels.hashes]
 sha256 = "f90ba04b8f73bc5c3814037699739f0156f597338a98f05956c684e7c3ca10d2"
+
+[[packages]]
+name = "openpyxl"
+version = "3.1.5"
+
+[[packages.wheels]]
+name = "openpyxl-3.1.5-py2.py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl"
+
+[packages.wheels.hashes]
+sha256 = "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2"
 
 [[packages]]
 name = "opentelemetry-api"
@@ -928,14 +950,14 @@ sha256 = "0a095db8e15a6020db149ecbed6461939fe74f6acaa3ae8b702a1fe8c38cd983"
 
 [[packages]]
 name = "protobuf"
-version = "7.36.1"
+version = "7.36.2"
 
 [[packages.wheels]]
-name = "protobuf-7.36.1-cp310-abi3-win_amd64.whl"
-url = "https://files.pythonhosted.org/packages/db/37/155788a0d8daded960375af604202805308169f9b859419ea0aa370946e2/protobuf-7.36.1-cp310-abi3-win_amd64.whl"
+name = "protobuf-7.36.2-cp310-abi3-win_amd64.whl"
+url = "https://files.pythonhosted.org/packages/8a/55/b77bda4e5e5f5971fb51b07663694690e9afdb9402136c16a522bd621cad/protobuf-7.36.2-cp310-abi3-win_amd64.whl"
 
 [packages.wheels.hashes]
-sha256 = "51139351435d9b43d88a55eaa49fb6f737fbb478fb0cbf2cf694d1a04a9d3363"
+sha256 = "a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353"
 
 [[packages]]
 name = "pyclipper"
@@ -1060,14 +1082,14 @@ sha256 = "850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"
 
 [[packages]]
 name = "pypdf"
-version = "6.18.1"
+version = "6.19.0"
 
 [[packages.wheels]]
-name = "pypdf-6.18.1-py3-none-any.whl"
-url = "https://files.pythonhosted.org/packages/58/13/645df3995075112cb3cce15e8797c205f0f88fb50acc11012b84b071bc22/pypdf-6.18.1-py3-none-any.whl"
+name = "pypdf-6.19.0-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/3c/2c/c43c03eaf630435f023f1dc61ec4a4a78951ad5530a62c71cc89bde307b7/pypdf-6.19.0-py3-none-any.whl"
 
 [packages.wheels.hashes]
-sha256 = "ee93a2665670ecf57ee81d197a4ca548f3dc15f9cefc56e59b8140866aaa3de5"
+sha256 = "7e5d6e730e7dae87d560a2cee218b852f6498c8be61966f3cd02ead971e48d14"
 
 [[packages]]
 name = "pypdfium2"

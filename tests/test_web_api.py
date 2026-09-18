@@ -333,7 +333,7 @@ class TestWebApi:
         assert duplicate.status_code == 409
 
     def test_models_report_only_ready_files_as_selectable(self, web_settings):
-        model = get_model_by_id("qwen3-4b-q4km")
+        model = get_model_by_id("qwen3-8b-q4km")
         web_settings.resources_dir.mkdir(parents=True)
         (web_settings.resources_dir / model.filename).write_bytes(b"gguf")
         with TestClient(create_app(settings=web_settings, event_hub=EventHub())) as client:

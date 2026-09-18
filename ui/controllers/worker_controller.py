@@ -17,6 +17,7 @@ class WorkerController(QObject):
     ai_response_finished = Signal(str)
     ai_response_error = Signal(str)
     ai_status_update = Signal(str)
+    ai_suggestion = Signal(str)
     model_loaded = Signal(str)
     model_load_error = Signal(str)
     model_list_loaded = Signal(list)
@@ -79,6 +80,7 @@ class WorkerController(QObject):
                 on_finished=self._on_finished,
                 on_status=self.ai_status_update.emit,
                 on_chunk=self._on_token,
+                on_suggestion=self.ai_suggestion.emit,
                 on_error=self._on_error,
             )
         except Exception as exc:

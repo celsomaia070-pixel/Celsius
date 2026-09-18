@@ -23,6 +23,7 @@ class WorkerSignals(QObject):
     step = Signal(object)
     chunk = Signal(str)
     error = Signal(str)
+    suggestion = Signal(str)
 
 
 class AIWorker(QRunnable):
@@ -34,6 +35,7 @@ class AIWorker(QRunnable):
         fn_status: Callable[[str], None] | None = None,
         fn_step: Callable[[object], None] | None = None,
         fn_chunk: Callable[[str], None] | None = None,
+        fn_suggestion: Callable[[str], None] | None = None,
     ):
         super().__init__()
         self.setAutoDelete(False)
@@ -50,6 +52,8 @@ class AIWorker(QRunnable):
             self.signals.step.connect(fn_step)
         if fn_chunk:
             self.signals.chunk.connect(fn_chunk)
+        if fn_suggestion:
+            self.signals.suggestion.connect(fn_suggestion)
 
     @Slot()
     def run(self):
@@ -90,6 +94,7 @@ class AIWorker(QRunnable):
                 time.perf_counter() - started_at,
             )
             self.signals.finished.emit(resposta)
+            self._emit_slow_model_suggestion(resposta, generation_seconds)
         except Exception as e:
             logger.exception(
                 "Falha na resposta apos %.2fs",
@@ -112,6 +117,46 @@ class AIWorker(QRunnable):
             fn_status=self.signals.status.emit,
         )
 
+    def _emit_slow_model_suggestion(self, resposta: str, generation_seconds: float) -> None:
+        """Emit a lighter-model suggestion when the response was too slow."""
+        if not resposta:
+            return
+        try:
+            from core.model_router import get_multi_model_manager
+            from core.settings import get_settings
+            from core.slow_model_suggestion import (
+                estimate_output_tokens,
+                suggest_lighter_model,
+                suggestions_enabled,
+            )
+
+            settings = get_settings()
+            if not suggestions_enabled(settings):
+                return
+
+            decision = get_multi_model_manager().get_last_decision()
+            used_model_id = decision.model_id if decision else None
+            if not used_model_id:
+                used_model_id = self.prompt_dict.get("modelo_solicitado") or ""
+            if not used_model_id:
+                return
+
+            from core.hardware import estimate_tokens_per_sec, get_detected_profile
+
+            expected_tps = estimate_tokens_per_sec(used_model_id, get_detected_profile())
+
+            suggestion = suggest_lighter_model(
+                used_model_id=used_model_id,
+                elapsed_seconds=generation_seconds,
+                estimated_output_tokens=estimate_output_tokens(resposta),
+                expected_tokens_per_sec=expected_tps,
+                resources_dir=settings.get_resources_dir(),
+            )
+            if suggestion:
+                self.signals.suggestion.emit(suggestion.message)
+        except Exception as exc:
+            logger.debug("Nao foi possivel avaliar lentidao do modelo: %s", exc)
+
 
 class WorkerManager:
     """Manages thread pool and workers."""
@@ -131,6 +176,7 @@ class WorkerManager:
         on_status: Callable[[str], None] | None = None,
         on_step: Callable[[object], None] | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        on_suggestion: Callable[[str], None] | None = None,
         on_error: Callable[[str], None] | None = None,
     ) -> AIWorker:
         """Submit an AI task to the thread pool."""
@@ -142,6 +188,7 @@ class WorkerManager:
             fn_status=on_status,
             fn_step=on_step,
             fn_chunk=on_chunk,
+            fn_suggestion=on_suggestion,
         )
         worker.signals.finished.connect(on_finished)
         if on_error:

@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import os
@@ -17,6 +16,19 @@ from core.settings import get_settings
 from core.tool_approval import SENSITIVE_TOOLS, approval_message, get_tool_approval_store
 
 logger = logging.getLogger(__name__)
+
+_FEEDS_NOTICIAS = {
+    "G1": "https://g1.globo.com/rss/g1/",
+    "G1 Tecnologia": "https://g1.globo.com/rss/g1/tecnologia/",
+    "UOL": "https://rss.uol.com.br/feed/noticias.xml",
+    "UOL Tecnologia": "https://rss.uol.com.br/feed/tecnologia.xml",
+    "Folha": "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml",
+    "Folha Tec": "https://feeds.folha.uol.com.br/tec/rss091.xml",
+    "Estadão": "https://www.estadao.com.br/rss/",
+    "CNN Brasil": "https://www.cnnbrasil.com.br/feed/",
+    "CNN Tech": "https://www.cnnbrasil.com.br/tecnologia/feed/",
+    "BBC Brasil": "https://feeds.bbci.co.uk/portuguese/rss.xml",
+}
 
 
 class Ferramenta:
@@ -38,9 +50,14 @@ class Ferramenta:
 
 
 def _allowed_file_roots() -> tuple[Path, ...]:
+    """Resolve authorized roots: the project base dir plus any configured extras.
+
+    The base dir is always kept authorized so relative paths and the local app
+    data remain reachable; ``security.allowed_file_roots`` extends access.
+    """
     settings = get_settings()
-    configured_roots = settings.security.allowed_file_roots
-    roots = [Path(root) for root in configured_roots] if configured_roots else [settings.base_dir]
+    roots = [settings.base_dir]
+    roots.extend(Path(root) for root in settings.security.allowed_file_roots)
     return tuple(root.expanduser().resolve() for root in roots)
 
 
@@ -106,25 +123,11 @@ def _tool_pesquisar_noticias(query: str) -> str:
     """Busca notícias via RSS feeds de sites brasileiros (mais confiável que Google News)."""
     import feedparser
 
-    # RSS feeds de notícias brasileiras (inclui feeds de tecnologia)
-    feeds = {
-        "G1": "https://g1.globo.com/rss/g1/",
-        "G1 Tecnologia": "https://g1.globo.com/rss/g1/tecnologia/",
-        "UOL": "https://rss.uol.com.br/feed/noticias.xml",
-        "UOL Tecnologia": "https://rss.uol.com.br/feed/tecnologia.xml",
-        "Folha": "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml",
-        "Folha Tec": "https://feeds.folha.uol.com.br/tec/rss091.xml",
-        "Estadão": "https://www.estadao.com.br/rss/",
-        "CNN Brasil": "https://www.cnnbrasil.com.br/feed/",
-        "CNN Tech": "https://www.cnnbrasil.com.br/tecnologia/feed/",
-        "BBC Brasil": "https://feeds.bbci.co.uk/portuguese/rss.xml",
-    }
-
     query_lower = query.lower()
     palavras_query = [p for p in query_lower.split() if len(p) > 2]
     todas_noticias = []
 
-    for fonte, url_feed in feeds.items():
+    for fonte, url_feed in _FEEDS_NOTICIAS.items():
         try:
             feed = feedparser.parse(url_feed)
             # Busca mais entradas por feed
@@ -168,13 +171,8 @@ def _get_ultimas_noticias_gerais() -> str:
     """Retorna últimas notícias gerais como fallback."""
     import feedparser
 
-    feeds = {
-        "G1": "https://g1.globo.com/rss/g1/",
-        "UOL": "https://rss.uol.com.br/feed/noticias.xml",
-        "CNN Brasil": "https://www.cnnbrasil.com.br/feed/",
-    }
     noticias = []
-    for fonte, url in feeds.items():
+    for fonte, url in _FEEDS_NOTICIAS.items():
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries[:3]:
@@ -216,19 +214,123 @@ def _tool_listar_arquivos(diretorio: str = ".") -> str:
     return "\n".join(itens) if itens else "Diretorio vazio."
 
 
-def _tool_ler_arquivo(caminho: str) -> str:
+_FORMATOS_TEXTO = frozenset(
+    {
+        ".txt",
+        ".md",
+        ".py",
+        ".json",
+        ".csv",
+        ".xml",
+        ".html",
+        ".css",
+        ".js",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".log",
+    }
+)
+_MAX_LINHAS_LEITURA = 500
+_MAX_BYTES_LEITURA = 2 * 1024 * 1024
+
+
+def _ler_conteudo_texto(caminho: Path) -> str:
+    for encoding in ("utf-8-sig", "utf-16"):
+        try:
+            with open(caminho, encoding=encoding) as f:
+                return f.read()
+        except (UnicodeDecodeError, ValueError):
+            continue
+    with open(caminho, encoding="cp1252", errors="replace") as f:
+        return f.read()
+
+
+def _ler_janela_texto(caminho: Path, inicio: int, linhas: int) -> str:
+    conteudo = _ler_conteudo_texto(caminho)
+    if len(conteudo.encode("utf-8")) > _MAX_BYTES_LEITURA:
+        conteudo = conteudo[:_MAX_BYTES_LEITURA]
+        truncado_no_fim = True
+    else:
+        truncado_no_fim = False
+    if not conteudo:
+        return "(arquivo vazio.)"
+    linhas_texto = conteudo.splitlines()
+    total = len(linhas_texto)
+    if inicio > total:
+        return f"(Total de {total} linhas; linha inicial {inicio} alem do fim do arquivo.)"
+    janela = linhas_texto[inicio - 1 : inicio - 1 + linhas]
+    fim = inicio - 1 + len(janela)
+    if total > linhas:
+        cabecalho = f"(linhas {inicio}-{fim} de {total})"
+    else:
+        cabecalho = f"(total de {total} linhas)"
+    corpo = "\n".join(janela)
+    if truncado_no_fim:
+        corpo += "\n... [arquivo truncado] ..."
+    elif fim < total:
+        corpo += f"\n... continue com ler_arquivo iniciando na linha {fim + 1} ..."
+    return cabecalho + "\n" + corpo
+
+
+def _tool_ler_arquivo(caminho: str, inicio: int = 1, linhas: int = 200) -> str:
     path = _validate_path(caminho)
     extensao = path.suffix.lower()
-    formatos_texto = [".txt", ".md", ".py", ".json", ".csv", ".xml", ".html", ".css", ".js"]
-    if extensao in formatos_texto:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            conteudo = f.read(10000)
-        if len(conteudo) == 10000:
-            conteudo += "\n... [arquivo truncado] ..."
-        return conteudo
+    if extensao in _FORMATOS_TEXTO:
+        inicio = max(1, int(inicio))
+        linhas = max(1, min(int(linhas), _MAX_LINHAS_LEITURA))
+        return _ler_janela_texto(path, inicio, linhas)
     from processors import processar_arquivo
 
     return processar_arquivo(str(path), base_dir=path.parent)
+
+
+_EXTENSOES_ESCRITA = frozenset({".txt", ".md", ".csv", ".json"})
+_MODOS_ESCRITA = frozenset({"criar", "anexar", "sobrescrever"})
+
+
+def _resolver_caminho_escrita(path: str) -> Path:
+    raw_path = Path(path).expanduser()
+    if not raw_path.is_absolute():
+        raw_path = get_settings().base_dir / raw_path
+    path = raw_path.resolve()
+    allowed_roots = _allowed_file_roots()
+    if not any(_is_relative_to(path, root) for root in allowed_roots):
+        roots = ", ".join(str(root) for root in allowed_roots)
+        raise PermissionError(f"Acesso negado: '{path}' esta fora das pastas autorizadas ({roots})")
+    return path
+
+
+def _tool_criar_editar_arquivo(caminho: str, conteudo: str, modo: str = "criar") -> str:
+    try:
+        path = _resolver_caminho_escrita(caminho)
+    except PermissionError as exc:
+        return str(exc)
+    if path.suffix.lower() not in _EXTENSOES_ESCRITA:
+        permitidas = ", ".join(sorted(_EXTENSOES_ESCRITA))
+        return f"Formato nao permitido. Extensoes aceitas para escrita: {permitidas}."
+    modo = modo.lower().strip()
+    if modo not in _MODOS_ESCRITA:
+        return "Modo invalido. Use 'criar', 'anexar' ou 'sobrescrever'."
+    existe = path.exists()
+    if path.exists() and path.is_dir():
+        return f"'{path}' e um diretorio, nao um arquivo."
+    if modo == "criar" and existe:
+        return f"Arquivo ja existe: {path}. Use 'sobrescrever' para substituir ou 'anexar' para adicionar."
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if existe and modo == "sobrescrever":
+            backup = path.with_name(path.name + ".bak")
+            if backup.exists():
+                backup.unlink()
+            path.rename(backup)
+        with open(path, mode="a" if modo == "anexar" and existe else "w", encoding="utf-8") as f:
+            f.write(conteudo)
+    except OSError as exc:
+        return f"Erro ao gravar o arquivo: {exc}"
+    acao = {"criar": "criado", "anexar": "atualizado", "sobrescrever": "sobrescrito"}[modo]
+    return f"Arquivo {acao}: {path} ({path.stat().st_size} bytes)"
 
 
 def _tool_informacoes_sistema() -> str:
@@ -1156,18 +1258,49 @@ REGISTRO_FERRAMENTAS = [
     ),
     Ferramenta(
         nome="ler_arquivo",
-        descricao="Le o conteudo de um arquivo de texto ou documento. Use quando precisar ler o conteudo de um arquivo especifico.",
+        descricao="Le o conteudo de um arquivo de texto (txt, md, py, json, csv, xml, html, yaml, log) ou documento. Use quando precisar ler o conteudo de um arquivo especifico. Para arquivos grandes, use 'inicio' e 'linhas' para ler em partes.",
         schema={
             "type": "object",
             "properties": {
                 "caminho": {
                     "type": "string",
                     "description": "Caminho completo do arquivo a ser lido",
-                }
+                },
+                "inicio": {
+                    "type": "integer",
+                    "description": "Numero da primeira linha a ler (1-baseado). Padrao: 1.",
+                },
+                "linhas": {
+                    "type": "integer",
+                    "description": "Quantidade de linhas a ler. Padrao: 200.",
+                },
             },
             "required": ["caminho"],
         },
         funcao=_tool_ler_arquivo,
+    ),
+    Ferramenta(
+        nome="criar_editar_arquivo",
+        descricao="Cria, anexa ou sobrescreve um arquivo de texto (txt, md, csv, json) dentro das pastas autorizadas. Usa 'criar' para novos arquivos, 'anexar' para adicionar ao final, 'sobrescrever' para substituir o conteudo (criando antes um backup .bak). Requer aprovacao explicita do usuario.",
+        schema={
+            "type": "object",
+            "properties": {
+                "caminho": {
+                    "type": "string",
+                    "description": "Caminho completo do arquivo a criar/editar",
+                },
+                "conteudo": {
+                    "type": "string",
+                    "description": "Conteudo completo a gravar no arquivo",
+                },
+                "modo": {
+                    "type": "string",
+                    "description": "Modo de escrita: 'criar', 'anexar' ou 'sobrescrever'. Padrao: criar.",
+                },
+            },
+            "required": ["caminho", "conteudo"],
+        },
+        funcao=_tool_criar_editar_arquivo,
     ),
     Ferramenta(
         nome="informacoes_sistema",
@@ -1443,7 +1576,7 @@ REGISTRO_FERRAMENTAS = [
                         "Processos e prazos",
                     ],
                 },
-                "formato": {"type": "string", "enum": ["pdf", "docx", "md"]},
+                "formato": {"type": "string", "enum": ["pdf", "docx", "xlsx", "md"]},
                 "periodo": {"type": "string"},
                 "observacoes": {"type": "string"},
             },
@@ -1711,93 +1844,6 @@ CIRCUIT_BREAKER_CONFIG = {
 
 # Tools protected by circuit breakers
 CIRCUIT_PROTECTED_TOOLS = set(CIRCUIT_BREAKER_CONFIG.keys())
-
-# Tool result cache
-_TOOL_CACHE_DIR = get_settings().data_dir / "cache" / "tools"
-_TOOL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-# Cache TTLs (in seconds)
-CACHE_TTL = {
-    "pesquisar_web": 3600,  # 1 hour
-    "navegar_web": 1800,  # 30 min
-    "buscar_memoria": 300,  # 5 min
-    "informacoes_sistema": 60,  # 1 min
-    "listar_documentos_rag": 600,  # 10 min
-    "listar_arquivos": 300,  # 5 min
-    "listar_agenda": 30,  # 30 sec
-    "listar_clientes": 30,  # 30 sec
-    "listar_fornecedores": 30,  # 30 sec
-    "listar_produtos_servicos": 30,  # 30 sec
-    "listar_orcamentos": 30,
-    "listar_processos_prazos": 30,
-    "listar_estoque": 30,  # 30 sec (dados podem mudar rapido)
-    "buscar_item_estoque": 30,  # 30 sec
-}
-
-# Tools that should not be cached
-NON_CACHEABLE_TOOLS = {
-    "executar_codigo",
-    "salvar_memoria",
-    "indexar_documento",
-    "remover_documento",
-    "processar_arquivo",
-    "abrir_no_navegador",
-    "criar_compromisso_agenda",
-    "marcar_lembrete_agenda",
-    "cadastrar_cliente",
-    "cadastrar_fornecedor",
-    "cadastrar_produto_servico",
-    "cadastrar_orcamento",
-    "cadastrar_processo_prazo",
-    "gerar_relatorio_local",
-    "entrada_estoque",
-    "saida_estoque",
-    "adicionar_item_estoque",
-    "gerar_grafico",
-}
-
-
-def _get_cache_key(nome: str, argumentos: dict) -> str:
-    """Generate cache key from tool name and arguments."""
-    key_data = f"{nome}:{json.dumps(argumentos, sort_keys=True)}"
-    return hashlib.sha256(key_data.encode()).hexdigest()[:32]
-
-
-def _get_cache_path(cache_key: str) -> Path:
-    """Get cache file path."""
-    return _TOOL_CACHE_DIR / f"{cache_key}.json"
-
-
-def _load_cached_result(cache_key: str, max_age: int) -> Any | None:
-    """Load cached result if not expired."""
-    cache_path = _get_cache_path(cache_key)
-    if not cache_path.exists():
-        return None
-
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            cached = json.load(f)
-
-        cached_time = cached.get("timestamp", 0)
-        if time.time() - cached_time > max_age:
-            cache_path.unlink(missing_ok=True)
-            return None
-
-        logger.debug("Cache hit for %s", cache_key)
-        return cached.get("result")
-    except Exception as e:
-        logger.warning("Failed to load cache for %s: %s", cache_key, e)
-        return None
-
-
-def _save_cached_result(cache_key: str, result: Any) -> None:
-    """Save result to cache."""
-    cache_path = _get_cache_path(cache_key)
-    try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump({"timestamp": time.time(), "result": result}, f, ensure_ascii=False)
-    except Exception as e:
-        logger.warning("Failed to save cache for %s: %s", cache_key, e)
 
 
 def _validate_tool_args(ferramenta: Ferramenta, argumentos: dict) -> tuple[bool, str]:

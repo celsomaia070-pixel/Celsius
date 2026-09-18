@@ -20,10 +20,13 @@ from ai.react import (
 from ai.tools import (
     REGISTRO_FERRAMENTAS,
     _normalize_chart_arguments,
+    _tool_criar_editar_arquivo,
+    _tool_ler_arquivo,
     _validate_path,
     obter_schemas_openai,
 )
 from core.settings import SecuritySettings, Settings
+from core.tool_approval import SENSITIVE_TOOLS
 
 
 class TestToolRegistry:
@@ -331,3 +334,137 @@ class TestToolPathSecurity:
 
         with pytest.raises(PermissionError):
             _validate_path(str(outside_file))
+
+
+class TestLerArquivoPaginacao:
+    def _settings(self, tmp_path, monkeypatch):
+        settings = Settings(
+            base_dir=tmp_path,
+            security=SecuritySettings(allowed_file_roots=(str(tmp_path),)),
+        )
+        monkeypatch.setattr(ai.tools, "get_settings", lambda: settings)
+        return settings
+
+    def test_le_janela_no_meio_do_arquivo(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        arquivo = tmp_path / "notas.txt"
+        arquivo.write_text("".join(f"linha {i}\n" for i in range(1, 11)), encoding="utf-8")
+
+        resultado = _tool_ler_arquivo(str(arquivo), inicio=4, linhas=3)
+
+        assert "(linhas 4-6 de 10)" in resultado
+        assert "linha 4" in resultado
+        assert "linha 6" in resultado
+        assert "linha 3" not in resultado
+
+    def test_inicio_alem_do_fim_informa_total(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        arquivo = tmp_path / "notas.txt"
+        arquivo.write_text("linha 1\nlinha 2\n", encoding="utf-8")
+
+        resultado = _tool_ler_arquivo(str(arquivo), inicio=50, linhas=10)
+
+        assert "Total de 2 linhas" in resultado
+
+    def test_decodifica_cp1252(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        arquivo = tmp_path / "gravar.txt"
+        arquivo.write_bytes("Olá, mundo com ç e ão".encode("cp1252"))
+
+        assert "Olá, mundo com ç e ão" in _tool_ler_arquivo(str(arquivo))
+
+    def test_decodifica_utf16(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        arquivo = tmp_path / "legado.txt"
+        arquivo.write_bytes("Conteúdo legado em UTF-16".encode("utf-16"))
+
+        assert "Conteúdo legado em UTF-16" in _tool_ler_arquivo(str(arquivo))
+
+    def test_arquivo_vazio(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        arquivo = tmp_path / "vazio.txt"
+        arquivo.write_text("", encoding="utf-8")
+
+        assert "arquivo vazio" in _tool_ler_arquivo(str(arquivo))
+
+
+class TestCriarEditarArquivo:
+    def _settings(self, tmp_path, monkeypatch):
+        settings = Settings(
+            base_dir=tmp_path,
+            security=SecuritySettings(allowed_file_roots=(str(tmp_path),)),
+        )
+        monkeypatch.setattr(ai.tools, "get_settings", lambda: settings)
+        return settings
+
+    def test_registrada_e_sensivel(self):
+        names = {f.nome for f in REGISTRO_FERRAMENTAS}
+        assert "criar_editar_arquivo" in names
+        assert "criar_editar_arquivo" in SENSITIVE_TOOLS
+
+    def test_cria_arquivo(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        destino = tmp_path / "notas.md"
+
+        resultado = _tool_criar_editar_arquivo(str(destino), "Conteudo novo")
+
+        assert "criado" in resultado
+        assert destino.read_text(encoding="utf-8") == "Conteudo novo"
+
+    def test_criar_nao_sobrescreve_existente(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        destino = tmp_path / "notas.md"
+        destino.write_text("original", encoding="utf-8")
+
+        resultado = _tool_criar_editar_arquivo(str(destino), "novo", modo="criar")
+
+        assert "ja existe" in resultado
+        assert destino.read_text(encoding="utf-8") == "original"
+
+    def test_anexar_ao_final(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        destino = tmp_path / "log.txt"
+        destino.write_text("primeira\n", encoding="utf-8")
+
+        _tool_criar_editar_arquivo(str(destino), "segunda\n", modo="anexar")
+
+        assert destino.read_text(encoding="utf-8") == "primeira\nsegunda\n"
+
+    def test_sobrescrever_cria_backup(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        destino = tmp_path / "dados.json"
+        destino.write_text('{"v": 1}', encoding="utf-8")
+
+        resultado = _tool_criar_editar_arquivo(str(destino), '{"v": 2}', modo="sobrescrever")
+
+        assert "sobrescrito" in resultado
+        assert destino.read_text(encoding="utf-8") == '{"v": 2}'
+        backup = tmp_path / "dados.json.bak"
+        assert backup.read_text(encoding="utf-8") == '{"v": 1}'
+
+    def test_extensao_fora_da_lista_e_negada(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        destino = tmp_path / "script.py"
+
+        resultado = _tool_criar_editar_arquivo(str(destino), "print('oi')")
+
+        assert "Formato nao permitido" in resultado
+        assert not destino.exists()
+
+    def test_fora_das_pastas_autorizadas_e_negado(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        fora = tmp_path.parent / "fora.txt"
+
+        resultado = _tool_criar_editar_arquivo(str(fora), "conteudo")
+
+        assert "Acesso negado" in resultado
+        assert not fora.exists()
+
+    def test_modo_invalido(self, tmp_path, monkeypatch):
+        self._settings(tmp_path, monkeypatch)
+        destino = tmp_path / "notas.txt"
+
+        resultado = _tool_criar_editar_arquivo(str(destino), "x", modo="apagar")
+
+        assert "Modo invalido" in resultado
+        assert not destino.exists()

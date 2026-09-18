@@ -359,7 +359,11 @@ def create_app(
         allowed_hosts.append(configured_host)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(dict.fromkeys(allowed_hosts)))
 
-    browser_sessions = BrowserSessionStore()
+    browser_sessions = BrowserSessionStore(
+        pairing_ttl_seconds=settings.mobile.pairing_ttl_seconds,
+        session_ttl_seconds=settings.mobile.session_ttl_seconds,
+        max_sessions=settings.mobile.max_browser_sessions,
+    )
     request_limiter = _RequestRateLimiter()
     audit_logger = AuditLogger(Path(settings.data_dir) / "audit.log")
     app.state.settings = settings

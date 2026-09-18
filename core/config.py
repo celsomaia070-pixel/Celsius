@@ -32,16 +32,6 @@ class GGUFModel:
 GGUF_MODELS: list[GGUFModel] = [
     # Recomendados para Celsius PME
     GGUFModel(
-        id="qwen3-4b-q4km",
-        name="Qwen3 4B Instruct",
-        category="fast",
-        filename="qwen3-4b-instruct-q4_k_m.gguf",
-        hf_repo="Qwen/Qwen3-4B-GGUF",
-        hf_file="Qwen3-4B-Q4_K_M.gguf",
-        size_gb=2.8,
-        quant="Q4_K_M",
-    ),
-    GGUFModel(
         id="qwen3-8b-q4km",
         name="Qwen3 8B Instruct",
         category="balanced",
@@ -235,7 +225,7 @@ class Settings:
 
     default_llm_model: str = DEFAULT_LLM_MODEL
     llm_model: str = DEFAULT_LLM_MODEL
-    fast_llm_model: str = "qwen3-4b-q4km"  # Small fast model for simple tasks
+    fast_llm_model: str = "gemma3-4b-q4km"  # Small fast model for simple tasks
     embedding_model: str = "qwen3-embedding-0.6b"
     whisper_model: str = "small"
 
@@ -323,7 +313,6 @@ def get_settings():
 DIRETORIO_BASE = settings.base_dir
 ARQUIVO_MEMORIAS = settings.memorias_file
 ARQUIVO_AUDIO_TEMP = settings.audio_temp_file
-ARQUIVO_AUDIO_MIC = settings.audio_mic_file
 MODELO_LLM = settings.llm_model
 MODELO_WHISPER = settings.whisper_model
 LIMITE_TEXTO_DOCUMENTO = settings.doc_text_limit
@@ -332,4 +321,3 @@ NUM_PREDICT = settings.num_predict
 MAX_HISTORICO_SESSION = settings.max_history_session
 THRESHOLD_MEMORIA = settings.memory_threshold
 TOP_MEMORIAS = settings.top_memories
-MAX_FILE_SIZE_BYTES = settings.max_file_size_mb * 1024 * 1024

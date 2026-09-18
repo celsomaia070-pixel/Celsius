@@ -63,3 +63,13 @@ def is_extra_available(extra: str) -> bool:
 def install_hint(extra: str) -> str:
     """Human-readable command to install ``extra`` when it is missing."""
     return INSTALL_HINTS.get(extra, f"pip install celsius[{extra}]")
+
+
+def missing_extras() -> tuple[str, ...]:
+    """Names of the runtime extras that are not installed."""
+    return tuple(name for name in EXTRA_PROBES if not is_extra_available(name))
+
+
+def feature_notice_lines() -> tuple[str, ...]:
+    """Short lines describing unavailable optional features and how to enable them."""
+    return tuple(f"{name}: {install_hint(name)}" for name in missing_extras())

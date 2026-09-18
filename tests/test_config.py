@@ -17,7 +17,7 @@ class TestConfig:
     def test_gguf_models_registry(self):
         assert len(GGUF_MODELS) >= 14
         assert all(isinstance(m, GGUFModel) for m in GGUF_MODELS)
-        assert GGUF_MODELS[0].id == "qwen3-4b-q4km"
+        assert GGUF_MODELS[0].id == "qwen3-8b-q4km"
         assert get_model_by_id("qwen3-8b-q4km") is not None
         assert get_model_by_id("deepseek-r1-distill-qwen-7b-q4km") is not None
 

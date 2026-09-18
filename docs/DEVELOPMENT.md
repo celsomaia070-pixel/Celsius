@@ -112,6 +112,28 @@ python tools\lock_requirements.py
 python tools\lock_requirements.py --check
 ```
 
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` cobre, além de Lint/Format e manifestos:
+
+- **Testes** em `ubuntu` e `windows` com Python 3.10/3.12/3.14, com cache de pip
+  apontando para `requirements.txt`, `pylock.toml` e `requirements-dev.in`, e
+  medindo cobertura (`--cov=core --cov=ai --cov=workers --cov=ui`); o relatório
+  é publicado como artefato e a cobertura mínima é aplicada
+  (`coverage report --fail-under=50`).
+- **Typecheck** (`mypy core/ workers/ ai/`) com cache `.mypy_cache` persistido
+  entre execuções.
+- **Security** (`pip-audit --strict` e `bandit`).
+- **Native smoke** (`pytest integration_tests --run-native-smoke`) que valida o
+  arranque real do `main.py` em um processo filho, sem modelo local.
+
+Para rodar localmente a mesma checagem de cobertura:
+
+```powershell
+python -m pytest -q --cov=core --cov=ai --cov=workers --cov=ui --cov-report=term
+python -m coverage report --fail-under=50 --skip-empty
+```
+
 ## Git
 
 Antes de abrir PR ou fazer commit:

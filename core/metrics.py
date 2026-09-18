@@ -186,6 +186,11 @@ class MetricNames:
     # Circuit breaker
     CB_STATE = "celsius_circuit_breaker_state"
 
+    # Workers / sandboxed code execution
+    WORKER_JOBS_TOTAL = "celsius_worker_jobs_total"
+    WORKER_ERRORS_TOTAL = "celsius_worker_errors_total"
+    WORKER_JOB_DURATION_SECONDS = "celsius_worker_job_duration_seconds"
+
     # System
     MEMORY_USAGE_BYTES = "celsius_memory_usage_bytes"
     ACTIVE_SESSIONS = "celsius_active_sessions"

@@ -9,10 +9,12 @@ from processors.odf import ProcessadorODF as ProcessadorODF
 from processors.pdf import ProcessadorPDF as ProcessadorPDF
 from processors.report import GeradorRelatorio as GeradorRelatorio
 from processors.text import ProcessadorTexto as ProcessadorTexto
+from processors.xlsx import ProcessadorXLSX as ProcessadorXLSX
 
 PROCESSADORES = {
     ".pdf": ProcessadorPDF,
     ".docx": ProcessadorDOCX,
+    ".xlsx": ProcessadorXLSX,
     ".odt": ProcessadorODF,
     ".ods": ProcessadorODF,
     ".odp": ProcessadorODF,

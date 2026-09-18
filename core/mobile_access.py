@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import datetime as dt
 import hashlib
 import ipaddress
@@ -39,6 +40,34 @@ def ensure_mobile_token(current: str = "") -> str:
     if token:
         return token
     return secrets.token_urlsafe(24)
+
+
+def rotate_mobile_token(settings, current: str | None = None) -> str:
+    """Return a pairing token, regenerating it when none or stale.
+
+    ``settings.mobile.token_rotation_days`` controls the maximum age (0 or a
+    negative value disables rotation). The issue timestamp is stored in
+    ``settings.mobile.pairing_token_issued_at`` so expiry survives restart.
+    """
+    max_age_days = int(getattr(settings.mobile, "token_rotation_days", 30))
+    token = (current or settings.mobile.pairing_token or "").strip()
+    if max_age_days <= 0:
+        return token or secrets.token_urlsafe(24)
+
+    issued = None
+    issued_raw = (settings.mobile.pairing_token_issued_at or "").strip()
+    if issued_raw:
+        with contextlib.suppress(ValueError, TypeError):
+            issued = dt.datetime.fromisoformat(issued_raw)
+
+    now = dt.datetime.now(dt.timezone.utc)
+    expired = issued is not None and (now - issued).total_seconds() >= max_age_days * 86400
+    stale = not token or expired
+    if stale:
+        token = secrets.token_urlsafe(24)
+        settings.mobile.pairing_token = token
+        settings.mobile.pairing_token_issued_at = now.isoformat()
+    return token
 
 
 def get_lan_ip() -> str:

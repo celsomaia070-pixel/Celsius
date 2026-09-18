@@ -92,6 +92,51 @@ class GeradorRelatorio:
         return caminho_saida
 
     @staticmethod
+    def exportar_xlsx(titulo: str, conteudo: str, caminho_saida: str, metadados: dict = None):
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+        from openpyxl.utils import get_column_letter
+
+        workbook = Workbook()
+        ws = workbook.active
+        ws.title = "Relatorio"
+
+        ws.cell(1, 1, titulo).font = Font(bold=True, size=14)
+        linha_atual = 2
+        ws.cell(linha_atual, 1, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        linha_atual += 1
+
+        if metadados:
+            for chave, valor in metadados.items():
+                ws.cell(linha_atual, 1, f"{chave}: {valor}")
+                linha_atual += 1
+        linha_atual += 1
+
+        for linha in (conteudo or "").split("\n"):
+            linha = linha.strip()
+            if not linha:
+                continue
+            if linha.startswith("|"):
+                celulas = [c.strip() for c in linha.strip("|").split("|")]
+                for idx, valor in enumerate(celulas, start=1):
+                    ws.cell(linha_atual, idx, valor)
+            elif linha.startswith("#"):
+                celula = ws.cell(linha_atual, 1, linha.lstrip("# ").strip())
+                celula.font = Font(bold=True)
+            else:
+                ws.cell(linha_atual, 1, linha)
+            linha_atual += 1
+
+        for col_idx in range(1, 10):
+            ws.column_dimensions[get_column_letter(col_idx)].width = 24
+
+        os.makedirs(
+            os.path.dirname(caminho_saida) if os.path.dirname(caminho_saida) else ".", exist_ok=True
+        )
+        workbook.save(caminho_saida)
+        return caminho_saida
+
+    @staticmethod
     def exportar_docx(titulo: str, conteudo: str, caminho_saida: str, metadados: dict = None):
         import docx
         from docx.enum.text import WD_ALIGN_PARAGRAPH

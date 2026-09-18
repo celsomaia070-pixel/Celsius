@@ -60,6 +60,11 @@ MOBILE_ACCESS_FIELDS = (
     "host",
     "port",
     "pairing_token",
+    "pairing_token_issued_at",
+    "token_rotation_days",
+    "session_ttl_seconds",
+    "pairing_ttl_seconds",
+    "max_browser_sessions",
     "allow_lan",
     "voice_commands_enabled",
     "use_https",
@@ -76,6 +81,11 @@ NOTIFICATION_FIELDS = (
     "email_from",
     "sms_provider",
     "sms_sender_id",
+)
+SECURITY_FIELDS = (
+    "sandbox_enabled",
+    "path_traversal_protection",
+    "allowed_file_roots",
 )
 
 APP_DATA_DIR_NAME = "Celsius"
@@ -290,7 +300,7 @@ class ModelSettings(BaseSettings):
     model_mode: str = "equilibrado"
     default_llm_model: str = DEFAULT_LLM_MODEL
     llm_model: str = DEFAULT_LLM_MODEL
-    fast_llm_model: str = "qwen3-4b-q4km"
+    fast_llm_model: str = "gemma3-4b-q4km"
     quality_llm_model: str = "qwen3-14b-q4km"
     reasoning_llm_model: str = "deepseek-r1-distill-qwen-7b-q4km"
     vision_llm_model: str = "qwen2.5-vl-7b-q4km"
@@ -425,6 +435,9 @@ class MemorySettings(BaseSettings):
     memory_threshold: float = 0.15
     top_memories: int = 10
     inject_all_memories_limit: int = 15
+    auto_extract_facts: bool = True
+    extraction_max_facts: int = 5
+    extraction_recent_messages: int = 10
 
 
 class FileSettings(BaseSettings):
@@ -533,6 +546,26 @@ class SecuritySettings(BaseSettings):
     path_traversal_protection: bool = True
     allowed_file_roots: tuple[str, ...] = ()
 
+    def to_storage(self) -> dict[str, str | bool | list[str]]:
+        data: dict[str, str | bool | list[str]] = {}
+        for field in SECURITY_FIELDS:
+            value = getattr(self, field)
+            data[field] = list(value) if isinstance(value, (tuple, list)) else value
+        return data
+
+    def apply_storage(self, data: dict, *, preserve_explicit: bool = True) -> None:
+        explicit_fields = self.model_fields_set if preserve_explicit else set()
+        for field in SECURITY_FIELDS:
+            if preserve_explicit and field in explicit_fields:
+                continue
+            if field not in data:
+                continue
+            value = data[field]
+            if field == "allowed_file_roots":
+                value = value if isinstance(value, (tuple, list)) else (value,)
+                value = tuple(str(item) for item in value if str(item).strip())
+            setattr(self, field, value)
+
 
 class TelemetrySettings(BaseSettings):
     """Telemetry/observability settings."""
@@ -601,6 +634,11 @@ class MobileAccessSettings(BaseSettings):
     host: str = "0.0.0.0"  # nosec B104 - used only with explicit LAN opt-in and HTTPS
     port: int = 8787
     pairing_token: str = ""
+    pairing_token_issued_at: str = ""
+    token_rotation_days: int = 30
+    session_ttl_seconds: int = 12 * 60 * 60
+    pairing_ttl_seconds: int = 120
+    max_browser_sessions: int = 32
     allow_lan: bool = False
     voice_commands_enabled: bool = True
     use_https: bool = True
@@ -767,6 +805,8 @@ class Settings(BaseSettings):
             self.mobile.apply_storage(data["mobile"], preserve_explicit=True)
         if isinstance(data.get("notifications"), dict):
             self.notifications.apply_storage(data["notifications"], preserve_explicit=True)
+        if isinstance(data.get("security"), dict):
+            self.security.apply_storage(data["security"], preserve_explicit=True)
 
     def _sync_legacy_owner_name(self) -> None:
         if self.assistant.owner_name and not self.customer.user_name:
@@ -796,6 +836,7 @@ class Settings(BaseSettings):
                 "voice": self.voice.to_storage(),
                 "mobile": self.mobile.to_storage(),
                 "notifications": self.notifications.to_storage(),
+                "security": self.security.to_storage(),
             },
         )
         restrict_private_file(path)

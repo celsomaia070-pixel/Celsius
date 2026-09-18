@@ -11,10 +11,11 @@ module provides the generic connection/schema helpers for business records.
 
 from __future__ import annotations
 
+import datetime as _datetime
 import json
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,21 @@ CREATE TABLE IF NOT EXISTS memories (
 """
 
 SCHEMAS: tuple[str, ...] = (INVENTORY_SCHEMA, MEMORY_SCHEMA)
+
+#: Current schema version tracked in ``PRAGMA user_version``. Each target entry
+#: runs only when the database is at an older version, so schema changes can be
+#: shipped incrementally without dropping user data.
+SCHEMA_VERSION = 2
+
+_MEMORY_ORIGIN_MIGRATION = (
+    "ALTER TABLE memories ADD COLUMN origem TEXT NOT NULL DEFAULT 'usuario';"
+    "\nALTER TABLE memories ADD COLUMN conversation_id TEXT NOT NULL DEFAULT '';"
+)
+
+_MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
+    (1, INVENTORY_SCHEMA + MEMORY_SCHEMA),
+    (2, _MEMORY_ORIGIN_MIGRATION),
+)
 
 _INVENTORY_ITEMS_EMPTY = "SELECT 1 FROM inventory_items LIMIT 1"
 _MOVEMENTS_EMPTY = "SELECT 1 FROM inventory_movements LIMIT 1"
@@ -104,10 +120,74 @@ def connect(path: Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
+def current_schema_version(connection: sqlite3.Connection) -> int:
+    """Return the ``PRAGMA user_version`` of the connected database."""
+    row = connection.execute("PRAGMA user_version").fetchone()
+    return int(row[0]) if row else 0
+
+
 def init_schema(connection: sqlite3.Connection) -> None:
-    """Create all tables used by this module when they do not exist yet."""
-    for schema in SCHEMAS:
-        connection.executescript(schema)
+    """Migrate the database schema up to :data:`SCHEMA_VERSION`.
+
+    Runs idempotently: scripts use ``IF NOT EXISTS`` and ``user_version`` is
+    bumped after every applied step, so re-opening an up-to-date database is a
+    no-op.
+    """
+    version = current_schema_version(connection)
+    for target, script in _MIGRATION_STEPS:
+        if version < target:
+            connection.executescript(script)
+            connection.execute(f"PRAGMA user_version = {target}")
+            version = target
+
+
+DEFAULT_BACKUP_KEEP = 10
+
+
+def backup_database(db_path: Path, *, keep: int = DEFAULT_BACKUP_KEEP) -> Path | None:
+    """Copy a live SQLite database to ``backups/`` beside it.
+
+    Uses the online backup API, so the copy is consistent even if another
+    connection is writing. Old backups beyond *keep* are pruned (oldest first).
+    Returns the backup path, or ``None`` when there is nothing to back up.
+    """
+    source = Path(db_path)
+    if not source.exists():
+        return None
+    backup_dir = source.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    destination = backup_dir / f"{source.stem}-{stamp}.db"
+
+    try:
+        source_conn = sqlite3.connect(str(source))
+        try:
+            with suppress(sqlite3.OperationalError):
+                source_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            destination_conn = sqlite3.connect(str(destination))
+            try:
+                source_conn.backup(destination_conn)
+            finally:
+                destination_conn.close()
+        finally:
+            source_conn.close()
+    except sqlite3.Error:
+        with suppress(OSError):
+            destination.unlink(missing_ok=True)
+        raise
+    _prune_backups(backup_dir, keep)
+    return destination
+
+
+def _prune_backups(backup_dir: Path, keep: int) -> None:
+    backups = sorted(
+        backup_dir.glob("*.db"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in backups[keep:]:
+        with suppress(OSError):
+            stale.unlink(missing_ok=True)
 
 
 def _has_rows(connection: sqlite3.Connection, check: str) -> bool:

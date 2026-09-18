@@ -3,7 +3,16 @@
 import pytest
 
 from core.config import Settings
-from core.memory import MemoryService, get_memory_service
+from core.memory import (
+    ORIGEM_CONVERSA,
+    ORIGEM_USUARIO,
+    MemoryService,
+    _is_near_duplicate,
+    _parse_facts,
+    get_memory_service,
+    memory_query_context,
+    remember_from_turn,
+)
 
 
 class TestMemoryService:
@@ -115,6 +124,203 @@ class TestMemoryService:
         service1 = get_memory_service()
         # Can't easily test singleton with different settings, but verify it works
         assert service1 is not None
+
+
+class TestMemoryOrigins:
+    @pytest.fixture
+    def temp_settings(self, tmp_path):
+        return Settings(base_dir=tmp_path)
+
+    @pytest.fixture
+    def memory_service(self, temp_settings):
+        return MemoryService(temp_settings)
+
+    def test_user_memory_defaults_to_user_origin(self, memory_service):
+        memoria = memory_service.add("Memo do usuario")
+        assert memoria["origem"] == ORIGEM_USUARIO
+        assert memoria["conversation_id"] == ""
+
+    def test_conversation_memory_keeps_origin_and_id(self, memory_service):
+        memoria = memory_service.add_unique(
+            "Fato da conversa",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="abc123",
+        )
+        assert memoria is not None
+        assert memoria["origem"] == ORIGEM_CONVERSA
+        assert memoria["conversation_id"] == "abc123"
+
+    def test_user_memories_exclude_conversation_facts(self, memory_service):
+        memory_service.add("Memo do usuario")
+        memory_service.add_unique(
+            "Fato da conversa",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="abc123",
+        )
+        user = memory_service.get_user_memories()
+        assert [item["texto"] for item in user] == ["Memo do usuario"]
+
+    def test_get_conversation_memories_filters_by_id(self, memory_service):
+        memory_service.add_unique(
+            "O usuario gosta de churrasco na cidade",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="conv-a",
+        )
+        memory_service.add_unique(
+            "O usuario estuda violao aos fins de semana",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="conv-b",
+        )
+        assert memory_service.get_conversation_memories("conv-a") == [
+            "O usuario gosta de churrasco na cidade"
+        ]
+        assert memory_service.get_conversation_memories("conv-b") == [
+            "O usuario estuda violao aos fins de semana"
+        ]
+
+    def test_delete_for_conversation_removes_only_its_facts(self, memory_service):
+        memory_service.add("Memo do usuario")
+        memory_service.add_unique(
+            "O usuario gosta de churrasco na cidade",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="conv-a",
+        )
+        memory_service.add_unique(
+            "O usuario estuda violao aos fins de semana",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="conv-b",
+        )
+
+        removed = memory_service.delete_for_conversation("conv-a")
+
+        assert removed == 1
+        all_texts = [item["texto"] for item in memory_service.get_all()]
+        assert all_texts == [
+            "Memo do usuario",
+            "O usuario estuda violao aos fins de semana",
+        ]
+
+    def test_delete_for_conversation_is_idempotent(self, memory_service):
+        memory_service.add_unique(
+            "Fato da conversa",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="conv-a",
+        )
+        assert memory_service.delete_for_conversation("conv-a") == 1
+        assert memory_service.delete_for_conversation("conv-a") == 0
+
+    def test_persistence_keeps_origin(self, temp_settings):
+        service = MemoryService(temp_settings)
+        service.add_unique(
+            "Fato da conversa",
+            origem=ORIGEM_CONVERSA,
+            conversation_id="conv-xyz",
+        )
+        reloaded = MemoryService(temp_settings)
+        item = reloaded.get_all()[0]
+        assert item["origem"] == ORIGEM_CONVERSA
+        assert item["conversation_id"] == "conv-xyz"
+
+
+class TestLongTermMemory:
+    @pytest.fixture
+    def temp_settings(self, tmp_path):
+        return Settings(base_dir=tmp_path)
+
+    @pytest.fixture
+    def memory_service(self, temp_settings):
+        return MemoryService(temp_settings)
+
+    def test_add_unique_skips_near_duplicate(self, memory_service):
+        memory_service.add("O usuario gosta de cafe")
+        assert memory_service.add_unique("O usuario gosta de cafe e leite") is None
+        assert memory_service.add_unique("O usuario mora em Curitiba") is not None
+        assert len(memory_service.get_all()) == 2
+
+    def test_search_multi_merges_queries(self, memory_service):
+        memory_service.add("O usuario gosta de pizza")
+        memory_service.add("O usuario programa em Python")
+        results = memory_service.search_multi(["pizza", "python"])
+        assert results == ["O usuario gosta de pizza", "O usuario programa em Python"]
+
+    def test_memory_query_context_dedupes_and_orders(self):
+        queries = memory_query_context(["como estou?", "preciso de ajuda"])
+        assert queries == ["como estou?", "preciso de ajuda"]
+        assert memory_query_context(["duplicado", "duplicado"]) == ["duplicado"]
+        assert memory_query_context([], extra_queries=["tema x"]) == ["tema x"]
+
+    def test_parse_facts_extracts_json_array(self):
+        assert _parse_facts('fora {"a":1} ["fato um", "fato dois"] lixo', 5) == [
+            "fato um",
+            "fato dois",
+        ]
+        assert _parse_facts("sem array", 5) == []
+        assert _parse_facts('["a"]', 1) == ["a"]
+
+    def test_remember_from_turn_stores_new_facts(self, temp_settings, monkeypatch):
+        import core.memory
+
+        service = MemoryService(temp_settings)
+        monkeypatch.setattr(core.memory, "get_settings", lambda: temp_settings)
+        monkeypatch.setattr(core.memory, "get_memory_service", lambda: service)
+        monkeypatch.setattr(
+            core.memory,
+            "_extract_facts_from_llm",
+            lambda dialogo, max_facts: [
+                "O usuario adora cafe",
+                "O usuario mora em Sao Paulo",
+            ],
+        )
+
+        added = remember_from_turn(
+            [{"role": "user", "content": "Eu adoro cafe e moro em Sao Paulo"}],
+            max_facts=5,
+        )
+        assert added == 2
+        assert len(service.get_all()) == 2
+
+    def test_remember_from_turn_drops_duplicates(self, temp_settings, monkeypatch):
+        import core.memory
+
+        service = MemoryService(temp_settings)
+        service.add("O usuario gosta de cafe")
+        monkeypatch.setattr(core.memory, "get_settings", lambda: temp_settings)
+        monkeypatch.setattr(core.memory, "get_memory_service", lambda: service)
+        monkeypatch.setattr(
+            core.memory,
+            "_extract_facts_from_llm",
+            lambda dialogo, max_facts: ["O usuario gosta de cafe e leite"],
+        )
+
+        assert remember_from_turn([{"role": "user", "content": "cafe"}], max_facts=5) == 0
+        assert len(service.get_all()) == 1
+
+    def test_remember_from_turn_tags_facts_with_conversation(self, temp_settings, monkeypatch):
+        import core.memory
+
+        service = MemoryService(temp_settings)
+        monkeypatch.setattr(core.memory, "get_settings", lambda: temp_settings)
+        monkeypatch.setattr(core.memory, "get_memory_service", lambda: service)
+        monkeypatch.setattr(
+            core.memory,
+            "_extract_facts_from_llm",
+            lambda dialogo, max_facts: ["O usuario adora churrasco"],
+        )
+
+        added = remember_from_turn(
+            [{"role": "user", "content": "Gosto de churrasco"}],
+            max_facts=5,
+            conversation_id="conv-xpto",
+        )
+        assert added == 1
+        facts = service.get_conversation_memories("conv-xpto")
+        assert facts == ["O usuario adora churrasco"]
+        assert [item["texto"] for item in service.get_user_memories()] == []
+
+    def test_is_near_duplicate(self):
+        assert _is_near_duplicate("O usuario gosta de cafe", ["O usuario gosta de cafe e leite"])
+        assert not _is_near_duplicate("O usuario gosta de cafe", ["O usuario mora em Curitiba"])
+        assert not _is_near_duplicate("", [])
 
 
 class TestBackwardCompatibility:

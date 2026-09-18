@@ -2,11 +2,14 @@
 ConversationManager - Gerencia conversas, histórico e persistência.
 """
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
 from core.conversations import get_conversation_manager
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationManager(QObject):
@@ -123,6 +126,12 @@ class ConversationManager(QObject):
             return
         del self._conversations[conv_id]
         self._core_manager.delete(conv_id)
+        delete_for_conversation = getattr(self.memory_service, "delete_for_conversation", None)
+        if delete_for_conversation is not None:
+            try:
+                delete_for_conversation(conv_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Erro ao apagar memorias da conversa %s: %s", conv_id, exc)
         if self._current_conv_id == conv_id:
             self._current_conv_id = None
             self.conversation_changed.emit("")
@@ -155,4 +164,17 @@ class ConversationManager(QObject):
         user_msgs = [m["content"] for m in msgs.get("messages", []) if m["role"] == "user"]
         if not user_msgs:
             return []
-        return self.memory_service.search(user_msgs[-1])
+        from core.memory import memory_query_context
+
+        queries = memory_query_context(user_msgs)
+        search_multi = getattr(self.memory_service, "search_multi", None)
+        if search_multi is not None:
+            return search_multi(queries)
+        memories = []
+        seen = set()
+        for query in queries:
+            for match in self.memory_service.search(query) or []:
+                if match not in seen:
+                    seen.add(match)
+                    memories.append(match)
+        return memories

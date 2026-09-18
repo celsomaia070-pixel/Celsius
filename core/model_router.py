@@ -62,13 +62,6 @@ class RoutingDecision:
 # ── Model profiles (known models) ────────────────────────────
 
 MODEL_PROFILES: dict[str, ModelProfile] = {
-    "qwen3-4b-q4km": ModelProfile(
-        name="Qwen3 4B Instruct",
-        max_context=32768,
-        supports_tools=True,
-        speed_rating=1.0,
-        quality_rating=0.58,
-    ),
     "qwen3-8b-q4km": ModelProfile(
         name="Qwen3 8B Instruct",
         max_context=131072,
@@ -367,6 +360,23 @@ def _available_model_id(settings: Any, preferred_model_id: str) -> str:
     return preferred_model_id
 
 
+_FAST_MODEL_MISSING_WARNED = False
+
+
+def _warn_once_fast_model_missing(preferred: str, resolved: str) -> None:
+    global _FAST_MODEL_MISSING_WARNED
+    if _FAST_MODEL_MISSING_WARNED:
+        return
+    _FAST_MODEL_MISSING_WARNED = True
+    logger.warning(
+        "Modelo rapido %s nao esta baixado; queries simples usarao %s (mais lento). "
+        "Baixe o %s na selecao de modelos para acelerar respostas simples.",
+        preferred,
+        resolved,
+        preferred,
+    )
+
+
 @dataclass
 class ModelRouter:
     """Routes queries to appropriate model based on complexity.
@@ -424,6 +434,7 @@ class ModelRouter:
 
             # Pick model from user-facing product modes.
             lower = query.lower()
+            preferred_complexity_model = ""
             if _needs_vision_model(has_image):
                 model_id = getattr(settings, "vision_llm_model", VISION_LLM_MODEL)
             elif _needs_reasoning_model(lower):
@@ -432,11 +443,19 @@ class ModelRouter:
                 model_id = settings.llm_model or DEFAULT_LLM_MODEL
             elif complexity == Complexity.SIMPLE:
                 model_id = getattr(settings, "fast_llm_model", FAST_LLM_MODEL)
+                preferred_complexity_model = model_id
             elif complexity == Complexity.COMPLEX:
                 model_id = getattr(settings, "quality_llm_model", QUALITY_LLM_MODEL)
             else:
                 model_id = settings.llm_model or DEFAULT_LLM_MODEL
-            model_id = _available_model_id(settings, model_id)
+            resolved_model_id = _available_model_id(settings, model_id)
+            if (
+                preferred_complexity_model
+                and resolved_model_id != preferred_complexity_model
+                and complexity == Complexity.SIMPLE
+            ):
+                _warn_once_fast_model_missing(preferred_complexity_model, resolved_model_id)
+            model_id = resolved_model_id
 
             reason = "; ".join(reasons) if reasons else "default routing"
 
@@ -547,12 +566,24 @@ class MultiModelManager:
         self._last_decision: RoutingDecision | None = None
 
     def get_manager(self, model_id: str) -> Any:
-        """Get the appropriate LlamaManager for a model ID."""
+        """Get the appropriate LlamaManager for a model ID.
 
+        Lazily starts the fast model when routing to it and the file exists.
+        Falls back to the main manager on failure so inferencing still works.
+        """
         settings = get_settings()
         if model_id == getattr(settings, "fast_llm_model", None):
             if self.fast_manager._started:
                 return self.fast_manager
+            try:
+                if self.fast_manager.start(model_id=model_id):
+                    return self.fast_manager
+            except Exception as exc:
+                logger.warning(
+                    "Nao foi possivel iniciar o modelo rapido %s (%s); usando o modelo principal.",
+                    model_id,
+                    exc,
+                )
             return self.main_manager
         return self.main_manager
 

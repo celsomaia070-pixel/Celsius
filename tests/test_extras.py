@@ -6,8 +6,10 @@ import pytest
 from core.extras import (
     EXTRA_PROBES,
     INSTALL_HINTS,
+    feature_notice_lines,
     install_hint,
     is_extra_available,
+    missing_extras,
     missing_modules,
 )
 from tools.sync_requirements import APP_EXTRA_GROUPS
@@ -58,3 +60,20 @@ def test_find_spec_uncached_on_import_error(monkeypatch):
     monkeypatch.setattr("core.extras.find_spec", flaky_spec)
     assert not is_extra_available("docker")
     assert calls["count"] >= len(EXTRA_PROBES["docker"])
+
+
+def test_missing_extras_lists_unavailable_groups(monkeypatch):
+    monkeypatch.setattr("core.extras.find_spec", lambda name: None)
+    missing = missing_extras()
+    assert "docker" in missing
+    assert "documents" in missing
+
+
+def test_feature_notice_lines_contain_hints(monkeypatch):
+    monkeypatch.setattr("core.extras.find_spec", lambda name: None)
+    lines = feature_notice_lines()
+    assert len(lines) == len(APP_EXTRA_GROUPS)
+    prefixes = {f"{extra}:" for extra in APP_EXTRA_GROUPS}
+    for line in lines:
+        assert any(line.startswith(prefix) for prefix in prefixes)
+        assert "pip install" in line

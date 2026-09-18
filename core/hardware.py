@@ -10,6 +10,7 @@ import logging
 import os
 import platform
 import subprocess
+import threading
 from dataclasses import dataclass
 from enum import Enum
 
@@ -413,15 +414,6 @@ class ModelRequirements:
 
 
 MODEL_REQUIREMENTS: dict[str, ModelRequirements] = {
-    "qwen3-4b-q4km": ModelRequirements(
-        min_ram_gb=8,
-        recommended_ram_gb=12,
-        min_vram_mb=2500,
-        recommended_vram_mb=4096,
-        min_cpu_cores=2,
-        estimated_tokens_per_sec_cpu=12,
-        estimated_tokens_per_sec_gpu=42,
-    ),
     "qwen3-8b-q4km": ModelRequirements(
         min_ram_gb=12,
         recommended_ram_gb=24,
@@ -553,3 +545,18 @@ def estimate_tokens_per_sec(model_id: str, profile: HardwareProfile) -> int:
         return int(reqs.estimated_tokens_per_sec_cpu * ratio)
 
     return 3
+
+
+_detected_profile: HardwareProfile | None = None
+_detected_profile_lock = threading.Lock()
+
+
+def get_detected_profile() -> HardwareProfile:
+    """Return the detected hardware profile, detecting it only once."""
+    global _detected_profile
+    if _detected_profile is not None:
+        return _detected_profile
+    with _detected_profile_lock:
+        if _detected_profile is None:
+            _detected_profile = detect_hardware()
+    return _detected_profile

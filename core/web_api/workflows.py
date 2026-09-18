@@ -47,7 +47,7 @@ class ReportRequest(BaseModel):
     indicator: str = Field(default="", max_length=180)
     periodicity: str = Field(default="Sob demanda", max_length=40)
     responsible: str = Field(default="", max_length=180)
-    output_format: str = Field(default="pdf", pattern="^(pdf|docx|md)$")
+    output_format: str = Field(default="pdf", pattern="^(pdf|docx|xlsx|md)$")
     notes: str = Field(default="", max_length=5_000)
 
 

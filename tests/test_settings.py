@@ -74,7 +74,7 @@ class TestModelSettingsDefaults:
 
     def test_fast_llm_model(self):
         s = ModelSettings()
-        assert s.fast_llm_model == "qwen3-4b-q4km"
+        assert s.fast_llm_model == "gemma3-4b-q4km"
 
     def test_embedding_model(self):
         s = ModelSettings()
@@ -681,6 +681,7 @@ class TestSettingsMain:
         s.voice.profile = "natural_female_br"
         s.voice.voice = "pt-BR-FranciscaNeural"
         s.modules.set_enabled(["suppliers"])
+        s.security.allowed_file_roots = ("C:/Docs", "E:/Empresa")
 
         path = s.save_local_preferences()
 
@@ -691,6 +692,27 @@ class TestSettingsMain:
         assert "modules" in data
         assert "mobile" in data
         assert "notifications" in data
+        assert "security" in data
+        assert '"C:/Docs"' in data
+        assert '"E:/Empresa"' in data
+
+    def test_loads_security_allowed_file_roots(self, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "celsius_settings.json").write_text(
+            """
+            {
+              "security": {
+                "allowed_file_roots": ["C:/Docs", "E:/Empresa"]
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+        s = Settings(data_dir=data_dir)
+        s.initialize()
+
+        assert s.security.allowed_file_roots == ("C:/Docs", "E:/Empresa")
 
     def test_loads_module_preferences(self, tmp_path):
         from core.modules import MODULE_CHAT, MODULE_SETTINGS, MODULE_SUPPLIERS

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 import uuid
@@ -215,6 +216,18 @@ class ChatCoordinator:
                 raise ChatNotFoundError("Conversa nao encontrada.")
             deleted = self.conversations.delete(conversation_id)
         if deleted:
+            with contextlib.suppress(Exception):
+                if self.memory_service is None:
+                    from core.memory import get_memory_service
+
+                    memory_service = get_memory_service()
+                else:
+                    memory_service = self.memory_service
+                delete_for_conversation = getattr(
+                    memory_service, "delete_for_conversation", None
+                )
+                if delete_for_conversation is not None:
+                    delete_for_conversation(conversation_id)
             self.event_hub.publish(
                 "conversation.deleted",
                 {"conversation_id": conversation_id},
@@ -282,7 +295,7 @@ class ChatCoordinator:
         try:
             check_cancelled()
             self._ensure_model_ready_callback(on_status)
-            memories = self._load_memories(message, on_status)
+            memories = self._load_memories(message, on_status, job.conversation_id)
             prompt = {
                 "pergunta": message,
                 "documento": "",
@@ -320,6 +333,7 @@ class ChatCoordinator:
                 response,
                 metadata={"source": "web", "job_id": job.id},
             )
+            self._kick_memory_extraction(job.conversation_id)
             with self._lock:
                 job.status = "completed"
                 job.completed_at = _now_iso()
@@ -359,17 +373,63 @@ class ChatCoordinator:
         self.attachments.discard(job.attachment_ids)
         self.event_hub.publish("chat.cancelled", {"job_id": job.id})
 
-    def _load_memories(self, message: str, on_status: Callable[[str], None]) -> list[str]:
+    def _load_memories(
+        self,
+        message: str,
+        on_status: Callable[[str], None],
+        conversation_id: str = "",
+    ) -> list[str]:
         if not self.settings.features.memory:
             return []
         if self.memory_service is None:
             from core.memory import get_memory_service
 
             self.memory_service = get_memory_service()
-        memories = self.memory_service.search(message)
+        from core.memory import memory_query_context
+
+        user_messages = [message]
+        if conversation_id:
+            conversation = self.conversations.load(conversation_id)
+            if conversation:
+                user_messages.extend(
+                    str(item["content"])
+                    for item in conversation.get("messages", [])
+                    if item.get("role") == "user" and item.get("content")
+                )
+        queries = memory_query_context(user_messages)
+        search_multi = getattr(self.memory_service, "search_multi", None)
+        if search_multi is not None:
+            memories = search_multi(queries)
+        else:
+            memories = []
+            seen: set[str] = set()
+            for query in queries:
+                for match in self.memory_service.search(query) or []:
+                    if match not in seen:
+                        seen.add(match)
+                        memories.append(match)
         if memories:
             on_status("Aplicando contexto pessoal relevante...")
         return memories
+
+    def _kick_memory_extraction(self, conversation_id: str) -> None:
+        """Learn durable user facts from the finished turn, in background."""
+        settings = self.settings
+        if not settings.features.memory or not settings.memory.auto_extract_facts:
+            return
+        conversation = self.conversations.load(conversation_id)
+        if not conversation:
+            return
+        messages = [
+            {"role": item.get("role"), "content": item.get("content")}
+            for item in conversation.get("messages", [])
+            if item.get("role") in {"user", "assistant"} and item.get("content")
+        ][-(settings.memory.extraction_recent_messages or 10) :]
+        if not messages:
+            return
+        from core.memory import extract_and_store_async
+
+        extract_and_store_async(messages, conversation_id=conversation_id)
 
     def _system_prompt(self) -> str:
         return (

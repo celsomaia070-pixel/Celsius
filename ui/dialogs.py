@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QTextEdit,
@@ -1153,6 +1154,17 @@ class ConfiguracoesDialog(QDialog):
             "Ex: organizar estoque, cadastrar clientes, controlar prazos, gerar relatorios..."
         )
         self.check_offline = QCheckBox("Priorizar operacao local/offline e privacidade")
+        self.input_allowed_roots = QPlainTextEdit()
+        self.input_allowed_roots.setMaximumHeight(88)
+        self.input_allowed_roots.setPlaceholderText(
+            "Uma pasta por linha. Exemplo:\nC:/MeusDocumentos\nE:/Arquivos da Empresa"
+        )
+        self.security_hint = QLabel(
+            "Pastas extras onde o Celsius pode ler arquivos locais. A pasta do projeto "
+            "sempre e autorizada. Processamento e 100% local, sem envio de dados pela internet."
+        )
+        self.security_hint.setWordWrap(True)
+        self.security_hint.setObjectName("hint")
 
         form.addRow("Seu nome:", self.input_user_name)
         form.addRow("Empresa:", self.input_company_name)
@@ -1165,6 +1177,8 @@ class ConfiguracoesDialog(QDialog):
         form.addRow("Contexto:", self.input_business_context)
         form.addRow("Necessidades:", self.input_main_needs)
         form.addRow("", self.check_offline)
+        form.addRow("Pastas autorizadas:", self.input_allowed_roots)
+        form.addRow("", self.security_hint)
         form.addRow("Modo resposta:", self.combo_response_mode)
         form.addRow("Nivel de detalhe:", self.combo_response_detail)
         form.addRow("Criatividade:", self.input_response_temperature)
@@ -1312,6 +1326,9 @@ class ConfiguracoesDialog(QDialog):
         self.input_business_context.setPlainText(customer.business_context)
         self.input_main_needs.setPlainText(customer.main_needs)
         self.check_offline.setChecked(customer.local_offline_required)
+        self.input_allowed_roots.setPlainText(
+            "\n".join(self.settings.security.allowed_file_roots)
+        )
         enabled_modules = set(self.settings.modules.enabled)
         for module in module_catalog():
             self.module_checks[module.id].setChecked(module.id in enabled_modules)
@@ -1464,6 +1481,12 @@ class ConfiguracoesDialog(QDialog):
         customer.business_context = self.input_business_context.toPlainText().strip()
         customer.main_needs = self.input_main_needs.toPlainText().strip()
         customer.local_offline_required = self.check_offline.isChecked()
+        allowed_roots = tuple(
+            line.strip()
+            for line in self.input_allowed_roots.toPlainText().splitlines()
+            if line.strip()
+        )
+        self.settings.security.allowed_file_roots = allowed_roots
         self.settings.modules.set_enabled(
             module_id
             for module_id, check in self.module_checks.items()

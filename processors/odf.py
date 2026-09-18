@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from core.settings import get_settings
-from processors.base import ProcessadorArquivo
+from processors.base import ProcessadorArquivo, truncar_texto
 
 
 class ProcessadorODF(ProcessadorArquivo):
@@ -29,7 +28,7 @@ class ProcessadorODF(ProcessadorArquivo):
         texto = ""
         for paragrafo in doc.getElementsByType(text.P):
             texto += teletype.extractText(paragrafo) + "\n"
-        return cls._truncar(texto.strip())
+        return truncar_texto(texto.strip())
 
     @classmethod
     def _processar_ods(cls, caminho: Path) -> str:
@@ -63,7 +62,7 @@ class ProcessadorODF(ProcessadorArquivo):
                     texto += " | ".join(celulas) + "\n"
             texto += "--- Fim ---\n"
 
-        return cls._truncar(texto.strip())
+        return truncar_texto(texto.strip())
 
     @classmethod
     def _processar_odp(cls, caminho: Path) -> str:
@@ -75,11 +74,4 @@ class ProcessadorODF(ProcessadorArquivo):
         for paragrafo in doc.getElementsByType(P):
             texto += paragrafo.firstChild.data if paragrafo.firstChild else ""
             texto += "\n"
-        return cls._truncar(texto.strip())
-
-    @classmethod
-    def _truncar(cls, texto: str) -> str:
-        limite_texto = get_settings().doc_text_limit
-        if len(texto) > limite_texto:
-            return texto[:limite_texto] + "\n... [Documento truncado] ..."
-        return texto
+        return truncar_texto(texto.strip())

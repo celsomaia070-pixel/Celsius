@@ -3,6 +3,7 @@ Main Window - Janela principal refatorada usando controllers e views extraídos.
 """
 
 import contextlib
+import logging
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.agenda import get_agenda_service
+from core.extras import feature_notice_lines
 from core.inventory import get_inventory_service
 from core.memory import get_memory_service
 from core.mobile_access import (
@@ -52,6 +54,8 @@ from ui.state.theme_manager import ThemeManager
 from ui.theme import ThemeMode, scheme_from_name
 from workers.ai_worker import WorkerManager
 
+logger = logging.getLogger(__name__)
+
 
 class ModernChatWindow(QMainWindow):
     """Main window with sidebar and chat area."""
@@ -61,6 +65,8 @@ class ModernChatWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = get_settings()
+        for notice in feature_notice_lines():
+            logger.warning("Recurso opcional indisponivel; habilite com: %s", notice)
         self.memory_service = get_memory_service()
         self.agenda_service = get_agenda_service()
         self.inventory_service = get_inventory_service()
@@ -95,6 +101,7 @@ class ModernChatWindow(QMainWindow):
         self._voice_stream_finish_requested = False
         self._pending_mobile_voice_audio = []
         self._ai_busy = False
+        self._slow_model_suggestions_shown = set()
         self._next_response_should_speak_on_pc = False
         self._mobile_server = None
         self._agenda_timer = None
@@ -294,6 +301,7 @@ class ModernChatWindow(QMainWindow):
         self.worker_controller.ai_response_finished.connect(self._on_ai_response_finished)
         self.worker_controller.ai_response_error.connect(self._on_ai_response_error)
         self.worker_controller.ai_status_update.connect(self._on_ai_status_update)
+        self.worker_controller.ai_suggestion.connect(self._on_ai_suggestion)
         self.worker_controller.model_loaded.connect(self._on_model_loaded)
         self.worker_controller.model_load_error.connect(self._on_model_load_error)
         self.worker_controller.model_list_loaded.connect(self._on_model_list_loaded)
@@ -826,6 +834,7 @@ class ModernChatWindow(QMainWindow):
         self.chat_view.finish_streaming(full_text)
         if self._current_conv_id:
             self.conversation_manager.add_message(self._current_conv_id, "assistant", full_text)
+        self._kick_memory_extraction()
         if self._mobile_server:
             self._mobile_server.publish_response(full_text, kind="assistant")
             self._publish_pending_mobile_voice_audio()
@@ -838,6 +847,42 @@ class ModernChatWindow(QMainWindow):
                 self._enqueue_voice_stream_chunk(full_text, continuation=False)
         else:
             self._reset_voice_stream()
+
+    def _kick_memory_extraction(self) -> None:
+        """Learn durable user facts from the finished turn, in background."""
+        if not self._memories_enabled:
+            return
+        features = getattr(self.settings, "features", None)
+        if features is not None and not getattr(features, "memory", True):
+            return
+        memory_settings = getattr(self.settings, "memory", None)
+        if memory_settings is not None and not getattr(
+            memory_settings, "auto_extract_facts", False
+        ):
+            return
+        if not self._current_conv_id:
+            return
+        conversation = self.conversation_manager.get_conversation(self._current_conv_id)
+        if not conversation:
+            return
+        recent = (
+            getattr(memory_settings, "extraction_recent_messages", 10)
+            if memory_settings is not None
+            else 10
+        )
+        messages = [
+            {"role": item.get("role"), "content": item.get("content")}
+            for item in conversation.get("messages", [])
+            if item.get("role") in {"user", "assistant"} and item.get("content")
+        ][-recent:]
+        if not messages:
+            return
+        try:
+            from core.memory import extract_and_store_async
+
+            extract_and_store_async(messages, conversation_id=self._current_conv_id)
+        except Exception as exc:
+            logger.warning("Nao foi possivel agendar extracao de memorias: %s", exc)
 
     def _on_ai_response_error(self, error: str):
         self._ai_busy = False
@@ -852,6 +897,15 @@ class ModernChatWindow(QMainWindow):
         if self._mobile_server:
             self._mobile_server.publish_response(error_text, kind="error")
         self._next_response_should_speak_on_pc = False
+
+    def _on_ai_suggestion(self, suggestion: str):
+        """Show a lighter-model suggestion in the chat as a non-persistent bubble."""
+        if not suggestion:
+            return
+        if suggestion in self._slow_model_suggestions_shown:
+            return
+        self._slow_model_suggestions_shown.add(suggestion)
+        self.chat_view.add_assistant_message(f"[Dica] {suggestion}")
 
     def _on_ai_status_update(self, status: str):
         label = self._friendly_ai_status(status)

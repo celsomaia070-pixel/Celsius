@@ -135,7 +135,7 @@ class BusinessWorkflowService:
         report_type = str(values.get("tipo", "Executivo") or "Executivo").strip()
         source = str(values.get("fonte_dados", report_type) or report_type).strip()
         output_format = str(values.get("formato", "pdf") or "pdf").lower().strip()
-        if output_format not in {"pdf", "docx", "md"}:
+        if output_format not in {"pdf", "docx", "xlsx", "md"}:
             raise WorkflowError("Formato de relatorio invalido.")
 
         content, indicator = self._report_content(source, values.get("observacoes", ""))
@@ -153,6 +153,8 @@ class BusinessWorkflowService:
             GeradorRelatorio.exportar_pdf(title, content, str(target), metadata)
         elif output_format == "docx":
             GeradorRelatorio.exportar_docx(title, content, str(target), metadata)
+        elif output_format == "xlsx":
+            GeradorRelatorio.exportar_xlsx(title, content, str(target), metadata)
         else:
             target.write_text(
                 GeradorRelatorio.gerar_markdown(title, content, metadata),

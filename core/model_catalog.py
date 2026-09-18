@@ -60,21 +60,6 @@ class CelsiusModelSpec:
 
 
 CELSIUS_MODEL_CATALOG: dict[str, CelsiusModelSpec] = {
-    "qwen3-4b-q4km": CelsiusModelSpec(
-        id="qwen3-4b-q4km",
-        name="Qwen3 4B Instruct",
-        family="Qwen3",
-        role="Modo leve e comandos rapidos",
-        capabilities=(ModelCapability.CHAT, ModelCapability.FAST),
-        recommended_quant="Q4_K_M",
-        size_gb=2.8,
-        context_tokens=32768,
-        min_ram_gb=8,
-        recommended_ram_gb=12,
-        min_vram_mb=2500,
-        recommended_vram_mb=4096,
-        notes="Bom para comandos, agenda, estoque e respostas curtas.",
-    ),
     "qwen3-8b-q4km": CelsiusModelSpec(
         id="qwen3-8b-q4km",
         name="Qwen3 8B Instruct",
@@ -215,7 +200,7 @@ CELSIUS_MODEL_CATALOG: dict[str, CelsiusModelSpec] = {
         min_vram_mb=2500,
         recommended_vram_mb=4096,
         commercial_friendly=False,
-        notes="Mantido por compatibilidade; novo padrao leve e Qwen3 4B.",
+        notes="Mantido por compatibilidade; novo padrao leve e Qwen3 8B.",
     ),
     "qwen2.5-3b-q8": CelsiusModelSpec(
         id="qwen2.5-3b-q8",
@@ -251,7 +236,7 @@ CELSIUS_MODEL_CATALOG: dict[str, CelsiusModelSpec] = {
 
 
 MODEL_PRESETS: dict[ModelPreset, str] = {
-    ModelPreset.FAST: "qwen3-4b-q4km",
+    ModelPreset.FAST: "gemma3-4b-q4km",
     ModelPreset.BALANCED: "qwen2.5-vl-7b-q4km",
     ModelPreset.QUALITY: "qwen3-14b-q4km",
     ModelPreset.DEEP_ANALYSIS: "deepseek-r1-distill-qwen-7b-q4km",

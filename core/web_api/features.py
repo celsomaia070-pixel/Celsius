@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from core.config import GGUF_MODELS
+from core.memory import ORIGEM_CONVERSA
 from core.model_catalog import get_model_spec
 from core.tts import friendly_tts_error
 
@@ -34,6 +35,8 @@ def list_memories(request: Request) -> dict:
     items = []
     for index, memory in enumerate(memories):
         if isinstance(memory, dict):
+            if memory.get("origem") == ORIGEM_CONVERSA:
+                continue
             text = str(memory.get("texto", "")).strip()
             date = str(memory.get("data", "")).strip()
         else:
@@ -52,7 +55,7 @@ def add_memory(payload: MemoryCreateRequest, request: Request) -> dict:
     existing = {
         str(item.get("texto", "")).strip().casefold()
         for item in request.app.state.memory_service.get_all()
-        if isinstance(item, dict)
+        if isinstance(item, dict) and item.get("origem") != ORIGEM_CONVERSA
     }
     if text.casefold() in existing:
         raise HTTPException(status_code=409, detail="Esta memoria ja foi cadastrada.")

@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from core.settings import get_settings
-from processors.base import ProcessadorArquivo
+from processors.base import ProcessadorArquivo, truncar_texto
 
 
 class ProcessadorDOCX(ProcessadorArquivo):
@@ -26,8 +25,4 @@ class ProcessadorDOCX(ProcessadorArquivo):
                 texto += " | ".join(celulas) + "\n"
             texto += "--- Fim da Tabela ---\n"
 
-        texto = texto.strip()
-        limite_texto = get_settings().doc_text_limit
-        if len(texto) > limite_texto:
-            texto = texto[:limite_texto] + "\n... [Documento truncado] ..."
-        return texto
+        return truncar_texto(texto.strip())

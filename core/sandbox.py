@@ -929,12 +929,22 @@ class DockerSandboxExecutor:
         memory_mb: int = 256,
         max_output: int = 50_000,
         network_disabled: bool = True,
+        pids_limit: int = 64,
+        disk_mb: int = 16,
+        shm_mb: int = 64,
+        image_digest: str | None = None,
     ) -> None:
         self.image = image
         self.cpu_time = cpu_time
         self.memory_mb = memory_mb
         self.max_output = max_output
         self.network_disabled = network_disabled
+        self.pids_limit = pids_limit
+        self.disk_mb = max(1, disk_mb)
+        self.shm_mb = max(1, shm_mb)
+        #: Optional ``sha256:...`` pin; appended to the image tag when set so
+        #: the container always runs the exact pull.
+        self.image_digest = image_digest
 
     def execute(self, code: str) -> ExecutionResult:
         """Run *code* inside an ephemeral container and return an ExecutionResult."""
@@ -975,19 +985,24 @@ class DockerSandboxExecutor:
         mem_limit = f"{self.memory_mb}m"
         cpu_period = 100_000
         cpu_quota = max(cpu_period, self.cpu_time * cpu_period)
+        image = self.image
+        if self.image_digest and "@" not in image:
+            image = f"{image}@{self.image_digest}"
 
         client = docker.from_env()
         t0 = time.perf_counter()
         container = client.containers.run(
-            self.image,
+            image,
             command=command,
             detach=True,
             network_disabled=self.network_disabled,
             mem_limit=mem_limit,
             cpu_period=cpu_period,
             cpu_quota=cpu_quota,
+            pids_limit=self.pids_limit,
             read_only=True,
-            tmpfs={"/tmp": "size=16m"},
+            tmpfs={"/tmp": f"size={self.disk_mb}m", "/dev/shm": f"size={self.shm_mb}m"},
+            storage_opt={"size": f"{max(1, self.disk_mb * 4)}m"},
             cap_drop=["ALL"],
             security_opt=["no-new-privileges"],
             auto_remove=False,

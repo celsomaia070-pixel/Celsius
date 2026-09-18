@@ -36,6 +36,7 @@ REASONING_CLOSE_TAGS = ("</think>", "</analysis>")
 CHART_KEYWORDS = (
     "grafico",
     "gráfico",
+    "graficos",
     "chart",
     "barras",
     "horizontal",
@@ -69,9 +70,12 @@ CHART_KEYWORDS = (
     "desempenho",
     "produtividade",
     "atingimento",
+    "visualizacao",
+    "visualizar",
+    "visualizar dados",
     "plotar",
     "plot",
-    "visualizar",
+    "meta",
 )
 
 
@@ -212,6 +216,8 @@ def _try_direct_business_report(question: str) -> str | None:
     output_format = "docx" if "docx" in normalized or "word" in normalized else "pdf"
     if "markdown" in normalized or re.search(r"\bmd\b", normalized):
         output_format = "md"
+    if "xlsx" in normalized or "excel" in normalized or "planilha" in normalized:
+        output_format = "xlsx"
     result = executar_ferramenta(
         "gerar_relatorio_local",
         {
@@ -917,18 +923,6 @@ class PassoReact:
         return self.conteudo
 
 
-def _formatar_ferramentas_texto() -> str:
-    linhas = []
-    for f in REGISTRO_FERRAMENTAS:
-        params = f.schema.get("properties", {})
-        required = f.schema.get("required", [])
-        param_str = ", ".join(f"{k}" + (" (obrigatorio)" if k in required else "") for k in params)
-        linhas.append(f"- {f.nome}: {f.descricao}")
-        if param_str:
-            linhas.append(f"  Parametros: {param_str}")
-    return "\n".join(linhas)
-
-
 def _filtrar_ferramentas(pergunta: str, *, has_document: bool = False) -> list:
     """Filter tools based on query relevance."""
     keywords_map = {
@@ -977,6 +971,15 @@ def _filtrar_ferramentas(pergunta: str, *, has_document: bool = False) -> list:
         ],
         "listar_arquivos": ["listar", "arquivos", "pasta", "diretorio", "arquivos na"],
         "ler_arquivo": ["ler arquivo", "abrir arquivo", "conteudo do arquivo"],
+        "criar_editar_arquivo": [
+            "criar arquivo",
+            "editar arquivo",
+            "escrever arquivo",
+            "salvar arquivo",
+            "anotacoes",
+            "criar .md",
+            "criar .csv",
+        ],
         "processar_arquivo": [
             "processar",
             "analisar arquivo",
@@ -1131,41 +1134,7 @@ def _filtrar_ferramentas(pergunta: str, *, has_document: bool = False) -> list:
             "relatorio em pdf",
             "relatorio pdf",
         ],
-        "gerar_grafico": [
-            "grafico",
-            "graficos",
-            "chart",
-            "barras",
-            "pizza",
-            "pie",
-            "line",
-            "area",
-            "histograma",
-            "dispersao",
-            "scatter",
-            "radar",
-            "mapa de calor",
-            "heatmap",
-            "cascata",
-            "waterfall",
-            "funil",
-            "funnel",
-            "boxplot",
-            "combinado",
-            "combo",
-            "indicador",
-            "kpi",
-            "eficiencia",
-            "eficiência",
-            "desempenho",
-            "produtividade",
-            "atingimento",
-            "meta",
-            "visualizar",
-            "visualizar dados",
-            "plotar",
-            "plot",
-        ],
+        "gerar_grafico": list(CHART_KEYWORDS),
     }
 
     pergunta_lower = pergunta.casefold()
@@ -1208,19 +1177,6 @@ def _filtrar_ferramentas(pergunta: str, *, has_document: bool = False) -> list:
         )
 
     return [f for f in REGISTRO_FERRAMENTAS if f.nome in relevant_tools]
-
-
-def _formatar_ferramentas_texto_filtrado(ferramentas: list) -> str:
-    """Format only the given list of tools."""
-    linhas = []
-    for f in ferramentas:
-        params = f.schema.get("properties", {})
-        required = f.schema.get("required", [])
-        param_str = ", ".join(f"{k}" + (" (obrigatorio)" if k in required else "") for k in params)
-        linhas.append(f"- {f.nome}: {f.descricao}")
-        if param_str:
-            linhas.append(f"  Parametros: {param_str}")
-    return "\n".join(linhas)
 
 
 def loop_react(

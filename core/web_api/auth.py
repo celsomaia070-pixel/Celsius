@@ -9,7 +9,7 @@ import time
 
 from fastapi import Request, WebSocket
 
-from core.mobile_access import ensure_mobile_token
+from core.mobile_access import rotate_mobile_token
 
 
 class BrowserSessionStore:
@@ -77,12 +77,13 @@ class BrowserSessionStore:
 
 
 def resolve_access_token(settings) -> str:
-    """Reuse the existing pairing identity during the incremental migration."""
+    """Reuse the pairing identity, rotating it when stale or absent."""
 
     existing_token = (settings.mobile.pairing_token or "").strip()
-    token = ensure_mobile_token(existing_token)
-    settings.mobile.pairing_token = token
-    if not existing_token:
+    token = rotate_mobile_token(settings, current=existing_token)
+    changed = token != existing_token
+    if changed:
+        settings.mobile.pairing_token = token
         with contextlib.suppress(OSError):
             settings.save_local_preferences()
     return token

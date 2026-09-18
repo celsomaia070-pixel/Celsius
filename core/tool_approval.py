@@ -24,6 +24,7 @@ SENSITIVE_TOOLS = frozenset(
         "cadastrar_processo_prazo",
         "cadastrar_produto_servico",
         "criar_compromisso_agenda",
+        "criar_editar_arquivo",
         "entrada_estoque",
         "executar_codigo",
         "indexar_documento",

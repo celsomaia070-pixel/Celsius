@@ -8,6 +8,15 @@ class SecurityError(Exception):
     pass
 
 
+def truncar_texto(texto: str, limite: int | None = None) -> str:
+    """Truncate text at the document limit with a consistent marker."""
+    if limite is None:
+        limite = get_settings().doc_text_limit
+    if len(texto) > limite:
+        return texto[:limite] + "\n... [Documento truncado] ..."
+    return texto
+
+
 def validate_path(
     path: str | Path,
     base_dir: Path | None = None,

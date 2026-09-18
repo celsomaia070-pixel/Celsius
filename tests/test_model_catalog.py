@@ -19,7 +19,7 @@ from core.model_catalog import (
 class TestModelCatalog:
     def test_default_models_follow_celsius_product_strategy(self):
         assert DEFAULT_LLM_MODEL == "qwen2.5-vl-7b-q4km"
-        assert FAST_LLM_MODEL == "qwen3-4b-q4km"
+        assert FAST_LLM_MODEL == "gemma3-4b-q4km"
         assert REASONING_LLM_MODEL == "deepseek-r1-distill-qwen-7b-q4km"
         assert VISION_LLM_MODEL == "qwen2.5-vl-7b-q4km"
         assert DEFAULT_EMBEDDING_MODEL == "qwen3-embedding-0.6b"

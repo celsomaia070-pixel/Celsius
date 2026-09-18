@@ -429,6 +429,13 @@ class LlamaManager:
             if not lock_transferred:
                 self._inference_lock.release()
 
+    def is_inference_busy(self) -> bool:
+        """Return True when another thread holds the inference lock."""
+        if self._inference_lock.acquire(blocking=False):
+            self._inference_lock.release()
+            return False
+        return True
+
     def get_model_info(self) -> dict[str, Any]:
         """Get model metadata."""
         with self._inference_lock:
