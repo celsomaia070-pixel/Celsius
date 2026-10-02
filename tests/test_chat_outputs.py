@@ -245,8 +245,13 @@ def test_download_route_requires_a_real_attachment(web_settings, tmp_path):
     app = create_app(settings=web_settings, event_hub=hub, chat_coordinator=coordinator)
 
     with TestClient(app) as client:
-        assert client.get("/api/v1/chat/attachments/" + "a" * 32, headers=_headers()).status_code == 404
-        assert client.get("/api/v1/chat/attachments/nao-existe", headers=_headers()).status_code == 404
+        assert (
+            client.get("/api/v1/chat/attachments/" + "a" * 32, headers=_headers()).status_code
+            == 404
+        )
+        assert (
+            client.get("/api/v1/chat/attachments/nao-existe", headers=_headers()).status_code == 404
+        )
 
 
 def test_download_route_is_protected(web_settings, tmp_path):
@@ -293,7 +298,9 @@ def test_document_tool_announces_the_attached_file(web_settings, tmp_path, monke
     assert not list(working.glob("*.docx"))
 
 
-def test_template_request_delivers_download_even_when_model_only_drafts_in_chat(web_settings, tmp_path, monkeypatch):
+def test_template_request_delivers_download_even_when_model_only_drafts_in_chat(
+    web_settings, tmp_path, monkeypatch
+):
     from io import BytesIO
     from types import SimpleNamespace
 
@@ -310,8 +317,11 @@ def test_template_request_delivers_download_even_when_model_only_drafts_in_chat(
         def create_chat_completion(self, **kwargs):
             yield {"choices": [{"delta": {"content": fabricated}}]}
 
-    manager = SimpleNamespace(route_and_invoke=lambda *a, **k: ("stub-model", Model()),
-                              get_last_decision=lambda: None, get_current_complexity=lambda: "simples")
+    manager = SimpleNamespace(
+        route_and_invoke=lambda *a, **k: ("stub-model", Model()),
+        get_last_decision=lambda: None,
+        get_current_complexity=lambda: "simples",
+    )
     monkeypatch.setattr(react, "get_multi_model_manager", lambda: manager)
     monkeypatch.setattr(react, "get_settings", lambda: web_settings)
     monkeypatch.setattr(tools, "get_settings", lambda: web_settings)
@@ -320,22 +330,35 @@ def test_template_request_delivers_download_even_when_model_only_drafts_in_chat(
     monkeypatch.setattr(rag, "buscar_contexto", lambda *a, **k: [])
     # Approval policy has its own tests; this executor exercises the authorized
     # physical fill and delivery after the model forgot to call the tool.
-    monkeypatch.setattr(react, "executar_ferramenta", lambda name, arguments, **kwargs:
-                        tools._tool_preencher_documento_com_fontes(**arguments, usar_modelo=False))
+    monkeypatch.setattr(
+        react,
+        "executar_ferramenta",
+        lambda name, arguments, **kwargs: tools._tool_preencher_documento_com_fontes(
+            **arguments, usar_modelo=False
+        ),
+    )
     hub = EventHub()
     coordinator = ChatCoordinator(
-        settings=web_settings, event_hub=hub,
+        settings=web_settings,
+        event_hub=hub,
         conversation_manager=ConversationManager(tmp_path / "conversations"),
         responder=lambda prompt, **kwargs: react.loop_react(prompt, **kwargs)[0],
         ensure_model_ready=lambda status: None,
     )
     app = create_app(settings=web_settings, event_hub=hub, chat_coordinator=coordinator)
-    ids = [coordinator.attachments.save(path.name, path.read_bytes()).id for path in [source, template]]
+    ids = [
+        coordinator.attachments.save(path.name, path.read_bytes()).id for path in [source, template]
+    ]
     with TestClient(app) as client:
-        accepted = client.post("/api/v1/chat/messages", headers=_headers(), json={
-            "message": "Preencha modelo.docx com as informações de origem.docx",
-            "attachment_ids": ids, "agent_mode": "documentos",
-        }).json()
+        accepted = client.post(
+            "/api/v1/chat/messages",
+            headers=_headers(),
+            json={
+                "message": "Preencha modelo.docx com as informações de origem.docx",
+                "attachment_ids": ids,
+                "agent_mode": "documentos",
+            },
+        ).json()
         job = _wait_for_job(client, accepted["job"]["id"])
         assert job["status"] == "completed", job
         assert fabricated not in job["response"]
@@ -348,14 +371,20 @@ def test_template_request_delivers_download_even_when_model_only_drafts_in_chat(
         assert Document(BytesIO(downloaded.content)).paragraphs[0].text == "João da Silva"
 
 
-def test_delivery_failure_is_reported_instead_of_claiming_a_download(web_settings, tmp_path, monkeypatch):
+def test_delivery_failure_is_reported_instead_of_claiming_a_download(
+    web_settings, tmp_path, monkeypatch
+):
     from ai import tools
 
     template = _docx(tmp_path / "modelo.docx", "{{nome}}")
-    store = OutputAttachmentStore(root=tmp_path / "outputs", allowed_extensions=ALLOWED, max_bytes=1)
+    store = OutputAttachmentStore(
+        root=tmp_path / "outputs", allowed_extensions=ALLOWED, max_bytes=1
+    )
     monkeypatch.setattr(tools, "get_settings", lambda: web_settings)
     monkeypatch.setattr(tools, "_allowed_file_roots", lambda: [tmp_path])
-    with (collect_outputs(store) as produced,
-          pytest.raises(ValueError, match="nao foi possivel disponibiliza-lo para download")):
+    with (
+        collect_outputs(store) as produced,
+        pytest.raises(ValueError, match="nao foi possivel disponibiliza-lo para download"),
+    ):
         tools._tool_preencher_documento(str(template), {"nome": "João"})
     assert produced == []

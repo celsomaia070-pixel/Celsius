@@ -242,7 +242,7 @@ class BusinessWorkflowService:
             )
             sections.extend(
                 f"- {item['name']}: {item['quantity']} unidades ({item['health']})"
-                for item in items[:20]
+                for item in items
             )
             indicator = f"{len(critical)} itens em reposicao"
         if "cliente" in key or "execut" in key:
@@ -432,7 +432,9 @@ class BusinessWorkflowService:
 
     @staticmethod
     def _slug(value: str) -> str:
-        slug = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower()
+        from core.message_intent import normalize_text
+
+        slug = re.sub(r"[^a-zA-Z0-9]+", "-", normalize_text(value)).strip("-")
         return slug[:80] or "relatorio"
 
     def _publish(self, event_type: str, action: str, item: dict[str, Any]) -> None:

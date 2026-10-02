@@ -166,6 +166,9 @@ class CelsiusAppContext:
         os.environ.setdefault("CELSIUS_CACHE_HOME", str(cache_dir))
         os.environ.setdefault("HF_HOME", str(cache_dir / "huggingface"))
         os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
+        # Force offline mode for Hugging Face Hub and transformers
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
     def shutdown(self) -> None:
         self._backup_databases()
@@ -309,9 +312,7 @@ class CelsiusAppContext:
             logger.warning("Deteccao de hardware falhou: %s", exc)
 
     def _preload_embeddings(self, features) -> None:
-        import sys
-
-        if features.multi_agent and not getattr(sys, "frozen", False):
+        if features.multi_agent:
             self.report("Preparando memoria semantica...")
             try:
                 from ai.agents import preload_embedding_model
@@ -323,8 +324,6 @@ class CelsiusAppContext:
                 preload_tool_embeddings()
             except Exception as exc:
                 logger.warning("Falha ao pre-carregar modelo de embeddings: %s", exc)
-        elif features.multi_agent:
-            logger.info("Embeddings serao carregados sob demanda no executavel")
 
     def _preload_whisper(self, features) -> None:
         if not features.voice_input:

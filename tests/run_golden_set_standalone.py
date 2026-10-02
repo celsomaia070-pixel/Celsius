@@ -97,6 +97,7 @@ def test_broad_tool_flood_is_controlled():
 
 def test_semantic_layer_is_not_silently_inert():
     import sys as _sys
+
     lexical_only = run_lexical()
     lexical_by_id = {c.id: set(c.offered_tools) for c in lexical_only.cases}
 
@@ -205,7 +206,7 @@ if __name__ == "__main__":
             print(f"ERROR: {test.__name__}: {e}")
             failed.append(test.__name__)
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Results: {len(tests) - len(failed)}/{len(tests)} passed")
     if failed:
         print(f"Failed: {failed}")

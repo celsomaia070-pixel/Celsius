@@ -82,7 +82,10 @@ def _ask_llm(
     if not getattr(manager, "is_healthy", lambda: False)():
         return {}, "nenhum modelo local carregado"
     if len(json.dumps(values, ensure_ascii=False)) > 12_000:
-        return {}, "dados excedem o contexto seguro do modelo; somente correspondencias deterministicas aplicadas"
+        return (
+            {},
+            "dados excedem o contexto seguro do modelo; somente correspondencias deterministicas aplicadas",
+        )
 
     prompt = _PROMPT.format(
         campos=json.dumps(
@@ -121,7 +124,7 @@ def _ask_llm(
     mappings = payload.get("mapeamentos")
     if not isinstance(mappings, list):
         return {}, "o modelo nao retornou referencias de origem validas"
-    proposals = {}
+    proposals: dict[str, dict[str, Any]] = {}
     destinations: dict[str, str] = {}
     for item in mappings:
         if isinstance(item, dict) and isinstance(item.get("destino"), str):
@@ -202,11 +205,14 @@ def plan_fill_from_sources(
     conflicts: dict[str, set[str]] = {}
     for source in source_paths:
         extracted = extract_source_values(source)
-        sources.append({
-            "source": extracted["source"], "field_count": extracted["field_count"],
-            "conflicts": extracted["conflicts"],
-            "sha256": hashlib.sha256(Path(source).read_bytes()).hexdigest(),
-        })
+        sources.append(
+            {
+                "source": extracted["source"],
+                "field_count": extracted["field_count"],
+                "conflicts": extracted["conflicts"],
+                "sha256": hashlib.sha256(Path(source).read_bytes()).hexdigest(),
+            }
+        )
         evidence.extend(extracted.get("evidence", []))
         for key, items in extracted["conflicts"].items():
             conflicts.setdefault(key, set()).update(items)
@@ -222,10 +228,20 @@ def plan_fill_from_sources(
     # Conflicting sources and repeated target labels require explicit disambiguation.
     blocked: set[str] = set()
     for field in fields:
-        if len({other.location for other in fields
-                if _normalized(other.label) == _normalized(field.label)}) > 1:
+        if (
+            len(
+                {
+                    other.location
+                    for other in fields
+                    if _normalized(other.label) == _normalized(field.label)
+                }
+            )
+            > 1
+        ):
             blocked.add(field.label)
-        if match_values_to_fields([field], {key: next(iter(items)) for key, items in conflicts.items()})[0]:
+        if match_values_to_fields(
+            [field], {key: next(iter(items)) for key, items in conflicts.items()}
+        )[0]:
             blocked.add(field.label)
     safe_fields = [field for field in fields if field.label not in blocked]
     text_fields = [field for field in safe_fields if field.kind != "checkbox"]
@@ -241,48 +257,81 @@ def plan_fill_from_sources(
             resolved[field.label] = options[_fold(value)]
             mapping.append({**item, "method": "checkbox_exact"})
         else:
-            checkbox_ambiguous.append({**item, "reason": "resposta ambigua ou ausente das opcoes do modelo"})
-    pending = [field for field in safe_fields if field.label not in resolved
-               and not any(item["field"] == field.label for item in checkbox_ambiguous)
-               and not any(item["field"] == field.label for item in mapping)]
+            checkbox_ambiguous.append(
+                {**item, "reason": "resposta ambigua ou ausente das opcoes do modelo"}
+            )
+    pending = [
+        field
+        for field in safe_fields
+        if field.label not in resolved
+        and not any(item["field"] == field.label for item in checkbox_ambiguous)
+        and not any(item["field"] == field.label for item in mapping)
+    ]
     llm_note = ""
     rejected: list[dict[str, Any]] = []
     if use_llm and pending and merged:
         proposal, llm_note = _ask_llm(pending, merged)
         for label, item in proposal.items():
             if not isinstance(item, dict):
-                rejected.append({"field": label, "reason": "modelo deve retornar referencia, nao valor livre"})
+                rejected.append(
+                    {"field": label, "reason": "modelo deve retornar referencia, nao valor livre"}
+                )
                 continue
             source_key, confidence = item.get("origem"), item.get("confianca")
             if not isinstance(source_key, str) or source_key not in merged:
-                rejected.append({"field": label, "reason": "referencia de origem inexistente ou conflitante"})
+                rejected.append(
+                    {"field": label, "reason": "referencia de origem inexistente ou conflitante"}
+                )
                 continue
-            if (not isinstance(confidence, (int, float)) or isinstance(confidence, bool)
-                    or not 0.90 <= confidence <= 1):
+            if (
+                not isinstance(confidence, (int, float))
+                or isinstance(confidence, bool)
+                or not 0.90 <= confidence <= 1
+            ):
                 rejected.append({"field": label, "reason": "confianca insuficiente"})
                 continue
             accepted, invalid = _validate_proposal({label: merged[source_key]}, pending)
             rejected.extend(invalid)
             for target_label, value in accepted.items():
                 resolved[target_label] = value
-                mapping.append({"field": target_label, "value": value, "from": source_key,
-                                "score": confidence, "method": "semantic_reference", "status": "accepted"})
+                mapping.append(
+                    {
+                        "field": target_label,
+                        "value": value,
+                        "from": source_key,
+                        "score": confidence,
+                        "method": "semantic_reference",
+                        "status": "accepted",
+                    }
+                )
     for item in mapping:
         item["confidence"] = item.get("score", 0)
-        item["destination"] = next((field.location for field in fields if field.label == item["field"]), "")
-        item["evidence"] = [hit for hit in evidence
-                            if hit["key"] == item["from"] and hit["value"] == item.get("value")]
+        item["destination"] = next(
+            (field.location for field in fields if field.label == item["field"]), ""
+        )
+        item["evidence"] = [
+            hit
+            for hit in evidence
+            if hit["key"] == item["from"] and hit["value"] == item.get("value")
+        ]
     return {
         "source": inspection["source"],
         "template_sha256": hashlib.sha256(Path(target_path).read_bytes()).hexdigest(),
-        "sources": sources, "mapping": mapping, "values": resolved,
+        "sources": sources,
+        "mapping": mapping,
+        "values": resolved,
         "conflicts": {key: sorted(items) for key, items in conflicts.items()},
-        "rejected": rejected, "checkbox_ambiguous": checkbox_ambiguous,
+        "rejected": rejected,
+        "checkbox_ambiguous": checkbox_ambiguous,
         "still_open": unmapped_fields(fields, resolved),
-        "needs_review": sorted(blocked | {item["field"] for item in rejected}
-                               | {item["field"] for item in checkbox_ambiguous}
-                               | {item["field"] for item in mapping if item.get("status") != "accepted"}),
-        "llm_note": llm_note, "written": False,
+        "needs_review": sorted(
+            blocked
+            | {item["field"] for item in rejected}
+            | {item["field"] for item in checkbox_ambiguous}
+            | {item["field"] for item in mapping if item.get("status") != "accepted"}
+        ),
+        "llm_note": llm_note,
+        "written": False,
     }
 
 
@@ -307,7 +356,8 @@ def fill_from_sources(
             raise ValueError("Um documento de origem foi alterado durante o planejamento.")
     result = fill_document_form(target_path, plan["values"], output_path)
     return {
-        **plan, **result,
+        **plan,
+        **result,
         "still_open": list(dict.fromkeys(plan["still_open"] + result["unmatched"])),
         "needs_review": list(dict.fromkeys(plan["needs_review"] + result["needs_review"])),
         "needs_review_detail": result["needs_review"],

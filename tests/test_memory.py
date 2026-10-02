@@ -15,6 +15,15 @@ from core.memory import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_memory_singleton(tmp_path, monkeypatch):
+    import core.memory as memory
+
+    isolated = Settings(base_dir=tmp_path)
+    monkeypatch.setattr(memory, "get_settings", lambda: isolated)
+    monkeypatch.setattr(memory, "_memory_service", None)
+
+
 class TestMemoryService:
     @pytest.fixture
     def temp_settings(self, tmp_path):

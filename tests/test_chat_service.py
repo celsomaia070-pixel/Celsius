@@ -51,26 +51,73 @@ def _coordinator(chat_settings, tmp_path, responder) -> ChatCoordinator:
     )
 
 
-@pytest.mark.parametrize("message", ["TAREFA: Boa tarde", "TAREFA: Olá Celsius, tudo bem?", "Boa tarde"])
+def test_explicit_memory_read_skips_team_orchestration_and_old_topics(
+    chat_settings, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import ai.multi_agent as team
+
+    chat_settings.features.memory = True
+    queries = []
+    prompts = []
+
+    def search_multi(items):
+        queries.extend(items)
+        return ["Fato registrado no teste sobre TecUnimar"]
+
+    def respond(prompt, **kwargs):
+        prompts.append(prompt)
+        return "Resposta com a memoria local"
+
+    coordinator = _coordinator(chat_settings, tmp_path, respond)
+    coordinator._ensure_model_ready_callback = lambda _status: pytest.fail("model loaded")
+    coordinator.memory_service = SimpleNamespace(search_multi=search_multi)
+    monkeypatch.setattr(team, "run_multi_agent_work", lambda *a, **k: pytest.fail("team"))
+    conversation = coordinator.conversations.create()
+    cid = conversation["id"]
+    coordinator.conversations.add_message(cid, "user", "outro assunto antigo")
+    question = "o celsius tem alguma relação com o tecunimar, procure nas memorias"
+    try:
+        job = coordinator.submit(
+            message=question,
+            conversation_id=cid,
+            work_agents=["pesquisador", "documentos"],
+        )
+        finished = _wait_for_terminal(coordinator, job["id"])
+        assert finished["status"] == "completed"
+        assert queries == [question]
+        assert prompts[0]["memorias_relevantes"] == ["Fato registrado no teste sobre TecUnimar"]
+        assert prompts[0]["memorias_consultadas"] is True
+    finally:
+        coordinator.shutdown()
+
+
+@pytest.mark.parametrize(
+    "message", ["TAREFA: Boa tarde", "TAREFA: Olá Celsius, tudo bem?", "Boa tarde"]
+)
 def test_greetings_from_old_work_clients_do_not_enter_task_runner(chat_settings, tmp_path, message):
     prompts = []
 
     def responder(prompt, **kwargs):
         from ai.task_runtime import is_task_command
+
         prompts.append(prompt)
         assert not is_task_command(prompt["pergunta"])
         return "Boa tarde! Como posso ajudar?"
 
     coordinator = _coordinator(chat_settings, tmp_path, responder)
     try:
-        job = coordinator.submit(message=message, agent_mode="executor", work_agents=["executor", "documentos"])
+        job = coordinator.submit(
+            message=message, agent_mode="executor", work_agents=["executor", "documentos"]
+        )
         result = _wait_for_terminal(coordinator, job["id"])
         assert result["status"] == "completed"
-        assert prompts[0]["agent_mode"] == "assistente"
-        assert not prompts[0]["work_agents"]
-        assert not prompts[0]["pergunta"].startswith("TAREFA:")
+        assert not prompts
+        assert result["agent_mode"] == "assistente"
+        assert not result["work_agents"]
         conversation = coordinator.conversations.load(job["conversation_id"])
-        assert conversation["messages"][0]["content"] == prompts[0]["pergunta"]
+        assert not conversation["messages"][0]["content"].startswith("TAREFA:")
     finally:
         coordinator.shutdown()
 
@@ -84,10 +131,137 @@ def test_greeting_followed_by_work_is_not_stripped(chat_settings, tmp_path):
 
     coordinator = _coordinator(chat_settings, tmp_path, responder)
     try:
-        job = coordinator.submit(message="TAREFA: Boa tarde, gere um relatório de estoque", agent_mode="estoque")
+        job = coordinator.submit(
+            message="TAREFA: Boa tarde, gere um relatório de estoque", agent_mode="estoque"
+        )
         assert _wait_for_terminal(coordinator, job["id"])["status"] == "completed"
         assert prompts[0]["pergunta"].startswith("TAREFA:")
         assert prompts[0]["agent_mode"] == "estoque"
+    finally:
+        coordinator.shutdown()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "quem é voce?",
+        "olá me diga as suas capacidades",
+        "TAREFA: Quem é você?!",
+        "TAREFA: Olá, quais são suas capacidades?",
+        "O que você pode realizar quais suas ferramentas?",
+        "TAREFA: Olá, quais são suas ferramentas?",
+    ],
+)
+def test_fast_replies_skip_all_expensive_paths(chat_settings, tmp_path, monkeypatch, message):
+    import core.chat_service as service
+    import core.embeddings as embeddings
+    import core.memory as memory
+    import ai.react as react
+    import ai.task_runtime as tasks
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("quick reply entered heavy path")
+
+    chat_settings.features.memory = True
+    coordinator = _coordinator(chat_settings, tmp_path, forbidden)
+    monkeypatch.setattr(coordinator, "_ensure_model_ready_callback", forbidden)
+    monkeypatch.setattr(coordinator, "_load_memories", forbidden)
+    monkeypatch.setattr(coordinator._executor, "submit", forbidden)
+    monkeypatch.setattr(embeddings, "create_sentence_transformer", forbidden)
+    monkeypatch.setattr(memory, "buscar_memorias", forbidden)
+    monkeypatch.setattr(react, "loop_react", forbidden)
+    monkeypatch.setattr(tasks, "handle_task_command", forbidden)
+    monkeypatch.setattr(service, "resolve_mode", forbidden)
+    try:
+        job = coordinator.submit(
+            message=message,
+            work_mode=True,
+            agent_mode="executor",
+            work_agents=["executor", "documentos"],
+        )
+        assert job["status"] == "completed"
+        assert job["intent"] == "conversation" and not job["work_agents"]
+        assert job["timings"]["model_state"] == "not_used"
+        assert job["timings"]["first_token_ms"] is not None
+        stored = coordinator.conversations.load(job["conversation_id"])
+        assert stored["messages"][-1]["content"] == job["response"]
+    finally:
+        coordinator.shutdown()
+
+
+def test_work_general_question_uses_model_without_task_or_memory(
+    chat_settings, tmp_path, monkeypatch
+):
+    captured = []
+    coordinator = _coordinator(
+        chat_settings,
+        tmp_path,
+        lambda prompt, **kwargs: captured.append(prompt) or "Resposta pelo modelo",
+    )
+    monkeypatch.setattr(coordinator, "_load_memories", lambda *a: pytest.fail("memory"))
+    prepared = []
+    monkeypatch.setattr(
+        coordinator, "_ensure_model_ready_callback", lambda *a: prepared.append(True)
+    )
+    try:
+        job = coordinator.submit(
+            message="Explique energia solar",
+            work_mode=True,
+            agent_mode="executor",
+            work_agents=["executor", "documentos"],
+        )
+        result = _wait_for_terminal(coordinator, job["id"])
+        assert result["status"] == "completed" and prepared
+        assert captured[0]["pergunta"] == "Explique energia solar"
+        assert captured[0]["agent_mode"] == "assistente"
+        assert not captured[0]["work_agents"] and not captured[0]["memorias_relevantes"]
+    finally:
+        coordinator.shutdown()
+
+
+def test_common_responder_observes_cancellation_without_emitting_chunks(chat_settings, tmp_path):
+    entered = threading.Event()
+
+    def responder(prompt, *, should_cancel, **kwargs):
+        from core.operation_control import check_control
+
+        entered.set()
+        while not should_cancel():
+            time.sleep(0.005)
+        check_control()
+
+    coordinator = _coordinator(chat_settings, tmp_path, responder)
+    try:
+        job = coordinator.submit(message="Explique energia solar")
+        assert entered.wait(1)
+        coordinator.cancel(job["id"])
+        result = _wait_for_terminal(coordinator, job["id"])
+        assert result["status"] == "cancelled"
+        assert result["response"]
+        assert (
+            coordinator.conversations.load(job["conversation_id"])["messages"][-1]["role"]
+            == "assistant"
+        )
+    finally:
+        coordinator.shutdown()
+
+
+def test_timeout_is_explicit_and_preserves_partial_answer(chat_settings, tmp_path):
+    from core.operation_control import OperationTimeoutError
+
+    def responder(prompt, *, fn_chunk, **kwargs):
+        fn_chunk("Parte concluída.")
+        raise OperationTimeoutError("Limite de tempo atingido; progresso parcial.")
+
+    coordinator = _coordinator(chat_settings, tmp_path, responder)
+    try:
+        job = coordinator.submit(message="Explique energia solar")
+        result = _wait_for_terminal(coordinator, job["id"])
+        assert result["status"] == "failed"
+        assert "Limite" in result["response"] and "Parte concluída" in result["response"]
+        assert coordinator.conversations.load(job["conversation_id"])["messages"][-1]["metadata"][
+            "incomplete"
+        ]
     finally:
         coordinator.shutdown()
 
@@ -194,7 +368,7 @@ class TestChatCoordinator:
         assert captured["memorias_relevantes"] == ["O usuario prefere respostas detalhadas"]
 
     def test_streams_and_persists_response(self, chat_settings, tmp_path):
-        def responder(_prompt, *, fn_status, fn_passo, fn_chunk):
+        def responder(_prompt, *, fn_status, fn_passo, fn_chunk, should_cancel):
             assert fn_passo is None
             fn_status("Pensando...")
             fn_chunk("Resposta ")
@@ -203,7 +377,7 @@ class TestChatCoordinator:
 
         coordinator = _coordinator(chat_settings, tmp_path, responder)
         try:
-            submitted = coordinator.submit(message="Ola Celsius")
+            submitted = coordinator.submit(message="Explique energia solar")
             job = _wait_for_terminal(coordinator, submitted["id"])
             conversation = coordinator.get_conversation(job["conversation_id"])
         finally:

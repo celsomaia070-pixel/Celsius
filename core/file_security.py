@@ -25,6 +25,20 @@ def get_allowed_roots() -> list[Path]:
     return list(_allowed_roots)
 
 
+def validate_managed_path(path: str | Path, *, data_root: Path) -> Path:
+    """Validate fixed application storage under its configured data root.
+
+    This does not change the roots available to agent file tools. The root must
+    come from application settings, never from a tool or user-supplied path.
+    """
+    target = Path(path).resolve()
+    try:
+        target.relative_to(Path(data_root).resolve())
+    except ValueError as exc:
+        raise PermissionError("Caminho fora da pasta de dados da aplicação.") from exc
+    return target
+
+
 def validate_path(path: str | Path, *, allow_create: bool = False) -> Path:
     """Validate that a path is within allowed roots and not a traversal attempt.
 

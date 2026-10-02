@@ -14,7 +14,9 @@ CurrentUser = Annotated[Any, Depends(_get_current_user)]
 def owned_service(request, user):
     service = request.app.state.whatsapp_service
     if service.config.get("owner_id") not in (None, "", user.id):
-        raise HTTPException(status_code=403, detail="A conexão WhatsApp pertence a outra conta do Celsius.")
+        raise HTTPException(
+            status_code=403, detail="A conexão WhatsApp pertence a outra conta do Celsius."
+        )
     return service
 
 

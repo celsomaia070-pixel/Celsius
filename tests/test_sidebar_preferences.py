@@ -26,9 +26,13 @@ def workspace(tmp_path):
 
 
 def login(client, email):
-    result = client.post("/api/v1/auth/login", json={
-        "email": email, "password": "test-password-123",
-    })
+    result = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": email,
+            "password": "test-password-123",
+        },
+    )
     assert result.status_code == 200
 
 
@@ -43,9 +47,16 @@ def test_disable_is_personal_and_survives_restart(workspace):
     app = create_workspace_app(settings=settings, user_service=service, event_hub=EventHub())
     with TestClient(app) as client:
         login(client, teacher.email)
-        assert client.patch("/api/v1/settings/sidebar", json={
-            "enabled": [MODULE_KNOWLEDGE], "show_conversations": False,
-        }).status_code == 200
+        assert (
+            client.patch(
+                "/api/v1/settings/sidebar",
+                json={
+                    "enabled": [MODULE_KNOWLEDGE],
+                    "show_conversations": False,
+                },
+            ).status_code
+            == 200
+        )
         assert MODULE_INVENTORY not in navigation_ids(client)
         assert MODULE_INVENTORY in settings.modules.enabled
         login(client, owner.email)
@@ -65,20 +76,39 @@ def test_hide_retains_activation_and_partial_changes_merge(workspace):
     app = create_workspace_app(settings=settings, user_service=service, event_hub=EventHub())
     with TestClient(app) as client:
         login(client, teacher.email)
-        assert client.patch("/api/v1/settings/sidebar", json={
-            "sidebar_visible": {MODULE_INVENTORY: False},
-        }).status_code == 200
+        assert (
+            client.patch(
+                "/api/v1/settings/sidebar",
+                json={
+                    "sidebar_visible": {MODULE_INVENTORY: False},
+                },
+            ).status_code
+            == 200
+        )
         modules = {item["id"]: item for item in client.get("/api/v1/modules").json()["items"]}
         assert modules[MODULE_INVENTORY]["enabled"] is True
         assert modules[MODULE_INVENTORY]["in_navigation"] is False
-        assert client.patch("/api/v1/settings/sidebar", json={
-            "sidebar_visible": {MODULE_KNOWLEDGE: False}, "show_memories": False,
-        }).status_code == 200
+        assert (
+            client.patch(
+                "/api/v1/settings/sidebar",
+                json={
+                    "sidebar_visible": {MODULE_KNOWLEDGE: False},
+                    "show_memories": False,
+                },
+            ).status_code
+            == 200
+        )
         assert MODULE_INVENTORY not in navigation_ids(client)
         assert MODULE_KNOWLEDGE not in navigation_ids(client)
-        assert client.patch("/api/v1/settings/sidebar", json={
-            "sidebar_visible": {MODULE_INVENTORY: True},
-        }).status_code == 200
+        assert (
+            client.patch(
+                "/api/v1/settings/sidebar",
+                json={
+                    "sidebar_visible": {MODULE_INVENTORY: True},
+                },
+            ).status_code
+            == 200
+        )
         assert MODULE_INVENTORY in navigation_ids(client)
         assert MODULE_KNOWLEDGE not in navigation_ids(client)
 
@@ -88,16 +118,28 @@ def test_essential_navigation_cannot_be_lost(workspace):
     app = create_workspace_app(settings=settings, user_service=service, event_hub=EventHub())
     with TestClient(app) as client:
         login(client, teacher.email)
-        assert client.patch("/api/v1/settings/sidebar", json={
-            "enabled": [], "sidebar_visible": {"chat": False, MODULE_SETTINGS: False},
-        }).status_code == 200
+        assert (
+            client.patch(
+                "/api/v1/settings/sidebar",
+                json={
+                    "enabled": [],
+                    "sidebar_visible": {"chat": False, MODULE_SETTINGS: False},
+                },
+            ).status_code
+            == 200
+        )
         assert navigation_ids(client) == {"chat", MODULE_SETTINGS}
 
 
-@pytest.mark.parametrize("body", [
-    {"enabled": ["unknown"]}, {"sidebar_visible": {"unknown": False}},
-    {"show_memories": "false"}, {"sidebar_visible": {MODULE_INVENTORY: "false"}},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"enabled": ["unknown"]},
+        {"sidebar_visible": {"unknown": False}},
+        {"show_memories": "false"},
+        {"sidebar_visible": {MODULE_INVENTORY: "false"}},
+    ],
+)
 def test_invalid_preferences_do_not_change_account(workspace, body):
     settings, service, _, teacher = workspace
     with TestClient(create_workspace_app(settings=settings, user_service=service)) as client:
@@ -112,7 +154,10 @@ def test_requires_login_and_viewer_only_changes_own_menu(workspace):
     with TestClient(create_workspace_app(settings=settings, user_service=service)) as client:
         assert client.patch("/api/v1/settings/sidebar", json={}).status_code == 401
         login(client, teacher.email)
-        assert client.patch("/api/v1/settings/sidebar", json={"show_memories": False}).status_code == 200
+        assert (
+            client.patch("/api/v1/settings/sidebar", json={"show_memories": False}).status_code
+            == 200
+        )
         assert client.post("/api/v1/inventory", json={}).status_code == 403
 
 

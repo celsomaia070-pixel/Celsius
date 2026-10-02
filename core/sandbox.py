@@ -510,9 +510,7 @@ def build_sandbox_env(environ: dict[str, str] | None = None) -> dict[str, str]:
     windows_root = source.get("SystemRoot") or source.get("SYSTEMROOT") or r"C:\Windows"
     if os.name == "nt" or windows_root in source:
         env["PATH"] = os.pathsep.join(
-            path
-            for path in (os.path.join(windows_root, "System32"), windows_root)
-            if path
+            path for path in (os.path.join(windows_root, "System32"), windows_root) if path
         )
     elif "PATH" not in env:
         env["PATH"] = "/usr/bin:/bin"

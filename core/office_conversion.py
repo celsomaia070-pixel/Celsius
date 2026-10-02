@@ -45,17 +45,33 @@ def docx_template(source: str | Path):
         profile = (root / "profile").as_uri()
         try:
             result = subprocess.run(
-                [str(executable), f"-env:UserInstallation={profile}", "--headless",
-                 "--nologo", "--nodefault", "--nofirststartwizard", "--norestore",
-                 "--convert-to", "docx:Office Open XML Text", "--outdir", str(output_dir),
-                 str(incoming)],
-                capture_output=True, timeout=60, check=False,
+                [
+                    str(executable),
+                    f"-env:UserInstallation={profile}",
+                    "--headless",
+                    "--nologo",
+                    "--nodefault",
+                    "--nofirststartwizard",
+                    "--norestore",
+                    "--convert-to",
+                    "docx:Office Open XML Text",
+                    "--outdir",
+                    str(output_dir),
+                    str(incoming),
+                ],
+                capture_output=True,
+                timeout=60,
+                check=False,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except subprocess.TimeoutExpired as exc:
-            raise ValueError("A conversao do ODT excedeu o tempo limite; envie o modelo em DOCX.") from exc
+            raise ValueError(
+                "A conversao do ODT excedeu o tempo limite; envie o modelo em DOCX."
+            ) from exc
         converted = output_dir / "modelo.docx"
         if result.returncode != 0 or not converted.is_file():
-            raise ValueError("Nao foi possivel converter o modelo ODT para DOCX. Nenhum original foi alterado.")
+            raise ValueError(
+                "Nao foi possivel converter o modelo ODT para DOCX. Nenhum original foi alterado."
+            )
         validate_file_content(converted.name, converted.read_bytes())
         yield converted

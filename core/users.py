@@ -338,7 +338,8 @@ class UserService:
             preferences.update(changes)
             if visibility is not None:
                 preferences["sidebar_visible"] = {
-                    **user.sidebar_preferences.get("sidebar_visible", {}), **visibility,
+                    **user.sidebar_preferences.get("sidebar_visible", {}),
+                    **visibility,
                 }
             previous = user.sidebar_preferences
             user.sidebar_preferences = preferences

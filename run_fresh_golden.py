@@ -4,7 +4,7 @@
 import subprocess
 import sys
 
-code = '''
+code = """
 import sys
 import importlib
 
@@ -60,11 +60,9 @@ all_pass = (
 )
 print(f"ALL PASS: {all_pass}")
 sys.exit(0 if all_pass else 1)
-'''
+"""
 
-result = subprocess.run([
-    sys.executable, "-c", code
-], capture_output=True, text=True, timeout=300)
+result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
 
 print("STDOUT:")
 print(result.stdout)

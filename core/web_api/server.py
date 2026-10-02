@@ -37,9 +37,7 @@ class LocalWebApiServer:
     ):
         settings = settings or get_settings()
         self.host = (
-            host
-            if host is not None
-            else ("0.0.0.0" if allow_lan else settings.web.host)  # nosec B104
+            host if host is not None else ("0.0.0.0" if allow_lan else settings.web.host)  # nosec B104
         )
         self.port = port
         self.lan_access_enabled = not _is_loopback(self.host)

@@ -1,1 +1,1 @@
-﻿"""Golden-set dataset and evaluation harness. Not a pytest package."""
+"""Golden-set dataset and evaluation harness. Not a pytest package."""

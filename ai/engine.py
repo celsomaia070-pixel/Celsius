@@ -1,6 +1,5 @@
 import gc
 import logging
-import random
 from collections.abc import Callable
 from datetime import datetime
 
@@ -12,8 +11,14 @@ from ai.react import (
     loop_react,
 )
 from core.commands import executar_comando
+from core.direct_actions import youtube_open_arguments
 from core.inventory import get_inventory_service
+from core.message_intent import classify_intent
+from core.operation_control import check_control, propagate_control
+from core.quick_response import quick_response
 from core.settings import get_settings
+from core.turn_metrics import phase, track_turn
+from core.web_research import is_web_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,10 @@ COMANDOS_RAPIDOS = {
     "o que voce sabe fazer": RESPOSTAS_FUNCOES,
     "suas funcoes": RESPOSTAS_FUNCOES,
     "quais suas funcionalidades": RESPOSTAS_FUNCOES,
+    "me diga suas capacidades": RESPOSTAS_FUNCOES,
+    "me diga as suas capacidades": RESPOSTAS_FUNCOES,
+    "suas capacidades": RESPOSTAS_FUNCOES,
+    "quais sao suas capacidades": RESPOSTAS_FUNCOES,
     "o que voce e": lambda: (
         f"Sou o {_assistant_name()}, {_assistant_profile()}. Nao sou um assistente basico - tenho capacidades reais de acao como processar documentos, executar codigo, navegar na web e muito mais."
     ),
@@ -193,33 +202,7 @@ def _obter_contexto_estoque(pergunta: str) -> str:
 
 
 def _responder_rapido(pergunta: str) -> str | None:
-    limpo = pergunta.lower().strip()
-    for char in "?!.,":
-        limpo = limpo.replace(char, "")
-    limpo = limpo.strip()
-
-    import re
-
-    if limpo in HORAS_PADROES or re.search(r"\bhoras?\b|\bhorario\b", limpo):
-        return f"Hora atual: {datetime.now().strftime('%H:%M')}"
-
-    if limpo in DATA_PADROES or re.search(r"\bdata\b", limpo):
-        return _formatar_data_atual()
-
-    if limpo in COMANDOS_RAPIDOS:
-        resposta = COMANDOS_RAPIDOS[limpo]
-        return str(resposta() if callable(resposta) else resposta)
-
-    if limpo in {"ola", "oi", "bom dia", "boa tarde", "boa noite"}:
-        return random.choice(RESPOSTAS_OLA)
-
-    if limpo in {"obrigado", "obrigada", "valeu", "thanks"}:
-        return random.choice(RESPOSTAS_OBRIGADO)
-
-    if limpo in {"tudo bem", "como vai", "como esta", "como voce esta"}:
-        return random.choice(RESPOSTAS_TUDO_BEM)
-
-    return None
+    return quick_response(pergunta)
 
 
 def _normalizar_historico_recente(history: object, pergunta_atual: str) -> list[dict]:
@@ -247,6 +230,8 @@ def _normalizar_historico_recente(history: object, pergunta_atual: str) -> list[
     return normalized
 
 
+@track_turn
+@propagate_control
 def gerar_resposta(
     prompt_dict: dict,
     fn_status: Callable[[str], None] | None = None,
@@ -254,7 +239,21 @@ def gerar_resposta(
     fn_chunk: Callable[[str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> str:
+    check_control(should_cancel, prompt_dict.get("deadline"))
     pergunta_direta = prompt_dict.get("pergunta", "").strip()
+    has_attachment = bool(
+        prompt_dict.get("documento")
+        or prompt_dict.get("anexos")
+        or prompt_dict.get("caminho_imagem")
+    )
+    with phase("routing"):
+        intent = classify_intent(pergunta_direta, has_attachment=has_attachment)
+        response = quick_response(pergunta_direta, has_attachment=has_attachment)
+    if response is not None:
+        check_control(should_cancel, prompt_dict.get("deadline"))
+        if fn_chunk:
+            fn_chunk(response)
+        return response
     from ai.task_runtime import handle_task_command
 
     task_response = handle_task_command(
@@ -293,7 +292,7 @@ def gerar_resposta(
 
                 if fn_status:
                     fn_status(f"Executando acao autorizada: {pending.tool}...")
-                response = executar_ferramenta(pending.tool, pending.arguments)
+                response = str(executar_ferramenta(pending.tool, pending.arguments))
         if fn_chunk:
             fn_chunk(response)
         return response
@@ -304,7 +303,23 @@ def gerar_resposta(
         else:
             fn_status("Elaborando a melhor resposta...")
 
-    comando = executar_comando(pergunta_direta)
+    check_control(should_cancel, prompt_dict.get("deadline"))
+    # Web searches need synthesis and source checks, rather than returning a
+    # command shortcut's raw search-engine results as the assistant's answer.
+    command_allowed = not is_web_lookup(pergunta_direta) or any(
+        word in pergunta_direta.casefold() for word in ("abra ", "abrir ", "acesse ")
+    )
+    comando = (
+        executar_comando(pergunta_direta)
+        if intent.operational
+        and command_allowed
+        and not intent.needs_memory
+        and not intent.needs_rag
+        and not has_attachment
+        and not youtube_open_arguments(pergunta_direta)
+        else None
+    )
+    check_control(should_cancel, prompt_dict.get("deadline"))
     if comando:
         if fn_chunk:
             fn_chunk(comando)
@@ -317,7 +332,10 @@ def gerar_resposta(
                 fn_chunk(resposta_rapida)
             return resposta_rapida
 
-        resposta_estoque = _responder_lista_estoque_direta(pergunta_direta)
+        resposta_estoque = (
+            _responder_lista_estoque_direta(pergunta_direta) if intent.operational else None
+        )
+        check_control(should_cancel, prompt_dict.get("deadline"))
         if resposta_estoque:
             if fn_chunk:
                 fn_chunk(resposta_estoque)
@@ -373,6 +391,8 @@ def _ensure_vision_manager(settings):
     return manager
 
 
+@track_turn
+@propagate_control
 def gerar_resposta_com_imagem(
     caminho_imagem: str,
     pergunta: str,
@@ -382,11 +402,13 @@ def gerar_resposta_com_imagem(
 ) -> str:
     import base64
 
+    check_control(should_cancel)
     if fn_status:
         fn_status("Analisando imagem...")
 
     with open(caminho_imagem, "rb") as f:
         imagem_b64 = base64.b64encode(f.read()).decode("utf-8")
+    check_control(should_cancel)
 
     if fn_status:
         fn_status("Interpretando conteudo visual...")
@@ -431,6 +453,7 @@ def gerar_resposta_com_imagem(
         if fn_status:
             fn_status("Ativando modelo visual local...")
         llama = _ensure_vision_manager(settings)
+        check_control(should_cancel)
         stream = llama.chat_completion(
             messages=mensagens,
             temperature=settings.response.temperature,
@@ -438,6 +461,7 @@ def gerar_resposta_com_imagem(
             top_p=settings.response.top_p,
             stream=True,
             stop=list(INTERNAL_CHAT_MARKERS),
+            should_cancel=should_cancel,
         )
 
         resposta = ""
@@ -451,24 +475,24 @@ def gerar_resposta_com_imagem(
                 with contextlib.suppress(Exception):
                     close()
 
-        for chunk in stream:
-            if should_cancel and should_cancel():
-                cancelado = True
-                _fechar_stream()
-                break
-            token = chunk["choices"][0]["delta"].get("content", "") or ""
-            combined = resposta + token
-            marker_idx = _first_internal_marker_index(combined)
-            if marker_idx >= 0:
-                token = combined[len(resposta) : marker_idx]
-                resposta = combined[:marker_idx]
-                _fechar_stream()
-                if token and fn_chunk:
+        try:
+            for chunk in stream:
+                check_control(should_cancel)
+                token = chunk["choices"][0]["delta"].get("content", "") or ""
+                combined = resposta + token
+                marker_idx = _first_internal_marker_index(combined)
+                if marker_idx >= 0:
+                    token = combined[len(resposta) : marker_idx]
+                    resposta = combined[:marker_idx]
+                    if token and fn_chunk:
+                        fn_chunk(token)
+                    break
+                resposta += token
+                if fn_chunk:
                     fn_chunk(token)
-                break
-            resposta += token
-            if fn_chunk:
-                fn_chunk(token)
+        finally:
+            _fechar_stream()
+        check_control(should_cancel)
         if cancelado:
             if fn_status:
                 fn_status("Resposta interrompida.")

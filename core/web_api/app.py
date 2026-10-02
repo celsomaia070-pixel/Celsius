@@ -436,8 +436,10 @@ def create_app(
     app.state.settings = settings
     app.state.user_service = UserService(data_dir=settings.data_dir)
     app.state.whatsapp_service = WhatsAppService(
-        settings=settings, coordinator=chat_coordinator,
-        user_service=app.state.user_service, event_hub=event_hub,
+        settings=settings,
+        coordinator=chat_coordinator,
+        user_service=app.state.user_service,
+        event_hub=event_hub,
     )
     app.state.history_service = ConversationHistoryService(
         base_dir=settings.data_dir / "conversation_history"

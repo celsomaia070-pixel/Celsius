@@ -1060,6 +1060,11 @@ async function refreshWhatsAppConnection() {
       connected:data.welcome_sent ? "Conectado. A mensagem inicial foi enviada à conversa com seu próprio número (Você)." : "Conectado. Preparando sua conversa com o Celsius…",
       reconnecting:"Reconectando ao WhatsApp…", error:"Não foi possível conectar. Tente novamente."};
     status.textContent = data.error || data.welcome_error || labels[data.state] || "Verificando conexão…";
+    if (data.delivery?.uncertain) {
+      status.textContent += " Há resultados sem confirmação de entrega. Confira sua conversa e envie REENVIAR RESULTADO se necessário.";
+    } else if (data.delivery?.queued) {
+      status.textContent += ` ${data.delivery.queued} entrega(s) aguardando envio.`;
+    }
     const selfChat = document.querySelector("#whatsapp-self-chat");
     const openChat = document.querySelector("#whatsapp-open-chat");
     // Only accept the canonical link built from this account's connected identity.
@@ -2682,69 +2687,6 @@ function syncWorkModeUI() {
   if (!state.workMode && !state.busy) elements.workActivity.hidden = true;
 }
 
-function selectAgentsForRequest(message) {
-  const agents = [];
-  const lower = message.toLowerCase();
-
-  // Map keywords to agent modes
-  const agentKeywords = {
-    executor: ["fazer", "criar", "executar", "gerar", "construir", "implementar", "automatizar", "script", "código", "programa", "tarefa", "workflow", "processo"],
-    documentos: ["documento", "arquivo", "pdf", "texto", "ler", "analisar", "extrair", "resumir", "buscar no documento", "base de conhecimento", "conhecimento"],
-    estoque: ["estoque", "produto", "item", "quantidade", "entrada", "saída", "movimentação", "repor", "repor estoque", "baixa", "inventário"],
-    pesquisador: ["pesquisar", "buscar", "web", "internet", "notícia", "atual", "recente", "última", "tendência", "mercado", "concorrente"],
-    desenvolvedor: ["código", "programar", "debug", "erro", "bug", "função", "classe", "api", "banco de dados", "sql", "git", "deploy", "teste", "refatorar"],
-    assistente: ["olá", "oi", "como", "o que", "qual", "quando", "onde", "quem", "explique", "defina", "resumo", "dica", "ajuda"]
-  };
-
-  // Score each agent based on keyword matches
-  const scores = {};
-  for (const [agent, keywords] of Object.entries(agentKeywords)) {
-    let score = 0;
-    for (const keyword of keywords) {
-      if (lower.includes(keyword)) {
-        score += 1;
-      }
-    }
-    scores[agent] = score;
-  }
-
-  // Find the agent with highest score
-  let bestAgent = "assistente";
-  let bestScore = 0;
-  for (const [agent, score] of Object.entries(scores)) {
-    if (score > bestScore) {
-      bestScore = score;
-      bestAgent = agent;
-    }
-  }
-
-  // If no clear winner, default to assistente
-  if (bestScore === 0) {
-    return ["assistente"];
-  }
-
-  // Return the best agent (and possibly related agents)
-  const selected = [bestAgent];
-
-  // Add related agents based on context
-  if (bestAgent === "executor" && (lower.includes("estoque") || lower.includes("produto"))) {
-    selected.push("estoque");
-  }
-  if (bestAgent === "executor" && (lower.includes("documento") || lower.includes("arquivo"))) {
-    selected.push("documentos");
-  }
-  if (bestAgent === "pesquisador" && lower.includes("mercado")) {
-    selected.push("executor");
-  }
-
-  return [...new Set(selected)]; // Remove duplicates
-}
-
-function workModeForRequest() {
-  const preferred = ["pesquisador", "documentos", "estoque", "desenvolvedor", "executor"];
-  return preferred.find((mode) => state.workAgents.includes(mode)) || "executor";
-}
-
 function updateWorkIndicator() {
   const indicator = elements.workIndicator;
   if (!indicator) return;
@@ -3411,6 +3353,41 @@ function renderMarkdown(container, text) {
       index += 1;
       continue;
     }
+    const tableHeader = line.includes("|") ? markdownTableCells(line) : [];
+    const tableSeparator = index + 1 < lines.length ? markdownTableCells(lines[index + 1]) : [];
+    if (tableHeader.length > 1 && tableSeparator.length === tableHeader.length
+        && tableSeparator.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "chat-table-scroll";
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (const value of tableHeader) {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        appendInline(cell, value);
+        headerRow.append(cell);
+      }
+      head.append(headerRow);
+      table.append(head);
+      const body = document.createElement("tbody");
+      index += 2;
+      while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
+        const values = markdownTableCells(lines[index]);
+        const row = document.createElement("tr");
+        tableHeader.forEach((_header, column) => {
+          const cell = document.createElement("td");
+          appendInline(cell, values[column] || "");
+          row.append(cell);
+        });
+        body.append(row);
+        index += 1;
+      }
+      table.append(body);
+      wrapper.append(table);
+      container.append(wrapper);
+      continue;
+    }
     if (line.startsWith("```")) {
       const pre = document.createElement("pre");
       const code = document.createElement("code");
@@ -3447,6 +3424,7 @@ function renderMarkdown(container, text) {
     }
     if (/^\d+\.\s+/.test(line)) {
       const list = document.createElement("ol");
+      list.start = Number(line.match(/^\d+/)[0]);
       while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
         const item = document.createElement("li");
         appendInline(item, lines[index].replace(/^\d+\.\s+/, ""));
@@ -3474,6 +3452,8 @@ function renderMarkdown(container, text) {
       && !/^[-*]\s+/.test(lines[index])
       && !/^\d+\.\s+/.test(lines[index])
       && !lines[index].startsWith("```")
+      && !(lines[index].includes("|") && index + 1 < lines.length
+           && markdownTableCells(lines[index + 1]).every((cell) => /^:?-{3,}:?$/.test(cell)))
     ) {
       paragraphLines.push(lines[index]);
       index += 1;
@@ -3481,6 +3461,11 @@ function renderMarkdown(container, text) {
     appendInline(paragraph, paragraphLines.join("\n"));
     container.append(paragraph);
   }
+}
+
+function markdownTableCells(line) {
+  return line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replace(/\\\|/g, "|"));
 }
 
 function attachmentName(item) {
@@ -4062,8 +4047,8 @@ async function sendMessage() {
   const typedMessage = elements.input.value.trim();
   if (!typedMessage && !state.files.length) return;
   const message = typedMessage || "Analise o arquivo anexado.";
-  const workCommand = /^(?:TAREFA\s*:|TAREFAS\s*$|AUTORIZAR\s+|CANCELAR\s+|RETOMAR\s+)/i.test(message);
-  const submittedMessage = state.workMode && !workCommand ? `TAREFA: ${message}` : message;
+  // The server classifies intent once; Work also supports normal conversation.
+  const submittedMessage = message;
   stopSpeech();
   const selectedFiles = [...state.files];
   createMessage(
@@ -4087,7 +4072,7 @@ async function sendMessage() {
 
   // Auto-select agents in Work mode
   if (state.workMode) {
-    state.workAgents = selectAgentsForRequest(message);
+    state.workAgents = [];
     updateWorkIndicator();
     // Show which agents are being activated
     if (state.workAgents.length > 0) {
@@ -4113,11 +4098,16 @@ async function sendMessage() {
         conversation_id: state.conversationId,
         attachment_ids: attachmentIds,
         model_id: state.modelId,
-        agent_mode: state.workMode ? workModeForRequest() : state.agentMode,
-        work_agents: state.workMode ? state.workAgents : undefined,
+        agent_mode: state.agentMode,
+        work_mode: state.workMode,
+        work_agents: undefined,
       },
     });
     state.activeJobId = data.job.id;
+    if (state.workMode) {
+      state.workAgents = data.job.work_agents?.length ? data.job.work_agents : [data.job.agent_mode];
+      updateWorkIndicator();
+    }
     state.conversationId = data.job.conversation_id;
     state.sendPending = false;
     startPolling(state.activeJobId);

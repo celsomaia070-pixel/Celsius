@@ -33,7 +33,6 @@ from __future__ import annotations
 import logging
 import re
 import threading
-import unicodedata
 from typing import Any
 
 from core.embeddings import try_get_sentence_transformer
@@ -176,9 +175,7 @@ _LOCAL_DATA_TERMS: tuple[str, ...] = tuple(
 
 def _pattern(terms: tuple[str, ...]) -> re.Pattern[str]:
     """Word-boundary safe matcher: "item" must not fire inside "itemizar"."""
-    return re.compile(
-        r"(?<!\w)(?:" + "|".join(re.escape(term) for term in terms) + r")(?!\w)"
-    )
+    return re.compile(r"(?<!\w)(?:" + "|".join(re.escape(term) for term in terms) + r")(?!\w)")
 
 
 _TERM_PATTERN = _pattern(_DOMAIN_TERMS)
@@ -189,8 +186,9 @@ _LOCAL_DATA_PATTERN = _pattern(_LOCAL_DATA_TERMS)
 
 def _normalize(value: Any) -> str:
     """Fold accents so Portuguese queries match the ASCII tool vocabulary."""
-    folded = unicodedata.normalize("NFKD", str(value or ""))
-    return folded.encode("ascii", "ignore").decode("ascii").lower()
+    from core.message_intent import normalize_text
+
+    return normalize_text(value)
 
 
 def _schema_terms(schema: Any, *, depth: int = 0) -> list[str]:
@@ -256,7 +254,9 @@ def get_embedding_model():
     global _model, _model_loaded
     if _model_loaded:
         return _model
-    with _model_lock:
+    from core.operation_control import cancellable_lock
+
+    with cancellable_lock(_model_lock):
         if not _model_loaded:
             settings = get_settings()
             _model = try_get_sentence_transformer(settings.embedding_model)
@@ -296,7 +296,9 @@ def _tool_embeddings(ferramentas: list[Any]) -> dict[str, list[float]]:
     nomes = [getattr(ferramenta, "nome", "") for ferramenta in ferramentas]
     fingerprint = f"{model_name}:{len(nomes)}:{hash(tuple(nomes))}"
 
-    with _model_lock:
+    from core.operation_control import cancellable_lock
+
+    with cancellable_lock(_model_lock):
         if _embeddings and _embeddings_model == fingerprint:
             return _embeddings
 
@@ -317,7 +319,9 @@ def _tool_embeddings(ferramentas: list[Any]) -> dict[str, list[float]]:
 def reset_tool_embeddings() -> None:
     """Drop cached embeddings and the encoder (isolated tests)."""
     global _model, _model_loaded, _embeddings, _embeddings_model
-    with _model_lock:
+    from core.operation_control import cancellable_lock
+
+    with cancellable_lock(_model_lock):
         _model = None
         _model_loaded = False
         _embeddings = {}
@@ -345,6 +349,11 @@ def score_tools(pergunta: str, ferramentas: list[Any] | None = None) -> dict[str
     """
     texto = str(pergunta or "").strip()
     if not texto:
+        return {}
+
+    from core.message_intent import classify_intent
+
+    if not classify_intent(texto).operational:
         return {}
 
     if ferramentas is None:
@@ -397,9 +406,7 @@ def top_tools(
         return []
 
     limite = max(1, int(settings.agent.tool_retrieval_top_k if top_k is None else top_k))
-    piso = float(
-        settings.agent.tool_retrieval_min_score if min_score is None else min_score
-    )
+    piso = float(settings.agent.tool_retrieval_min_score if min_score is None else min_score)
     ordenados = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     return [(nome, score) for nome, score in ordenados if score >= piso][:limite]
 
@@ -407,6 +414,16 @@ def top_tools(
 def rank_tools(pergunta: str, ferramentas: list[Any] | None = None) -> list[tuple[str, float]]:
     """Convenience wrapper: encode the question once, then rank."""
     return top_tools(score_tools(pergunta, ferramentas))
+
+
+# ── Conversational gate ──────────────────────────────────────────
+# Phrases that indicate a purely conversational turn. These must NOT
+# trigger the operational gate even if semantic similarity is high.
+def _is_conversational(texto: str) -> bool:
+    """Return True if the normalized text is a conversational phrase."""
+    from core.message_intent import classify_intent
+
+    return classify_intent(texto).kind == "conversation"
 
 
 def is_operational(pergunta: str, scores: dict[str, float] | None = None) -> bool:
@@ -420,9 +437,19 @@ def is_operational(pergunta: str, scores: dict[str, float] | None = None) -> boo
 
     With no encoder available only reason 1 applies, which is exactly the
     previous behaviour.
+
+    Conversational phrases (greetings, thanks, meta-questions) never open the gate.
     """
     texto = _normalize(pergunta)
+    from core.message_intent import classify_intent
+
+    if not classify_intent(pergunta).operational:
+        return False
     if not texto.strip():
+        return False
+
+    # Conversational gate: never treat greetings/meta as operational
+    if _is_conversational(texto):
         return False
 
     if _TERM_PATTERN.search(texto):

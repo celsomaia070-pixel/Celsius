@@ -176,15 +176,11 @@ def _tool_preencher_documento(
     else:
         target = _resolver_caminho_escrita(caminho_saida)
         friendly_name = target.name
-    if not automatic and not any(
-        _is_relative_to(target, root) for root in _allowed_file_roots()
-    ):
+    if not automatic and not any(_is_relative_to(target, root) for root in _allowed_file_roots()):
         raise PermissionError("O arquivo de saida esta fora das pastas autorizadas.")
     result = fill_document_form(source, campos, target)
     result["output_name"] = friendly_name
-    aviso = _anexar_resultado(
-        result, "documento preenchido", cleanup_working_copy=automatic
-    )
+    aviso = _anexar_resultado(result, "documento preenchido", cleanup_working_copy=automatic)
     return json.dumps(result, ensure_ascii=False, indent=2) + aviso
 
 
@@ -216,16 +212,12 @@ def _tool_preencher_documento_com_fontes(
         friendly_name = Path(nome_saida).name
         if Path(friendly_name).suffix.lower() != target.suffix.lower():
             raise ValueError("O nome para download deve usar a extensao do arquivo gerado.")
-    if not automatic and not any(
-        _is_relative_to(target, root) for root in _allowed_file_roots()
-    ):
+    if not automatic and not any(_is_relative_to(target, root) for root in _allowed_file_roots()):
         raise PermissionError("O arquivo de saida esta fora das pastas autorizadas.")
     result = fill_from_sources(source, sources, target, use_llm=usar_modelo)
     if result.get("written"):
         result["output_name"] = friendly_name
-    aviso = _anexar_resultado(
-        result, "documento preenchido", cleanup_working_copy=automatic
-    )
+    aviso = _anexar_resultado(result, "documento preenchido", cleanup_working_copy=automatic)
     return json.dumps(result, ensure_ascii=False, indent=2) + aviso
 
 
@@ -338,130 +330,9 @@ def _tool_pesquisar_google(query: str) -> str:
 
 
 def _tool_pesquisar_noticias(query: str) -> str:
-    """Busca notícias via RSS feeds de sites brasileiros (mais confiável que Google News)."""
-    import datetime as dt
-    import html
-    import re
+    from core.web_research import search_news
 
-    import feedparser  # type: ignore[import-not-found,import-untyped]
-
-    query_lower = query.lower()
-    stopwords = {
-        "sobre",
-        "para",
-        "mais",
-        "menos",
-        "das",
-        "dos",
-        "uma",
-        "uns",
-        "umas",
-        "semana",
-        "passada",
-        "ultimas",
-        "últimas",
-        "noticia",
-        "noticias",
-        "recentes",
-        "atualidades",
-        "me",
-        "pra",
-        "por",
-        "com",
-        "que",
-    }
-    palavras_query = [
-        p.strip(".,;:!?()[]{}\"'")
-        for p in query_lower.split()
-        if (len(p) > 2 or p == "ia") and p not in stopwords
-    ]
-    inicio_periodo = None
-    fim_periodo = None
-    if (
-        "semana passada" in query_lower
-        or "última semana" in query_lower
-        or "ultima semana" in query_lower
-    ):
-        agora = dt.datetime.now(dt.timezone.utc)
-        inicio_semana_atual = (agora - dt.timedelta(days=agora.weekday())).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        inicio_periodo = inicio_semana_atual - dt.timedelta(days=7)
-        fim_periodo = inicio_semana_atual
-    elif "últimos 7 dias" in query_lower or "ultimos 7 dias" in query_lower:
-        inicio_periodo = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)
-    todas_noticias = []
-
-    for fonte, url_feed in _FEEDS_NOTICIAS.items():
-        try:
-            feed = feedparser.parse(url_feed)
-            # Busca mais entradas por feed
-            for entry in feed.entries[:20]:
-                titulo = entry.get("title", "")
-                resumo = entry.get("summary", entry.get("description", ""))
-                link = entry.get("link", "")
-                publicado = entry.get("published_parsed") or entry.get("updated_parsed")
-                data_publicacao = None
-                if publicado:
-                    data_publicacao = dt.datetime(
-                        int(publicado[0]),
-                        int(publicado[1]),
-                        int(publicado[2]),
-                        int(publicado[3]),
-                        int(publicado[4]),
-                        int(publicado[5]),
-                        tzinfo=dt.timezone.utc,
-                    )
-                    if inicio_periodo is not None and data_publicacao < inicio_periodo:
-                        continue
-                    if fim_periodo is not None and data_publicacao >= fim_periodo:
-                        continue
-
-                # RSS summaries frequently contain HTML and image tags. Keep the
-                # text evidence, but never pass raw markup into the model.
-                titulo = html.unescape(re.sub(r"<[^>]+>", " ", str(titulo))).strip()
-                resumo = html.unescape(re.sub(r"<[^>]+>", " ", str(resumo)))
-                resumo = re.sub(r"\s+", " ", resumo).strip()
-
-                # Filtro mais flexível
-                if not palavras_query or any(
-                    palavra in titulo.lower() or palavra in resumo.lower()
-                    for palavra in palavras_query
-                ):
-                    todas_noticias.append(
-                        {
-                            "fonte": fonte,
-                            "titulo": titulo,
-                            "resumo": resumo[:300],
-                            "link": link,
-                            "publicado": data_publicacao.isoformat() if data_publicacao else "",
-                        }
-                    )
-        except Exception:
-            continue
-
-    if not todas_noticias:
-        return (
-            f"Nenhuma notícia encontrada para '{query}'. Últimas notícias gerais:\n\n"
-            + _get_ultimas_noticias_gerais()
-        )
-
-    # Ordena por relevância
-    for n in todas_noticias:
-        n["score"] = sum(1 for p in palavras_query if p in n["titulo"].lower())
-    todas_noticias.sort(key=lambda x: x["score"], reverse=True)
-
-    recorte = (
-        " na semana passada"
-        if fim_periodo is not None
-        else (" nos últimos 7 dias" if inicio_periodo is not None else "")
-    )
-    resultado = f"Notícias sobre '{query}'{recorte} ({len(todas_noticias)} encontradas):\n\n"
-    for n in todas_noticias[:15]:
-        data = f"   Publicada em: {n['publicado']}\n" if n.get("publicado") else ""
-        resultado += f"[NOTICIA] [{n['fonte']}] {n['titulo']}\n{data}   {n['resumo']}\n   Link: {n['link']}\n\n"
-
-    return resultado
+    return search_news(query)
 
 
 def _get_ultimas_noticias_gerais() -> str:
@@ -695,6 +566,8 @@ def _tool_abrir_no_navegador(url: str) -> str:
     # If it's not a full URL, try to convert site name to URL
     url_lower = url.lower().strip()
     target_url: str | None = None
+    if url.strip().startswith(("http://", "https://")):
+        return _abrir_url(url.strip())
 
     # YouTube search: "youtube X" → search X on YouTube
     yt_match = re.match(r"^youtube\s+(.+)$", url_lower)
@@ -757,10 +630,11 @@ def _abrir_url(target_url: str) -> str:
     import webbrowser
 
     try:
-        webbrowser.open(target_url)
-        return f"Abrindo {target_url} no navegador..."
+        if not webbrowser.open(target_url):
+            raise RuntimeError("O navegador não aceitou a solicitação de abertura.")
+        return f"Abertura solicitada ao navegador do computador: {target_url}"
     except Exception as e:
-        return f"Erro ao abrir navegador: {e}"
+        raise RuntimeError(f"Erro ao abrir navegador: {e}") from e
 
 
 # ── Estoque tool functions ────────────────────────────────────
@@ -973,11 +847,11 @@ def _tool_gerar_relatorio_local(
         return f"Nao foi possivel gerar o relatorio: {exc}"
     from core.chat_outputs import register_output
 
-    stored = register_output(path, f"{item['id']}.{Path(path).suffix.lstrip('.') or 'pdf'}")
+    stored = register_output(path, path.name)
     if stored is not None:
         return (
             f"Relatorio gerado e anexado para download: {stored.name} "
-            f"(ID: {item['id']})"
+            f"(ID: {item['id']})\nArquivo: {path}"
         )
     return (
         f"Relatorio gerado localmente. ID: {item['id']} | Arquivo: {path}\n"
@@ -2262,7 +2136,7 @@ def obter_ferramenta(nome: str) -> Ferramenta | None:
 
 
 # Tools that should retry on failure (network operations)
-RETRYABLE_TOOLS = {"pesquisar_web", "navegar_web", "abrir_no_navegador"}
+RETRYABLE_TOOLS = {"pesquisar_web", "navegar_web"}
 
 # Max retries for retryable tools
 MAX_RETRIES = 3
@@ -2377,7 +2251,9 @@ def executar_ferramenta(
     metrics = get_metrics()
     ferramenta = obter_ferramenta(nome)
     if not ferramenta:
-        return ToolResult.failure(nome, ToolErrorCode.NOT_FOUND, f"Ferramenta '{nome}' nao encontrada.")
+        return ToolResult.failure(
+            nome, ToolErrorCode.NOT_FOUND, f"Ferramenta '{nome}' nao encontrada."
+        )
 
     if require_approval and (force_approval or assess_tool(nome, argumentos).requires_confirmation):
         request = get_tool_approval_store().request(
@@ -2399,7 +2275,10 @@ def executar_ferramenta(
     is_valid, error_msg = _validate_tool_args(ferramenta, argumentos)
     if not is_valid:
         return ToolResult.failure(
-            nome, ToolErrorCode.VALIDATION, f"Erro de validacao em '{nome}': {error_msg}", detail={"validation_error": error_msg}
+            nome,
+            ToolErrorCode.VALIDATION,
+            f"Erro de validacao em '{nome}': {error_msg}",
+            detail={"validation_error": error_msg},
         )
 
     # Check circuit breaker before network tools

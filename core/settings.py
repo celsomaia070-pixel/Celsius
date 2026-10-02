@@ -550,7 +550,7 @@ class AgentModeSettings(BaseSettings):
     tool_retrieval_min_score: float = 0.38
     #: Minimum similarity to read the message as operational at all. Below
     #: this a general-knowledge question keeps receiving zero tools.
-    operational_intent_min_score: float = 0.55
+    operational_intent_min_score: float = 0.62
 
     # ── Automatic mode routing (see ``core.agent_modes.resolve_mode``) ──
     # An explicit "modo X" always wins and is unaffected by these knobs.

@@ -54,8 +54,15 @@ def _docx_evidence(path: Path) -> tuple[dict[str, str], dict[str, list[str]], li
         _add(store, origins, label, value)
         key = _normalized(label)
         if len(origins.get(key, [])) > before:
-            evidence.append({"key": key, "label": _clean(label), "value": _clean(value),
-                             "source": str(path), "location": location})
+            evidence.append(
+                {
+                    "key": key,
+                    "label": _clean(label),
+                    "value": _clean(value),
+                    "source": str(path),
+                    "location": location,
+                }
+            )
 
     def paragraphs(items: Any, prefix: str) -> None:
         for index, paragraph in enumerate(items):
@@ -87,8 +94,14 @@ def _docx_evidence(path: Path) -> tuple[dict[str, str], dict[str, list[str]], li
     tables(document.tables, "body")
     seen: set[str] = set()
     for si, section in enumerate(document.sections):
-        for name in ("header", "footer", "first_page_header", "first_page_footer",
-                     "even_page_header", "even_page_footer"):
+        for name in (
+            "header",
+            "footer",
+            "first_page_header",
+            "first_page_footer",
+            "even_page_header",
+            "even_page_footer",
+        ):
             container = getattr(section, name)
             if container.is_linked_to_previous:
                 continue
@@ -103,14 +116,21 @@ def _docx_evidence(path: Path) -> tuple[dict[str, str], dict[str, list[str]], li
         if _control_xpath(control, "./w:sdtPr/w:showingPlcHdr"):
             continue
         if checkbox:
-            checked = control.find(".//{http://schemas.microsoft.com/office/word/2010/wordml}checked")
+            checked = control.find(
+                ".//{http://schemas.microsoft.com/office/word/2010/wordml}checked"
+            )
             if checked is None:
                 continue
-            value = "Sim" if checked.get(
-                "{http://schemas.microsoft.com/office/word/2010/wordml}val"
-            ) in {"1", "true", "on"} else "Não"
+            value = (
+                "Sim"
+                if checked.get("{http://schemas.microsoft.com/office/word/2010/wordml}val")
+                in {"1", "true", "on"}
+                else "Não"
+            )
         else:
-            value = "".join(node.text or "" for node in _control_xpath(control, "./w:sdtContent//w:t"))
+            value = "".join(
+                node.text or "" for node in _control_xpath(control, "./w:sdtContent//w:t")
+            )
         add(label, value, location)
     for field in _docx_fields(path):
         if field.kind in {"section_item", "section_text"}:

@@ -8,6 +8,7 @@ from urllib.parse import quote, unquote
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from core.chat_attachments import AttachmentError
 from core.chat_service import ChatBusyError, ChatNotFoundError
@@ -22,6 +23,7 @@ class ChatMessageRequest(BaseModel):
     model_id: str = ""
     agent_mode: str = ""
     work_agents: list[str] = Field(default_factory=list)
+    work_mode: bool = False
 
 
 @router.get("/conversations")
@@ -92,13 +94,15 @@ async def download_attachment(attachment_id: str, request: Request) -> FileRespo
 @router.post("/messages", status_code=status.HTTP_202_ACCEPTED)
 async def send_message(payload: ChatMessageRequest, request: Request) -> dict:
     try:
-        job = request.app.state.chat_coordinator.submit(
+        job = await run_in_threadpool(
+            request.app.state.chat_coordinator.submit,
             message=payload.message,
             conversation_id=payload.conversation_id,
             attachment_ids=payload.attachment_ids,
             model_id=payload.model_id,
             agent_mode=payload.agent_mode,
             work_agents=payload.work_agents,
+            work_mode=payload.work_mode,
         )
     except ChatBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

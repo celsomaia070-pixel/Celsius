@@ -210,9 +210,7 @@ class TestSandboxEnvironmentIsAnAllowlist:
         builders = [build_sandbox_env]
         for name in ("workers/code_worker.py", "workers/windows_sandbox.py"):
             path = root / name
-            spec = importlib.util.spec_from_file_location(
-                f"_real_{path.stem}", path
-            )
+            spec = importlib.util.spec_from_file_location(f"_real_{path.stem}", path)
             assert spec is not None and spec.loader is not None
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -247,12 +245,15 @@ class TestSandboxEnvironmentIsAnAllowlist:
 
     def test_environment_stays_minimal(self):
         for build_env in self._executors():
-            assert set(build_env()) <= (SANDBOX_ENV_ALLOWLIST | {
-                "PATH",
-                "PYTHONPATH",
-                "PYTHONHOME",
-                "PYTHONDONTWRITEBYTECODE",
-            })
+            assert set(build_env()) <= (
+                SANDBOX_ENV_ALLOWLIST
+                | {
+                    "PATH",
+                    "PYTHONPATH",
+                    "PYTHONHOME",
+                    "PYTHONDONTWRITEBYTECODE",
+                }
+            )
 
 
 class TestValidateCodeFilesystemAccessors:

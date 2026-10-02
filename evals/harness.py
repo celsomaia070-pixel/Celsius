@@ -1,4 +1,4 @@
-﻿"""Golden-set harness: measure what the router and retriever actually do.
+"""Golden-set harness: measure what the router and retriever actually do.
 
 Deliberately **not** a test file. It runs the real selection path, records
 numbers, and compares two runs. That is what makes "before vs after" possible
@@ -31,10 +31,10 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 from evals.cases import CASES, Case
 
@@ -202,12 +202,8 @@ def compute_metrics(cases: list[CaseResult]) -> dict[str, Any]:
     relevant_offered = sum(len(c.hits) for c in scored)
     from ai.tools import REGISTRO_FERRAMENTAS
 
-    zero_tool_misses = [
-        c.id for c in scored if not c.offered_tools
-    ]
-    operational_violations = [
-        c.id for c in scored if c.expect_no_tool and c.offered_tools
-    ]
+    zero_tool_misses = [c.id for c in scored if not c.offered_tools]
+    operational_violations = [c.id for c in scored if c.expect_no_tool and c.offered_tools]
 
     return {
         "cases_total": len(cases),
@@ -240,9 +236,7 @@ def compute_metrics(cases: list[CaseResult]) -> dict[str, Any]:
             sum(1 for c in no_tool_expected if c.offered_tools), len(no_tool_expected)
         ),
         "unnecessary_tool_call_ids": operational_violations,
-        "mode_accuracy": _ratio(
-            sum(1 for c in mode_labelled if c.mode_ok), len(mode_labelled)
-        ),
+        "mode_accuracy": _ratio(sum(1 for c in mode_labelled if c.mode_ok), len(mode_labelled)),
         "mode_labelled_cases": len(mode_labelled),
         "registry_size": len(REGISTRO_FERRAMENTAS),
     }
@@ -280,7 +274,7 @@ def run_llm_backed_metrics(
     test_cases = list(dict.fromkeys(error_cases + loop_cases + multi_step_cases))[:max_cases]
 
     if not test_cases:
-        return {k: 0.0 for k in LLM_BACKED_METRICS}
+        return dict.fromkeys(LLM_BACKED_METRICS, 0.0)
 
     # Placeholder until a real model server is available in the test harness.
     # The loop instrumentation (LoopDetector, reflection, early stop) is in place
@@ -394,7 +388,9 @@ def format_summary(report: RunReport) -> str:
             b = cats[category]
             recall = b["recall_hits"] / b["total"] if b["total"] else 0.0
             mode = f"{b['mode_ok']}/{b['mode_total']}" if b["mode_total"] else "-"
-            lines.append(f"  {category}: recall {recall:.2f} ({int(b['recall_hits'])}/{int(b['total'])})  mode {mode}")
+            lines.append(
+                f"  {category}: recall {recall:.2f} ({int(b['recall_hits'])}/{int(b['total'])})  mode {mode}"
+            )
     lines.append("")
     lines.append("nao medido (exige LLM real dirigindo o loop):")
     lines.extend(f"  - {name}" for name in LLM_BACKED_METRICS)

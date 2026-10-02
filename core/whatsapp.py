@@ -14,16 +14,21 @@ import sqlite3
 import subprocess
 import threading
 import time
-import unicodedata
 import uuid
 from contextlib import suppress
 from pathlib import Path
 
-from core.agent_modes import get_mode, is_conversational_greeting
+from core.agent_modes import get_mode
 from core.chat_service import ChatBusyError, ChatNotFoundError
 from core.file_security import restrict_private_directory
 from core.json_persistence import atomic_write_json, read_json
+from core.message_formatting import whatsapp_chunks
 from core.users import UserRole
+from core.whatsapp_outbox import WhatsAppOutbox
+
+
+class DeliveryUnavailableError(RuntimeError):
+    """Transport rejected the request before any attempt to send."""
 
 
 def command_text(text: str) -> str:
@@ -36,7 +41,8 @@ def parse_contact_message(text: str) -> tuple[str, str] | None:
         r"(?:mande|manda|envie|envia|enviar|mandar)\s+(?:uma\s+)?mensagem\s+para\s+"
         r"(?:(?:o|a)\s+)?(?:(?:meu|minha)\s+)?(?:contato\s+)?(.+?)"
         r"(?:\s*:\s*|\s+dizendo(?:\s+que)?\s+|\s+com\s+(?:o\s+)?texto\s+)(.+)",
-        text.strip(), re.I | re.S,
+        text.strip(),
+        re.I | re.S,
     )
     return (match[1].strip(), match[2].strip()) if match else None
 
@@ -50,38 +56,22 @@ def route_whatsapp_message(text: str, previous_mode: str = "assistente") -> tupl
     clean = command_text(text)
     if re.match(r"^(?:AUTORIZAR\s|CANCELAR\s|RETOMAR\s|TAREFAS\s*$)", clean, re.I):
         return clean, get_mode(previous_mode).id
-    explicit_task = bool(re.match(r"^TAREFA\s*:", clean, re.I))
-    objective = re.sub(r"^TAREFA\s*:\s*", "", clean, flags=re.I)
-    if is_conversational_greeting(objective):
-        return objective, "assistente"
-    folded = "".join(c for c in unicodedata.normalize("NFD", objective.casefold())
-                     if not unicodedata.combining(c))
-    words = re.sub(r"[^\w\s]", " ", folded)
-    words = " ".join(words.split())
-    research = bool(re.search(r"\b(?:pesquis\w*|noticias?|internet|web|google|"
-                              r"previsao|meteorolog\w*|clima|cotacao|ultimas novidades)\b", words))
-    action = bool(re.match(
-        r"^(?:(?:ola|oi|bom dia|boa tarde|boa noite)(?: celsius)?\s+)?"
-        r"(?:(?:por favor|quero que|preciso que|voce pode|pode|quero|preciso)\s+)*"
-        r"(?:gere|gerar|crie|criar|faca|fazer|preencha|preencher|edite|editar|"
-        r"atualize|atualizar|registre|registrar|cadastre|cadastrar|adicione|adicionar|"
-        r"de entrada|dar entrada|de baixa|dar baixa|agende|agendar|organize|organizar|"
-        r"analise|analisar|compare|comparar|calcule|calcular|liste|listar|"
-        r"pesquise|pesquisar|busque|buscar|procure|procurar|execute|executar)\b", words,
-    ))
-    if explicit_task or research or action:
-        if research:
+    from core.agent_modes import detect_mode
+    from core.message_intent import classify_intent, normalize_text, strip_task_prefix
+
+    intent = classify_intent(clean)
+    if intent.quick_key:
+        return strip_task_prefix(clean), "assistente"
+    if intent.operational:
+        words = normalize_text(clean)
+        mode = detect_mode(words) or ("executor" if intent.kind == "task" else previous_mode)
+        if re.search(r"\b(?:pesquis\w*|noticias?|previsao|meteorolog\w*|cotacao|clima)\b", words):
             mode = "pesquisador"
-        elif re.search(r"\b(?:estoque|inventario|pecas|entrada|baixa)\b", words):
-            mode = "estoque"
-        elif re.search(r"\b(?:documentos?|docx|pdf|word|pei|paee|pdi|formularios?|preench\w*)\b", words):
+        elif re.search(r"\b(?:pei|paee|pdi)\b", words):
             mode = "documentos"
-        elif re.search(r"\b(?:codigo|python|javascript|program\w*|script)\b", words):
-            mode = "desenvolvedor"
-        else:
-            mode = "executor"
-        return (clean if explicit_task else "TAREFA: " + clean), mode
-    # Follow-ups stay in the conversation's lane, without starting another task.
+        if intent.kind == "task" and not intent.explicit_task:
+            clean = "TAREFA: " + clean
+        return clean, get_mode(mode).id
     return clean, get_mode(previous_mode).id
 
 
@@ -106,7 +96,7 @@ class WhatsAppService:
         self._stop = threading.Event()
         self._worker = None
         self._requests = {}
-        self._events = queue.Queue(maxsize=64)
+        self._events: queue.Queue[str] = queue.Queue(maxsize=64)
         self._state = "disconnected"
         self._qr = ""
         self._self_ids = set()
@@ -126,20 +116,29 @@ class WhatsAppService:
         if "queued_ack" not in columns:
             self.db.execute("ALTER TABLE inbox ADD COLUMN queued_ack INTEGER NOT NULL DEFAULT 0")
         # A crashed in-flight stock operation cannot safely be replayed automatically.
-        self.db.execute("UPDATE inbox SET state='interrupted' WHERE state IN ('running','dispatching')")
+        self.db.execute(
+            "UPDATE inbox SET state='interrupted' WHERE state IN ('running','dispatching')"
+        )
         self.db.commit()
+        self.outbox = WhatsAppOutbox(self.root / "outbox.db", data_root=settings.data_dir)
 
     def status(self, *, include_qr=False):
         with self._lock:
             result = {
-                "state": self._state, "connected": self._state == "connected",
-                "owner_id": self.config.get("owner_id", ""), "error": self._error,
-                "pending": self.db.execute("SELECT COUNT(*) FROM inbox WHERE state='queued'").fetchone()[0],
+                "state": self._state,
+                "connected": self._state == "connected",
+                "owner_id": self.config.get("owner_id", ""),
+                "error": self._error,
+                "pending": self.db.execute(
+                    "SELECT COUNT(*) FROM inbox WHERE state='queued'"
+                ).fetchone()[0],
                 "active_job_id": self._active["job_id"] if self._active else "",
                 "conversation_id": self._conversation_id,
                 "self_chat_url": self._self_chat_url() if self._state == "connected" else "",
-                "welcome_sent": self._state == "connected" and self.config.get("welcome_jid") == self._phone_jid(),
+                "welcome_sent": self._state == "connected"
+                and self.config.get("welcome_jid") == self._phone_jid(),
                 "welcome_error": self._welcome_error,
+                "delivery": self.outbox.counts(self._self_ids),
             }
             if include_qr and self._qr:
                 import qrcode
@@ -147,15 +146,23 @@ class WhatsAppService:
                 image = qrcode.make(self._qr)
                 buffer = io.BytesIO()
                 image.save(buffer, format="PNG")
-                result["qr_image"] = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+                result["qr_image"] = (
+                    "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+                )
             return result
 
     def _save_config(self):
         atomic_write_json(self.config_file, self.config)
 
     def _phone_jid(self):
-        return next((jid for jid in sorted(self._self_ids)
-                     if re.fullmatch(r"\d{10,15}@s\.whatsapp\.net", jid)), "")
+        return next(
+            (
+                jid
+                for jid in sorted(self._self_ids)
+                if re.fullmatch(r"\d{10,15}@s\.whatsapp\.net", jid)
+            ),
+            "",
+        )
 
     def _self_chat_url(self):
         jid = self._phone_jid()
@@ -168,17 +175,22 @@ class WhatsAppService:
                 owner = self.users.get_user(self.config.get("owner_id", ""))
                 jid = self._phone_jid()
                 if self._state != "connected" or not jid:
-                    raise RuntimeError("Aguarde o WhatsApp terminar de conectar para abrir a conversa.")
+                    raise RuntimeError(
+                        "Aguarde o WhatsApp terminar de conectar para abrir a conversa."
+                    )
                 if not owner or not owner.is_active or owner.role == UserRole.VIEWER:
                     raise ValueError("Entre com a conta que conectou o WhatsApp.")
                 self._welcome_pending = False
                 if not resend and self.config.get("welcome_jid") == jid:
                     return self.status()
             try:
-                self._reply(jid, "Conectado ao seu computador!\n\nEsta é sua conversa com o Celsius. "
-                            "Envie AJUDA para ver exemplos ou escreva seu pedido aqui. "
-                            "Os resultados e documentos serão enviados nesta conversa.\n\n"
-                            "Mantenha o computador ligado e o Celsius aberto.")
+                self._reply(
+                    jid,
+                    "Conectado ao seu computador!\n\nEsta é sua conversa com o Celsius. "
+                    "Envie AJUDA para ver exemplos ou escreva seu pedido aqui. "
+                    "Os resultados e documentos serão enviados nesta conversa.\n\n"
+                    "Mantenha o computador ligado e o Celsius aberto.",
+                )
             except (RuntimeError, OSError):
                 with self._lock:
                     self._welcome_error = "A mensagem inicial não foi confirmada. Abra sua conversa pelo botão abaixo ou tente Enviar mensagem inicial."
@@ -202,7 +214,9 @@ class WhatsAppService:
             node = shutil.which("node")
             folder = Path(__file__).resolve().parents[1] / "integrations" / "whatsapp"
             if not node or not (folder / "node_modules" / "@whiskeysockets" / "baileys").exists():
-                raise RuntimeError("Instale a conexão WhatsApp usando scripts/install-whatsapp.ps1.")
+                raise RuntimeError(
+                    "Instale a conexão WhatsApp usando scripts/install-whatsapp.ps1."
+                )
             restrict_private_directory(self.root)
             restrict_private_directory(self.root / "session")
             self._stop.clear()
@@ -214,15 +228,32 @@ class WhatsAppService:
             self._state = "connecting"
             self.config.update(owner_id=owner_id, enabled=True)
             self._save_config()
-            kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if hasattr(subprocess, "CREATE_NO_WINDOW") else {}
-            self._process = subprocess.Popen(
-                [node, str(folder / "bridge.mjs"), str(self.root / "session")],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                text=True, encoding="utf-8", bufsize=1, cwd=folder, **kwargs,
+            kwargs = (
+                {"creationflags": subprocess.CREATE_NO_WINDOW}
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else {}
             )
-            threading.Thread(target=self._read, args=(self._process,), daemon=True, name="CelsiusWhatsAppConnection").start()
+            self._process = subprocess.Popen(  # type: ignore[call-overload]
+                [node, str(folder / "bridge.mjs"), str(self.root / "session")],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                cwd=folder,
+                **kwargs,
+            )
+            threading.Thread(
+                target=self._read,
+                args=(self._process,),
+                daemon=True,
+                name="CelsiusWhatsAppConnection",
+            ).start()
             if not self._worker or not self._worker.is_alive():
-                self._worker = threading.Thread(target=self._work, daemon=True, name="CelsiusWhatsAppCommands")
+                self._worker = threading.Thread(
+                    target=self._work, daemon=True, name="CelsiusWhatsAppCommands"
+                )
                 self._worker.start()
             return self.status()
 
@@ -261,20 +292,25 @@ class WhatsAppService:
 
     def _rpc(self, action: str, **payload):
         request_id = uuid.uuid4().hex
-        result = queue.Queue(maxsize=1)
+        result: queue.Queue[dict] = queue.Queue(maxsize=1)
         with self._lock:
             process = self._process
             if not process or process.poll() is not None:
-                raise RuntimeError("WhatsApp desconectado.")
+                raise DeliveryUnavailableError("WhatsApp desconectado.")
             self._requests[request_id] = result
         try:
             with self._write_lock:
-                process.stdin.write(json.dumps({"id": request_id, "action": action, **payload}, ensure_ascii=False) + "\n")
+                process.stdin.write(
+                    json.dumps({"id": request_id, "action": action, **payload}, ensure_ascii=False)
+                    + "\n"
+                )
                 process.stdin.flush()
             try:
                 response = result.get(timeout=30)
             except queue.Empty as exc:
-                raise RuntimeError("O WhatsApp não confirmou a entrega. Verifique a conexão antes de reenviar.") from exc
+                raise RuntimeError(
+                    "O WhatsApp não confirmou a entrega. Verifique a conexão antes de reenviar."
+                ) from exc
             if not response.get("ok"):
                 raise RuntimeError(response.get("error", "O WhatsApp não confirmou a operação."))
             return response.get("result", {})
@@ -312,7 +348,10 @@ class WhatsAppService:
                     self._self_ids = set(event.get("self_ids", []))
                     self._error = ""
                     self._welcome_error = ""
-                    self._welcome_pending = bool(self._phone_jid()) and self.config.get("welcome_jid") != self._phone_jid()
+                    self._welcome_pending = (
+                        bool(self._phone_jid())
+                        and self.config.get("welcome_jid") != self._phone_jid()
+                    )
                 if kind == "error":
                     self._error = "Não foi possível conectar ao WhatsApp. Tente novamente."
                 if kind == "logged_out":
@@ -321,11 +360,17 @@ class WhatsAppService:
                     self._save_config()
                 self.event_hub.publish("whatsapp.connection", {"state": self._state})
                 # Diagnostic state excludes QR, account identifiers and messages.
-                atomic_write_json(self.root / "status.json", {
-                    "state": self._state, "updated": time.time(),
-                    "disconnect_code": event.get("code"),
-                    "self_chat_available": bool(self._phone_jid()) if kind == "connected" else False,
-                })
+                atomic_write_json(
+                    self.root / "status.json",
+                    {
+                        "state": self._state,
+                        "updated": time.time(),
+                        "disconnect_code": event.get("code"),
+                        "self_chat_available": bool(self._phone_jid())
+                        if kind == "connected"
+                        else False,
+                    },
+                )
                 return
             if kind != "message" or self._state != "connected":
                 return
@@ -340,22 +385,66 @@ class WhatsAppService:
                 return
             if text.startswith("Celsius\n") or not text.strip() or len(text) > 20000:
                 return
-            if self.db.execute("SELECT COUNT(*) FROM inbox WHERE state='queued'").fetchone()[0] >= 32:
+            if (
+                self.db.execute("SELECT COUNT(*) FROM inbox WHERE state='queued'").fetchone()[0]
+                >= 32
+            ):
                 return
-            cursor = self.db.execute("INSERT OR IGNORE INTO inbox(id,jid,text,state,created) VALUES(?,?,?,'queued',?)",
-                                     (message_id, jid, text, time.time()))
+            cursor = self.db.execute(
+                "INSERT OR IGNORE INTO inbox(id,jid,text,state,created) VALUES(?,?,?,'queued',?)",
+                (message_id, jid, text, time.time()),
+            )
             self.db.commit()
             if cursor.rowcount:
                 with suppress(queue.Full):
                     self._events.put_nowait(message_id)
 
     def _reply(self, jid, text):
-        for start in range(0, len(text), 3500):
-            self._rpc("send", jid=jid, text="Celsius\n" + text[start:start + 3500])
+        for chunk in whatsapp_chunks(text):
+            self._rpc("send", jid=jid, text="Celsius\n" + chunk)
+
+    def _deliver_results(self):
+        for item in self.outbox.pending(self._self_ids):
+            if self._state != "connected":
+                return
+            payload = json.loads(item["payload"])
+            self.outbox.mark(item["id"], "sending")
+            try:
+                if item["kind"] == "document":
+                    output = self.coordinator.outputs.get(payload["attachment_id"])
+                    if not output.path.is_file():
+                        raise FileNotFoundError("O arquivo gerado não está disponível.")
+                    payload = {
+                        "path": str(output.path),
+                        "name": output.name,
+                        "mime": mimetypes.guess_type(output.name)[0] or "application/octet-stream",
+                        "text": "Celsius\nArquivo gerado no computador.",
+                    }
+                self._rpc("send", jid=item["jid"], **payload)
+            except DeliveryUnavailableError:
+                self.outbox.mark(item["id"], "queued")
+                self._error = (
+                    "Resultado salvo. A entrega será retomada quando o WhatsApp reconectar."
+                )
+                return
+            except (FileNotFoundError, ChatNotFoundError, ValueError):
+                self.outbox.mark(item["id"], "failed", "Arquivo indisponível para entrega.")
+                self._error = "Um arquivo não pôde ser enviado. Confira os anexos no computador."
+            except (RuntimeError, OSError):
+                self.outbox.mark(item["id"], "uncertain", "Entrega sem confirmação do WhatsApp.")
+                self._error = (
+                    "Resultado salvo, mas a entrega não foi confirmada. "
+                    "Confira a conversa e use REENVIAR RESULTADO se necessário."
+                )
+                return
+            else:
+                self.outbox.mark(item["id"], "sent")
 
     def _set_state(self, message_id, state, job_id=""):
         with self._lock:
-            self.db.execute("UPDATE inbox SET state=?, job_id=? WHERE id=?", (state, job_id, message_id))
+            self.db.execute(
+                "UPDATE inbox SET state=?, job_id=? WHERE id=?", (state, job_id, message_id)
+            )
             self.db.commit()
 
     def _control(self, row):
@@ -364,39 +453,71 @@ class WhatsAppService:
             self._set_state(message_id, "interrupted")
             return True
         text = command_text(raw)
-        normalized = text.lower().strip(" .!?")
+        from core.message_intent import normalize_text
+
+        normalized = normalize_text(text)
         if normalized in {"ajuda", "help"}:
-            self._reply(jid, "Escreva aqui seus pedidos. Exemplos: gere um relatório de estoque; dê entrada de 10 peças; mande mensagem para João: texto.\nUse STATUS, CANCELAR ou NOVA CONVERSA. Envios a contatos pedem confirmação antes de enviar.")
+            self._reply(
+                jid,
+                "Escreva aqui seus pedidos. Exemplos: gere um relatório de estoque; dê entrada de 10 peças; mande mensagem para João: texto.\nUse STATUS, CANCELAR, NOVA CONVERSA ou REENVIAR RESULTADO. Envios a contatos pedem confirmação antes de enviar.",
+            )
         elif normalized == "status":
             with self._lock:
-                pending = self.db.execute("SELECT COUNT(*) FROM inbox WHERE state='queued' AND id<>?", (message_id,)).fetchone()[0]
+                pending = self.db.execute(
+                    "SELECT COUNT(*) FROM inbox WHERE state='queued' AND id<>?", (message_id,)
+                ).fetchone()[0]
             if self._active:
-                status = "Estou trabalhando na tarefa " + self._active["job_id"]
+                job = self.coordinator.get_job(self._active["job_id"])
+                status = (
+                    job.get("status_message") or "Estou trabalhando no seu pedido no computador."
+                )
             elif pending:
                 status = f"Há {pending} pedido(s) na fila, aguardando o computador terminar a tarefa atual."
             else:
                 status = "Aguardando seus pedidos. O computador precisa continuar ligado e com o Celsius aberto."
             self._reply(jid, status)
+        elif normalized == "reenviar resultado":
+            retry = self.outbox.retry_latest(jid)
+            self._reply(
+                jid,
+                "Vou reenviar somente a entrega pendente; a tarefa não será executada novamente."
+                if retry
+                else "Não há entrega sem confirmação para reenviar.",
+            )
         elif normalized == "cancelar":
             if self._active:
                 self.coordinator.cancel(self._active["job_id"])
-            self._reply(jid, "Cancelamento solicitado." if self._active else "Não há tarefa WhatsApp em execução.")
+            self._reply(
+                jid,
+                "Cancelamento solicitado."
+                if self._active
+                else "Não há tarefa WhatsApp em execução.",
+            )
         elif normalized == "nova conversa":
             if self._active:
-                self._reply(jid, "Aguarde a tarefa atual ou use CANCELAR antes de iniciar outra conversa.")
+                self._reply(
+                    jid, "Aguarde a tarefa atual ou use CANCELAR antes de iniciar outra conversa."
+                )
             else:
                 self._conversation_id = ""
                 self.config["conversation_id"] = ""
                 self._agent_mode = "assistente"
                 self.config["agent_mode"] = self._agent_mode
                 self._save_config()
-                self._reply(jid, "Pronto. Seu próximo pedido iniciará uma nova conversa no computador.")
+                self._reply(
+                    jid, "Pronto. Seu próximo pedido iniciará uma nova conversa no computador."
+                )
         elif re.fullmatch(r"confirmar\s+[a-f0-9]{8}", text, re.I):
             code = text.split()[-1].lower()
             with self._lock:
-                pending = self.db.execute("SELECT recipient,body FROM confirmations WHERE code=? AND jid=? AND state='pending' AND expires>?", (code, jid, time.time())).fetchone()
+                pending = self.db.execute(
+                    "SELECT recipient,body FROM confirmations WHERE code=? AND jid=? AND state='pending' AND expires>?",
+                    (code, jid, time.time()),
+                ).fetchone()
                 if pending:
-                    self.db.execute("UPDATE confirmations SET state='sending' WHERE code=?", (code,))
+                    self.db.execute(
+                        "UPDATE confirmations SET state='sending' WHERE code=?", (code,)
+                    )
                     self.db.commit()
             if not pending:
                 self._reply(jid, "Confirmação inválida, já usada ou expirada.")
@@ -404,27 +525,46 @@ class WhatsAppService:
                 try:
                     self._rpc("send", jid=pending[0], text=pending[1])
                 except RuntimeError:
-                    self._reply(jid, "Não recebi confirmação de entrega. Verifique a conversa do contato antes de tentar outro envio.")
+                    self._reply(
+                        jid,
+                        "Não recebi confirmação de entrega. Verifique a conversa do contato antes de tentar outro envio.",
+                    )
                 else:
                     self._reply(jid, "Mensagem enviada e confirmada pelo WhatsApp.")
         else:
             contact_message = parse_contact_message(text)
             if not contact_message:
-                if re.match(r"^(?:mande|manda|envie|envia|enviar|mandar)\s+(?:uma\s+)?mensagem\s+para\b", text, re.I):
-                    self._reply(jid, "Informe o destinatário e o texto. Exemplo: mande mensagem para João: o relatório está pronto.")
+                if re.match(
+                    r"^(?:mande|manda|envie|envia|enviar|mandar)\s+(?:uma\s+)?mensagem\s+para\b",
+                    text,
+                    re.I,
+                ):
+                    self._reply(
+                        jid,
+                        "Informe o destinatário e o texto. Exemplo: mande mensagem para João: o relatório está pronto.",
+                    )
                     self._set_state(message_id, "completed")
                     return True
                 return False
             contact, body = contact_message
             matches = self._rpc("resolve", contact=contact).get("matches", [])
             if len(matches) != 1:
-                self._reply(jid, "Não encontrei um contato único. Informe o telefone com DDI e DDD, por exemplo: mande mensagem para +5514999999999: texto.")
+                self._reply(
+                    jid,
+                    "Não encontrei um contato único. Informe o telefone com DDI e DDD, por exemplo: mande mensagem para +5514999999999: texto.",
+                )
             else:
                 code = secrets.token_hex(4)
                 with self._lock:
-                    self.db.execute("INSERT INTO confirmations VALUES(?,?,?,?,?,'pending')", (code, jid, matches[0]["jid"], body, time.time() + 600))
+                    self.db.execute(
+                        "INSERT INTO confirmations VALUES(?,?,?,?,?,'pending')",
+                        (code, jid, matches[0]["jid"], body, time.time() + 600),
+                    )
                     self.db.commit()
-                self._reply(jid, f"Enviar para {matches[0]['name']}?\n\n{body}\n\nResponda CONFIRMAR {code} em até 10 minutos.")
+                self._reply(
+                    jid,
+                    f"Enviar para {matches[0]['name']}?\n\n{body}\n\nResponda CONFIRMAR {code} em até 10 minutos.",
+                )
         self._set_state(message_id, "completed")
         return True
 
@@ -432,7 +572,7 @@ class WhatsAppService:
         while not self._stop.is_set():
             try:
                 try:
-                    message_id = self._events.get(timeout=.5)
+                    message_id = self._events.get(timeout=0.5)
                 except queue.Empty:
                     message_id = None
                 if self._state != "connected":
@@ -446,37 +586,42 @@ class WhatsAppService:
                         self.open_self_chat()
                 if message_id:
                     with self._lock:
-                        row = self.db.execute("SELECT id,jid,text FROM inbox WHERE id=? AND state='queued'", (message_id,)).fetchone()
+                        row = self.db.execute(
+                            "SELECT id,jid,text FROM inbox WHERE id=? AND state='queued'",
+                            (message_id,),
+                        ).fetchone()
                     if row:
                         self._control(row)
                 self._tick()
             except (RuntimeError, OSError, ChatNotFoundError, ValueError):
-                self._error = "Uma operação não foi concluída. Confira a conexão e a tarefa no computador."
+                self._error = (
+                    "Uma operação não foi concluída. Confira a conexão e a tarefa no computador."
+                )
                 self._stop.wait(1)
 
     def _tick(self):
         owner = self.users.get_user(self.config.get("owner_id", ""))
         if not owner or not owner.is_active or owner.role == UserRole.VIEWER:
             return
+        self._deliver_results()
         if self._active:
             job = self.coordinator.get_job(self._active["job_id"])
             if job["status"] not in {"completed", "failed", "cancelled"}:
                 return
             active = self._active
-            # Do not resend a completed mutation if delivery to WhatsApp fails.
+            # Persist delivery before releasing execution. A transport failure
+            # must never re-run the task or lose its already produced files.
+            if active["jid"] in self._self_ids:
+                self.outbox.enqueue(active["id"], active["jid"], job)
             self._set_state(active["id"], job["status"], job["id"])
             self._active = None
             if active["jid"] not in self._self_ids:
                 return
-            self._reply(active["jid"], job.get("response") or job.get("error") or "Tarefa interrompida.")
-            for attachment in job.get("attachments", []):
-                output = self.coordinator.outputs.get(attachment["id"])
-                if not output.path.is_file():
-                    continue
-                self._rpc("send", jid=active["jid"], path=str(output.path), name=output.name,
-                          mime=mimetypes.guess_type(output.name)[0] or "application/octet-stream", text="Celsius\nArquivo gerado no computador.")
+            self._deliver_results()
         with self._lock:
-            row = self.db.execute("SELECT id,jid,text FROM inbox WHERE state='queued' ORDER BY created LIMIT 1").fetchone()
+            row = self.db.execute(
+                "SELECT id,jid,text FROM inbox WHERE state='queued' ORDER BY created LIMIT 1"
+            ).fetchone()
         if not row:
             return
         message_id, jid, raw = row
@@ -485,15 +630,24 @@ class WhatsAppService:
         text, mode = route_whatsapp_message(raw, self._agent_mode)
         self._set_state(message_id, "dispatching")
         try:
-            job = self.coordinator.submit(message=text, conversation_id=self._conversation_id,
-                                          agent_mode=mode, source="whatsapp")
+            job = self.coordinator.submit(
+                message=text,
+                conversation_id=self._conversation_id,
+                agent_mode=mode,
+                source="whatsapp",
+            )
         except ChatBusyError:
             self._set_state(message_id, "queued")
             with self._lock:
-                acknowledged = self.db.execute("UPDATE inbox SET queued_ack=1 WHERE id=? AND queued_ack=0", (message_id,)).rowcount
+                acknowledged = self.db.execute(
+                    "UPDATE inbox SET queued_ack=1 WHERE id=? AND queued_ack=0", (message_id,)
+                ).rowcount
                 self.db.commit()
             if acknowledged:
-                self._reply(jid, "O Celsius está ocupado no computador. Seu pedido entrou na fila e será executado quando a tarefa atual terminar.")
+                self._reply(
+                    jid,
+                    "O Celsius está ocupado no computador. Seu pedido entrou na fila e será executado quando a tarefa atual terminar.",
+                )
             return  # shared single inference slot: preserve FIFO until desktop is free
         except ChatNotFoundError:
             self._set_state(message_id, "queued")
@@ -507,6 +661,9 @@ class WhatsAppService:
             self.config["agent_mode"] = mode
         self._save_config()
         self._set_state(message_id, "running", job["id"])
-        self._reply(jid, "Pedido recebido. Estou trabalhando no computador; enviarei o resultado por aqui."
-                    if re.match(r"^TAREFA\s*:", text, re.I)
-                    else "Mensagem recebida. Estou preparando a resposta no computador.")
+        self._reply(
+            jid,
+            "Pedido recebido. Estou trabalhando no computador; enviarei o resultado por aqui."
+            if re.match(r"^TAREFA\s*:", text, re.I)
+            else "Mensagem recebida. Estou preparando a resposta no computador.",
+        )

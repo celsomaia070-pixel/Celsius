@@ -1,6 +1,6 @@
 from evals import harness
 
-r = harness.run('atual')
+r = harness.run("atual")
 m = r.metrics
 
 print("=== Métricas com encoder ativo ===")
@@ -24,9 +24,21 @@ for cat in sorted(cats):
 print("\n=== Comparativo (lexical vs encoder ativo) ===")
 print(f"{'Métrica':<25} {'Lexical':>10} {'Encoder':>10} {'Variação':>12}")
 print("-" * 57)
-print(f"{'tool_recall':<25} {0.4135:>10.4f} {m['tool_recall']:>10.4f} {m['tool_recall']-0.4135:>+11.4f}")
-print(f"{'tool_precision':<25} {0.5699:>10.4f} {m['tool_precision']:>10.4f} {m['tool_precision']-0.5699:>+11.4f}")
-print(f"{'mode_accuracy':<25} {0.6842:>10.4f} {m['mode_accuracy']:>10.4f} {m['mode_accuracy']-0.6842:>+11.4f}")
-print(f"{'zero_tool_rate':<25} {0.4615:>10.4f} {m['zero_tool_rate_operational']:>10.4f} {m['zero_tool_rate_operational']-0.4615:>+11.4f}")
-print(f"{'false_tool_rate':<25} {0.0909:>10.4f} {m['false_tool_rate_on_general']:>10.4f} {m['false_tool_rate_on_general']-0.0909:>+11.4f}")
-print(f"{'avg_tools':<25} {0.89:>10.2f} {m['tools_offered_avg']:>10.2f} {m['tools_offered_avg']-0.89:>+11.2f}")
+print(
+    f"{'tool_recall':<25} {0.4135:>10.4f} {m['tool_recall']:>10.4f} {m['tool_recall'] - 0.4135:>+11.4f}"
+)
+print(
+    f"{'tool_precision':<25} {0.5699:>10.4f} {m['tool_precision']:>10.4f} {m['tool_precision'] - 0.5699:>+11.4f}"
+)
+print(
+    f"{'mode_accuracy':<25} {0.6842:>10.4f} {m['mode_accuracy']:>10.4f} {m['mode_accuracy'] - 0.6842:>+11.4f}"
+)
+print(
+    f"{'zero_tool_rate':<25} {0.4615:>10.4f} {m['zero_tool_rate_operational']:>10.4f} {m['zero_tool_rate_operational'] - 0.4615:>+11.4f}"
+)
+print(
+    f"{'false_tool_rate':<25} {0.0909:>10.4f} {m['false_tool_rate_on_general']:>10.4f} {m['false_tool_rate_on_general'] - 0.0909:>+11.4f}"
+)
+print(
+    f"{'avg_tools':<25} {0.89:>10.2f} {m['tools_offered_avg']:>10.2f} {m['tools_offered_avg'] - 0.89:>+11.2f}"
+)

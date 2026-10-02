@@ -7,25 +7,33 @@ from collections.abc import Iterable, Iterator
 from threading import Lock
 from typing import Generic, TypeVar
 
+from core.operation_control import check_control
+
 T = TypeVar("T")
 
 
 class LockedIterator(Iterator[T], Generic[T]):
     """Keep a lock held until an iterator finishes or is explicitly closed."""
 
-    def __init__(self, iterable: Iterable[T], lock: Lock):
-        self._iterator = iter(iterable)
+    def __init__(self, iterable: Iterable[T], lock: Lock, *, should_cancel=None, deadline=None):
         self._lock = lock
+        self._released = True
+        self._iterator = iter(iterable)
         self._released = False
+        self._should_cancel = should_cancel
+        self._deadline = deadline
 
     def __iter__(self) -> LockedIterator[T]:
         return self
 
     def __next__(self) -> T:
         try:
-            return next(self._iterator)
+            check_control(self._should_cancel, self._deadline)
+            value = next(self._iterator)
+            check_control(self._should_cancel, self._deadline)
+            return value
         except BaseException:
-            self._release()
+            self.close()
             raise
 
     def close(self) -> None:

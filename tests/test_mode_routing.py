@@ -140,6 +140,17 @@ class TestDetectMode:
 
 
 class TestClassifyMode:
+    def test_semantic_tie_does_not_force_a_specialist(self, monkeypatch):
+        from core import embeddings
+
+        text = "me mostre o que guardei"
+        encoder = FakeEncoder(text, _direction("estoque") + _direction("documentos"))
+        monkeypatch.setattr(embeddings, "try_get_sentence_transformer", lambda *a: encoder)
+        reset_mode_embeddings()
+        mode, score = classify_mode(text)
+        assert score > 0.5 and mode is None
+        reset_mode_embeddings()
+
     def test_threshold_blocks_a_weak_match(self, fake_encoder):
         # A partially-aligned query scores below the default 0.5 bar.
         fake_encoder("meu estoque", "estoque", weight=0.4)
@@ -208,10 +219,10 @@ class TestResolveMode:
 
         assert resolve_mode("meu estoque", requested=DEFAULT_MODE_ID) == "estoque"
 
-    def test_classification_wins_over_lexical(self, fake_encoder):
+    def test_clear_lexical_intent_avoids_semantic_misrouting(self, fake_encoder):
         fake_encoder("quero ver o estoque", "documentos")
 
-        assert resolve_mode("quero ver o estoque") == "documentos"
+        assert resolve_mode("quero ver o estoque") == "estoque"
 
     def test_lexical_is_the_fallback_when_classification_fails(self, fake_encoder):
         fake_encoder("texto sem relacao", "estoque")

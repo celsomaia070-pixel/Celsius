@@ -111,7 +111,10 @@ class TestContextBudgetWithWorkingMemory:
         # Create messages where oldest is highly relevant (tool result)
         messages = [
             {"role": "system", "content": "System"},
-            {"role": "tool", "content": "Resultado importante da consulta de estoque: 100 unidades"},
+            {
+                "role": "tool",
+                "content": "Resultado importante da consulta de estoque: 100 unidades",
+            },
             {"role": "user", "content": "Qual o preço?"},
             {"role": "assistant", "content": "O preço é X"},
             {"role": "user", "content": "E a cor?"},
@@ -203,4 +206,5 @@ class TestBudgetStats:
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

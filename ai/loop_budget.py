@@ -60,22 +60,76 @@ _SEQUENCE_PATTERN = re.compile(
 #: Verbs that each imply a distinct action on local data. Two or more different
 #: ones in one sentence is a multi-step request even without a sequence marker.
 _ACTION_GROUPS: tuple[frozenset[str], ...] = (
-    frozenset({
-        "leia", "ler", "le", "abra", "abrir", "consulte", "consultar", "veja",
-        "ver", "mostre", "mostrar", "liste", "listar", "busque", "buscar",
-        "procure", "procurar", "recupere", "recuperar",
-    }),
-    frozenset({
-        "resuma", "resumir", "resumo", "transforme", "transformar", "organize",
-        "organizar", "extraia", "extrair", "processe", "processar", "converta",
-        "converter", "reformate", "reformatar", "limpe", "limpar", "analise",
-        "analisar",
-    }),
-    frozenset({
-        "salve", "salvar", "grave", "gravar", "escreva", "escrever", "crie",
-        "criar", "gere", "gerar", "exporte", "exportar", "guarde", "guardar",
-        "adicione", "cadastre", "registre", "anexe", "envie", "imprima",
-    }),
+    frozenset(
+        {
+            "leia",
+            "ler",
+            "le",
+            "abra",
+            "abrir",
+            "consulte",
+            "consultar",
+            "veja",
+            "ver",
+            "mostre",
+            "mostrar",
+            "liste",
+            "listar",
+            "busque",
+            "buscar",
+            "procure",
+            "procurar",
+            "recupere",
+            "recuperar",
+        }
+    ),
+    frozenset(
+        {
+            "resuma",
+            "resumir",
+            "resumo",
+            "transforme",
+            "transformar",
+            "organize",
+            "organizar",
+            "extraia",
+            "extrair",
+            "processe",
+            "processar",
+            "converta",
+            "converter",
+            "reformate",
+            "reformatar",
+            "limpe",
+            "limpar",
+            "analise",
+            "analisar",
+        }
+    ),
+    frozenset(
+        {
+            "salve",
+            "salvar",
+            "grave",
+            "gravar",
+            "escreva",
+            "escrever",
+            "crie",
+            "criar",
+            "gere",
+            "gerar",
+            "exporte",
+            "exportar",
+            "guarde",
+            "guardar",
+            "adicione",
+            "cadastre",
+            "registre",
+            "anexe",
+            "envie",
+            "imprima",
+        }
+    ),
 )
 
 
@@ -118,9 +172,7 @@ def classify_complexity(
     grupos_ativos = [sorted(g & set(texto.split())) for g in _ACTION_GROUPS]
     acoes_distintas = [g for g in grupos_ativos if g]
     if len(acoes_distintas) >= 2:
-        return Complexity(
-            MULTI_STEP, tuple(f"acoes:{','.join(g)}" for g in acoes_distintas)
-        )
+        return Complexity(MULTI_STEP, tuple(f"acoes:{','.join(g)}" for g in acoes_distintas))
 
     if ferramentas:
         return Complexity(FERRAMENTA_SIMPLES, (f"ferramentas:{len(ferramentas)}",))
@@ -151,9 +203,7 @@ def resolve_budget(
     room to finish.
     """
     settings = settings_agent if settings_agent is not None else get_settings().agent
-    complexity = classify_complexity(
-        pergunta, ferramentas=ferramentas, task_session=task_session
-    )
+    complexity = classify_complexity(pergunta, ferramentas=ferramentas, task_session=task_session)
     cap = max(1, int(settings.loop_hard_cap))
 
     if complexity.kind == TAREFA:
@@ -276,10 +326,7 @@ class LoopDetector:
     @property
     def exhausted(self) -> bool:
         """Whether the loop must be broken for the model."""
-        return (
-            self.consecutive >= self.threshold
-            or self._error_repeats >= self.threshold
-        )
+        return self.consecutive >= self.threshold or self._error_repeats >= self.threshold
 
     def nudge(self, repetition: Repetition) -> str:
         """The observation appended to the conversation to force a change.

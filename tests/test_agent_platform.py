@@ -28,9 +28,7 @@ def test_artifact_objectives_are_identified_without_treating_summaries_as_files(
 
 def test_task_cannot_complete_a_document_request_without_a_real_artifact(tmp_path):
     store = AgentTaskStore(tmp_path / "agent_tasks.db")
-    task = store.create(
-        "abc123def456", {"pergunta": "Gere um relatorio PEI em PDF para o aluno."}
-    )
+    task = store.create("abc123def456", {"pergunta": "Gere um relatorio PEI em PDF para o aluno."})
 
     completed = TaskSession(store, task).finish("Relatorio pronto em um caminho ficticio.")
     saved = store.get(task["id"], task["scope"])

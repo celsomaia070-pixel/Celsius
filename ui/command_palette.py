@@ -156,7 +156,7 @@ class CommandPalette(QDialog):
             ("clear_chat", "Limpar conversa", "fa5s.trash", "Ctrl+Shift+Del"),
             ("toggle_sidebar", "Alternar barra lateral", "fa5s.sidebar", "Ctrl+B"),
             ("toggle_theme", "Alternar tema claro/escuro", "fa5s.moon", "Ctrl+Shift+L"),
-("settings", "Configurações", "fa5s.cog", "Ctrl+,"),
+            ("settings", "Configurações", "fa5s.cog", "Ctrl+,"),
             ("export_chat", "Exportar conversa", "fa5s.file-export", ""),
             ("voice_toggle", "Ativar/Desativar voz", "fa5s.microphone", ""),
             ("generate_report", "Gerar relatório", "fa5s.file-alt", ""),

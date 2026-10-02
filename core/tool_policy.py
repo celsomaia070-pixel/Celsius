@@ -272,7 +272,9 @@ def assess_tool(tool: str, arguments: Mapping[str, Any] | None = None) -> ToolRi
     args = dict(arguments or {})
     if tool == "preencher_documento_com_fontes" and args.get("somente_analisar") is True:
         return ToolRiskAssessment(
-            tool=tool, risk=Risk.READ, requires_confirmation=False,
+            tool=tool,
+            risk=Risk.READ,
+            requires_confirmation=False,
             reason="Planeja preenchimento com fontes sem criar ou alterar arquivos.",
         )
     policy = get_policy(tool)

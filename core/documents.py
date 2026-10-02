@@ -404,15 +404,18 @@ class DocumentLibraryService:
         from core.document_forms import _normalized
 
         tokens = _normalized(question).split()
-        phrases = {" ".join(tokens[i:i + 3]) for i in range(max(0, len(tokens) - 2))}
+        phrases = {" ".join(tokens[i : i + 3]) for i in range(max(0, len(tokens) - 2))}
         hits = []
         for record in self.record_service.list_by_module(MODULE_KNOWLEDGE):
             path = self._record_path(record)
             if path is None or not path.is_file():
                 continue
             names = [_normalized(record.title), _normalized(record.fields.get("nome_arquivo", ""))]
-            if any(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", name)
-                   for phrase in phrases for name in names):
+            if any(
+                re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", name)
+                for phrase in phrases
+                for name in names
+            ):
                 hits.append(path)
         return hits
 

@@ -141,7 +141,9 @@ class ContextBudget:
         self.memories_max = int(self.available_tokens * 0.08)  # ~8%
         self.working_memory_max = int(self.available_tokens * WORKING_MEMORY_MAX_RATIO)  # ~15%
 
-    def analyze_messages(self, messages: list[dict], working_memory: WorkingMemory | None = None) -> dict:
+    def analyze_messages(
+        self, messages: list[dict], working_memory: WorkingMemory | None = None
+    ) -> dict:
         """Analyze current message list and return budget breakdown."""
         system_tokens = 0
         history_tokens = 0
@@ -158,7 +160,11 @@ class ContextBudget:
                     doc_tokens += tokens
                 elif "Ferramentas Disponiveis" in content:
                     tool_tokens += tokens
-                elif "Fatos confirmados" in content or "Tarefas pendentes" in content or "Resultados recentes" in content:
+                elif (
+                    "Fatos confirmados" in content
+                    or "Tarefas pendentes" in content
+                    or "Resultados recentes" in content
+                ):
                     # Working memory injected as system message
                     pass  # counted separately via working_memory estimate
                 else:
@@ -182,7 +188,9 @@ class ContextBudget:
             "available": self.available_tokens,
             "utilization": utilization,
             "over_budget": utilization > MAX_CONTEXT_USE,
-            "warnings": self._get_warnings(system_tokens, doc_tokens, history_tokens, tool_tokens, wm_tokens),
+            "warnings": self._get_warnings(
+                system_tokens, doc_tokens, history_tokens, tool_tokens, wm_tokens
+            ),
         }
 
     def _get_warnings(self, system: int, doc: int, history: int, tools: int, wm: int) -> list[str]:
@@ -199,7 +207,9 @@ class ContextBudget:
         if tools > self.tools_max:
             warnings.append(f"Tools ({tools} tokens) exceeds budget ({self.tools_max})")
         if wm > self.working_memory_max:
-            warnings.append(f"Working memory ({wm} tokens) exceeds budget ({self.working_memory_max})")
+            warnings.append(
+                f"Working memory ({wm} tokens) exceeds budget ({self.working_memory_max})"
+            )
         return warnings
 
     @staticmethod

@@ -40,14 +40,14 @@ class TestReflectionPredicates:
 
     def test_tools_expected_none_used_no_tools_offered(self):
         passos = [MockPasso("resposta", conteudo="Olá!")]
-        assert not _tools_were_expected_but_none_used(
-            "o que é python?", [], passos
-        )
+        assert not _tools_were_expected_but_none_used("o que é python?", [], passos)
 
     def test_tool_failed_no_retry(self):
         passos = [
             MockPasso("acao"),
-            MockPasso("observacao", resultado="Erro ao executar ler_arquivo: arquivo nao encontrado"),
+            MockPasso(
+                "observacao", resultado="Erro ao executar ler_arquivo: arquivo nao encontrado"
+            ),
             MockPasso("resposta", conteudo="Não encontrei o arquivo"),
         ]
         assert _tool_failed_and_no_retry(passos)
@@ -55,7 +55,9 @@ class TestReflectionPredicates:
     def test_tool_failed_but_retried(self):
         passos = [
             MockPasso("acao"),
-            MockPasso("observacao", resultado="Erro ao executar ler_arquivo: arquivo nao encontrado"),
+            MockPasso(
+                "observacao", resultado="Erro ao executar ler_arquivo: arquivo nao encontrado"
+            ),
             MockPasso("acao"),
             MockPasso("observacao", resultado="ok"),
             MockPasso("resposta", conteudo="Aqui está o conteúdo"),
@@ -81,9 +83,7 @@ class TestReflectionPredicates:
         assert not _ended_by_iteration_limit(10, 5)
 
     def test_task_incomplete(self):
-        task = SimpleNamespace(
-            task={"plan": [{"step": 1}, {"step": 2}]}, output=None
-        )
+        task = SimpleNamespace(task={"plan": [{"step": 1}, {"step": 2}]}, output=None)
         assert _task_incomplete([], task)
 
     def test_task_complete(self):
@@ -190,6 +190,7 @@ class TestReflect:
 class TestSettings:
     def test_reflection_settings_exist(self):
         from core.settings import get_settings
+
         s = get_settings().agent
         assert hasattr(s, "reflection_enabled")
         assert hasattr(s, "reflection_max_turns")

@@ -12,15 +12,44 @@ from typing import Any
 from core.document_forms import FormField, _clean, _fold, _normalized
 
 _ALIASES = {
-    "nome": "nome pessoa", "nome do aluno": "nome pessoa", "nome da crianca": "nome pessoa",
-    "nome do estudante": "nome pessoa", "aluno": "nome pessoa", "estudante": "nome pessoa",
-    "data de nascimento": "nascimento", "nascimento": "nascimento",
-    "escola": "escola", "unidade escolar": "escola",
+    "nome": "nome pessoa",
+    "nome do aluno": "nome pessoa",
+    "nome da crianca": "nome pessoa",
+    "nome do estudante": "nome pessoa",
+    "aluno": "nome pessoa",
+    "estudante": "nome pessoa",
+    "data de nascimento": "nascimento",
+    "nascimento": "nascimento",
+    "escola": "escola",
+    "unidade escolar": "escola",
 }
 _STOPWORDS = frozenset(
     {
-        "a", "as", "o", "os", "da", "das", "de", "do", "dos", "e", "em", "no", "na",
-        "nos", "nas", "por", "para", "com", "que", "se", "ou", "um", "uma", "the", "of",
+        "a",
+        "as",
+        "o",
+        "os",
+        "da",
+        "das",
+        "de",
+        "do",
+        "dos",
+        "e",
+        "em",
+        "no",
+        "na",
+        "nos",
+        "nas",
+        "por",
+        "para",
+        "com",
+        "que",
+        "se",
+        "ou",
+        "um",
+        "uma",
+        "the",
+        "of",
     }
 )
 
@@ -39,9 +68,10 @@ def _score(field: FormField, source_key: str, source_value: str) -> float:
         return 0.96
     # "Unidade Escolar" should accept a source labelled "Escola".
     if label_key in source_key or source_key in label_key:
-        shorter, longer = sorted((len(label_key), len(source_key)))[0], sorted(
-            (len(label_key), len(source_key))
-        )[1]
+        shorter, longer = (
+            sorted((len(label_key), len(source_key)))[0],
+            sorted((len(label_key), len(source_key)))[1],
+        )
         if shorter >= 4 and shorter / longer >= 0.5:
             return 0.9
     field_tokens = _tokens(field.label)
@@ -103,8 +133,7 @@ def match_values_to_fields(
 
     # Competing values with near-equal scores are a conflict, never an arbitrary winner.
     ambiguous = {
-        item["field"] for item in losers
-        if chosen[item["field"]]["score"] - item["score"] < 0.10
+        item["field"] for item in losers if chosen[item["field"]]["score"] - item["score"] < 0.10
     }
     resolved = {label: item["value"] for label, item in chosen.items() if label not in ambiguous}
     report = [
@@ -141,7 +170,9 @@ def resolve_checkbox_values(
         exact = [option for option, key in keys.items() if key == wanted]
         if exact:
             return exact[0], []
-        contained = [option for option, key in keys.items() if key and (wanted in key or key in wanted)]
+        contained = [
+            option for option, key in keys.items() if key and (wanted in key or key in wanted)
+        ]
         if len(contained) == 1:
             return contained[0], []
         return None, contained
@@ -187,9 +218,7 @@ def resolve_checkbox_values(
         if key in resolved or _fold(value) in claimed:
             continue
         matches = [
-            (field, option_for(value, field)[0])
-            for field in groups
-            if field.label not in resolved
+            (field, option_for(value, field)[0]) for field in groups if field.label not in resolved
         ]
         hits = [(field, option) for field, option in matches if option]
         if len(hits) == 1:

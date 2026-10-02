@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 from ai.engine import gerar_resposta, gerar_resposta_com_imagem
 from ai.interruption import marcar_interrompida
 from core.chat_attachments import prepare_prompt_attachments
+from core.operation_control import OperationCancelled, check_control
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +76,11 @@ class AIWorker(QRunnable):
 
         gc.disable()
         try:
+            check_control(self.cancel_event.is_set)
             self.signals.status.emit("Preparando sua mensagem...")
             attachments_started_at = time.perf_counter()
             self._prepare_attachments()
+            check_control(self.cancel_event.is_set)
             attachments_seconds = time.perf_counter() - attachments_started_at
             generation_started_at = time.perf_counter()
             should_cancel = self.cancel_event.is_set
@@ -116,6 +119,9 @@ class AIWorker(QRunnable):
                 self.signals.finished.emit(resposta)
                 self._emit_slow_model_suggestion(resposta, generation_seconds)
                 self._emit_switch_notice()
+        except OperationCancelled:
+            with contextlib.suppress(RuntimeError):
+                self.signals.cancelled.emit(marcar_interrompida(""))
         except Exception as e:
             if self.cancel_event.is_set():
                 logger.info("Geracao interrompida pelo usuario: %s", e)

@@ -1,4 +1,4 @@
-﻿"""Golden-set regression gate.
+"""Golden-set regression gate.
 
 These assertions are **floors, not targets**. They encode the measured baseline
 so a future change cannot quietly lose capability. They deliberately do not
@@ -28,32 +28,42 @@ def _current() -> harness.RunReport:
     # Force fresh imports and reset all module-level caches
     import importlib
     import sys
+
     # Clear any mocked sentence_transformers from conftest
     for mod_name in list(sys.modules.keys()):
         if "sentence_transformers" in mod_name:
             del sys.modules[mod_name]
     import evals.harness
+
     importlib.reload(evals.harness)
     import ai.tool_retrieval as tr_mod
+
     importlib.reload(tr_mod)
     import ai.react as ai_react_mod
+
     importlib.reload(ai_react_mod)
     import core.agent_modes as am_mod
+
     importlib.reload(am_mod)
     import core.settings as cs_mod
+
     importlib.reload(cs_mod)
     import core.embeddings as ce_mod
+
     importlib.reload(ce_mod)
     ce_mod.clear_sentence_transformer_cache()
     # Reset module-level caches
     import ai.tool_retrieval as tr
+
     tr._embeddings.clear()
     tr._embeddings_model = None
     tr._model_loaded = False
     import ai.react as ai_react
-    if hasattr(ai_react, '_filtrar_ferramentas_cache'):
+
+    if hasattr(ai_react, "_filtrar_ferramentas_cache"):
         ai_react._filtrar_ferramentas_cache.clear()
     import evals.harness as harness_mod
+
     return harness_mod.run("atual")
 
 
@@ -219,6 +229,7 @@ def test_semantic_layer_is_not_silently_inert():
     report Fase 1 as working while the encoder is dead.
     """
     import sys
+
     # Run lexical only to compare
     lexical_only = _lexical()
     lexical_by_id = {c.id: set(c.offered_tools) for c in lexical_only.cases}

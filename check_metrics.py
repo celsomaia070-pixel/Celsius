@@ -18,4 +18,4 @@ for cat, data in sorted(r.per_category.items()):
     hits = data["recall_hits"]
     mode_total = data["mode_total"]
     mode_ok = data["mode_ok"]
-    print(f"  {cat}: recall {hits}/{total} = {hits/total:.2f}, mode {mode_ok}/{mode_total}")
+    print(f"  {cat}: recall {hits}/{total} = {hits / total:.2f}, mode {mode_ok}/{mode_total}")

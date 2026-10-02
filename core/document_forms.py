@@ -112,8 +112,14 @@ def _docx_containers(document: Any) -> list[Any]:
     containers = [document]
     seen: set[str] = set()
     for section in document.sections:
-        for name in ("header", "footer", "first_page_header", "first_page_footer",
-                     "even_page_header", "even_page_footer"):
+        for name in (
+            "header",
+            "footer",
+            "first_page_header",
+            "first_page_footer",
+            "even_page_header",
+            "even_page_footer",
+        ):
             container = getattr(section, name)
             if container.is_linked_to_previous:
                 continue
@@ -152,18 +158,26 @@ def _docx_controls(document: Any) -> list[tuple[str, Any, str, bool]]:
             labels = _control_xpath(control, "./w:sdtPr/w:alias/@w:val | ./w:sdtPr/w:tag/@w:val")
             if not labels:
                 continue
-            checkbox = control.find(".//{http://schemas.microsoft.com/office/word/2010/wordml}checkbox")
-            controls.append((str(labels[0]), control, f"control:{container.part.partname}/{index}",
-                             checkbox is not None))
+            checkbox = control.find(
+                ".//{http://schemas.microsoft.com/office/word/2010/wordml}checkbox"
+            )
+            controls.append(
+                (
+                    str(labels[0]),
+                    control,
+                    f"control:{container.part.partname}/{index}",
+                    checkbox is not None,
+                )
+            )
     return controls
 
 
 def _control_xpath(control: Any, expression: str) -> list[Any]:
     from lxml import etree
 
-    return etree.XPath(expression, namespaces={
-        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    })(control)
+    return etree.XPath(
+        expression, namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    )(control)
 
 
 def _section_fields(table: Any, table_index: int) -> list[FormField]:
@@ -187,24 +201,49 @@ def _section_fields(table: Any, table_index: int) -> list[FormField]:
             if not numbered:
                 break
             item_label = f"{label} / item {numbered.group(1)}"
-            items.append(FormField(_key(item_label), item_label, text,
-                                   f"table:{table_index}/row:{ri}/cell:0", "section_item"))
+            items.append(
+                FormField(
+                    _key(item_label),
+                    item_label,
+                    text,
+                    f"table:{table_index}/row:{ri}/cell:0",
+                    "section_item",
+                )
+            )
             owned.add(ri)
         if items:
             fields.extend(items)
             continue
         following = index + 1
-        following_split = (_split_label_value(rows[following][0].text)
-                           if following < len(rows) else None)
-        narrative_colon = (following_split is not None and bool(re.search(r"\d", following_split[0]))
-                           and not following_split[0].isupper())
+        following_split = (
+            _split_label_value(rows[following][0].text) if following < len(rows) else None
+        )
+        narrative_colon = (
+            following_split is not None
+            and bool(re.search(r"\d", following_split[0]))
+            and not following_split[0].isupper()
+        )
         if following < len(rows) and (following_split is None or narrative_colon):
-            fields.append(FormField(_key(label), label, _clean(rows[following][0].text),
-                                    f"table:{table_index}/row:{following}/cell:0", "section_text"))
+            fields.append(
+                FormField(
+                    _key(label),
+                    label,
+                    _clean(rows[following][0].text),
+                    f"table:{table_index}/row:{following}/cell:0",
+                    "section_text",
+                )
+            )
             owned.add(following)
         elif index > 0 or len(rows) == 1:
-            fields.append(FormField(_key(label), label, "",
-                                    f"table:{table_index}/row:{index}/cell:0", "section_inline"))
+            fields.append(
+                FormField(
+                    _key(label),
+                    label,
+                    "",
+                    f"table:{table_index}/row:{index}/cell:0",
+                    "section_inline",
+                )
+            )
     return fields
 
 
@@ -224,8 +263,9 @@ def _docx_fields(path: Path) -> list[FormField]:
         seen.add(signature)
         found.append(FormField(_key(label), label, value, location, kind))
 
-    paragraphs = [paragraph for container in _docx_containers(document)
-                  for paragraph in container.paragraphs]
+    paragraphs = [
+        paragraph for container in _docx_containers(document) for paragraph in container.paragraphs
+    ]
     for index, paragraph in enumerate(paragraphs):
         for match in _PLACEHOLDER.finditer(paragraph.text):
             label = match.group(1) or match.group(2) or ""
@@ -234,8 +274,12 @@ def _docx_fields(path: Path) -> list[FormField]:
             split = _split_label_value(paragraph.text)
             if split:
                 following = paragraph._p.getnext()
-                if (not split[1] and split[0].isupper() and following is not None
-                        and following.tag.endswith("}tbl")):
+                if (
+                    not split[1]
+                    and split[0].isupper()
+                    and following is not None
+                    and following.tag.endswith("}tbl")
+                ):
                     continue
                 add(split[0], split[1], f"paragraph:{index}")
 
@@ -309,8 +353,7 @@ def _docx_fields(path: Path) -> list[FormField]:
                 # A blank template has an empty answer cell, so an empty neighbour
                 # is still a field waiting to be filled.
                 if text.endswith((":", "?")) or (
-                    cell_index == 0
-                    and (not next_text or _is_neighbour_label(text, next_text))
+                    cell_index == 0 and (not next_text or _is_neighbour_label(text, next_text))
                 ):
                     add(
                         text,
@@ -318,7 +361,9 @@ def _docx_fields(path: Path) -> list[FormField]:
                         f"table:{table_index}/row:{row_index}/cell:{cell_index + 1}",
                     )
     for label, control, location, checkbox in _docx_controls(document):
-        current = "".join(node.text or "" for node in _control_xpath(control, "./w:sdtContent//w:t"))
+        current = "".join(
+            node.text or "" for node in _control_xpath(control, "./w:sdtContent//w:t")
+        )
         add(label, current, location, "content_checkbox" if checkbox else "content_control")
     return found
 
@@ -348,8 +393,13 @@ def inspect_document_form(path: str | Path) -> dict[str, Any]:
 
         with docx_template(source) as converted:
             result = inspect_document_form(converted)
-        return {**result, "source": str(source), "format": "odt", "output_format": "docx",
-                "note": "Modelo ODT convertido localmente para DOCX; confira a paginacao da copia."}
+        return {
+            **result,
+            "source": str(source),
+            "format": "odt",
+            "output_format": "docx",
+            "note": "Modelo ODT convertido localmente para DOCX; confira a paginacao da copia.",
+        }
     if suffix == ".docx":
         fields = _docx_fields(source)
         form_type = "word_table_or_template"
@@ -453,9 +503,14 @@ def _replace_across_runs(paragraph: Any, old: str, new: str, *, after_label: boo
 def _replace_in_cell(cell: Any, old: str, new: str, *, label: str = "") -> bool:
     for paragraph in cell.paragraphs:
         split = _split_label_value(paragraph.text) if label else None
-        labelled = bool(split and _normalized(split[0]) == _normalized(label))
-        if labelled and not split[1]:
-            continue
+        if split is None:  # noqa: SIM108 - block form keeps mypy narrowing for split below
+            labelled = False
+        else:
+            labelled = _normalized(split[0]) == _normalized(label)
+        if labelled:
+            assert split is not None
+            if not split[1]:
+                continue
         if _replace_across_runs(paragraph, old, new, after_label=labelled):
             return True
     return False
@@ -465,14 +520,10 @@ def _copy_run_format(source_run: Any, target_run: Any) -> None:
     """Carry the surrounding character formatting over to a new run."""
 
     source, target = source_run._element, target_run._element
-    properties = source.find(
-        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rPr"
-    )
+    properties = source.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rPr")
     if properties is None:
         return
-    existing = target.find(
-        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rPr"
-    )
+    existing = target.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}rPr")
     if existing is not None:
         target.remove(existing)
     import copy as _copy
@@ -534,9 +585,7 @@ def _find_folded(haystack: str, needle: str) -> int:
 
 def _strip_accents(value: str) -> str:
     return "".join(
-        char
-        for char in unicodedata.normalize("NFKD", value)
-        if not unicodedata.combining(char)
+        char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char)
     )
 
 
@@ -574,9 +623,7 @@ def _toggle_option(cell: Any, option: str, checked: bool) -> bool:
                 continue
             local_start = max(0, start - run_start)
             local_end = min(len(text), end - run_start)
-            run.text = (
-                text[:local_start] + (replacement if not written else "") + text[local_end:]
-            )
+            run.text = text[:local_start] + (replacement if not written else "") + text[local_end:]
             run.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
             written = True
         if written:
@@ -607,8 +654,10 @@ def _apply_checkbox_value(cell: Any, value: str) -> tuple[bool, list[str]]:
             caption_key = _fold(caption)
             if not caption_key:
                 continue
-            if caption_key == want_key or caption_key.startswith(want_key) or want_key.startswith(
-                caption_key
+            if (
+                caption_key == want_key
+                or caption_key.startswith(want_key)
+                or want_key.startswith(caption_key)
             ):
                 if _toggle_option(cell, caption, True) and caption not in resolved:
                     resolved.append(caption)
@@ -712,9 +761,7 @@ def _fill_docx(
                         if ok:
                             applied.append(candidate)
                         else:
-                            unresolved.append(
-                                f"{candidate}: nenhuma opcao corresponde a {value!r}"
-                            )
+                            unresolved.append(f"{candidate}: nenhuma opcao corresponde a {value!r}")
                         break
                     continue
 
@@ -755,8 +802,7 @@ def _fill_docx(
                 # Mirrors the inspect pass: a blank template has an empty answer
                 # cell, so an empty neighbour is still a field to fill.
                 if text.endswith((":", "?")) or (
-                    cell_index == 0
-                    and (not next_text or _is_neighbour_label(text, next_text))
+                    cell_index == 0 and (not next_text or _is_neighbour_label(text, next_text))
                 ):
                     value = _lookup(values, text, _key(text))
                     if value is not None:
@@ -769,10 +815,12 @@ def _fill_docx(
         value = _lookup(values, label, _key(label))
         if value is None:
             continue
-        if _control_xpath(control,
-                          "./w:sdtPr/w:lock | ./w:sdtPr/w:dataBinding | ./w:sdtPr/w:picture | "
-                          "./w:sdtPr/w:dropDownList | ./w:sdtPr/w:comboBox | ./w:sdtPr/w:date | "
-                          "./w:sdtContent//w:tbl | ./w:sdtContent//w:drawing | ./w:sdtContent//w:fldChar"):
+        if _control_xpath(
+            control,
+            "./w:sdtPr/w:lock | ./w:sdtPr/w:dataBinding | ./w:sdtPr/w:picture | "
+            "./w:sdtPr/w:dropDownList | ./w:sdtPr/w:comboBox | ./w:sdtPr/w:date | "
+            "./w:sdtContent//w:tbl | ./w:sdtContent//w:drawing | ./w:sdtContent//w:fldChar",
+        ):
             unresolved.append(label)
             continue
         nodes = _control_xpath(control, "./w:sdtContent//w:t")
@@ -785,11 +833,15 @@ def _fill_docx(
                 unresolved.append(label)
                 continue
             checked = normalized in {"sim", "true", "1"}
-            checked_node = control.find(".//{http://schemas.microsoft.com/office/word/2010/wordml}checked")
+            checked_node = control.find(
+                ".//{http://schemas.microsoft.com/office/word/2010/wordml}checked"
+            )
             if checked_node is None:
                 unresolved.append(label)
                 continue
-            checked_node.set("{http://schemas.microsoft.com/office/word/2010/wordml}val", "1" if checked else "0")
+            checked_node.set(
+                "{http://schemas.microsoft.com/office/word/2010/wordml}val", "1" if checked else "0"
+            )
             value = "☒" if checked else "☐"
         nodes[0].text = value
         nodes[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
@@ -802,7 +854,8 @@ def _fill_docx(
     # Preserve every package entry except XML parts actually modified. python-docx
     # supplies the OOXML objects but does not rebuild styles, media or metadata.
     replacements = {
-        str(part.partname).lstrip("/"): part.blob for part in editable_parts
+        str(part.partname).lstrip("/"): part.blob
+        for part in editable_parts
         if part.blob != before[str(part.partname)]
     }
     with ZipFile(source) as original, ZipFile(target, "x") as output:
@@ -877,13 +930,21 @@ def fill_document_form(
     if source.suffix.lower() == ".odt":
         from core.office_conversion import docx_template
 
-        target = Path(output_path).resolve() if output_path else _default_target(source.with_suffix(".docx"))
+        target = (
+            Path(output_path).resolve()
+            if output_path
+            else _default_target(source.with_suffix(".docx"))
+        )
         if target.suffix.lower() != ".docx":
             raise ValueError("O preenchimento de um modelo ODT gera uma nova copia DOCX.")
         with docx_template(source) as converted:
             result = fill_document_form(converted, values, target)
-        return {**result, "source": str(source), "converted_from": "odt",
-                "conversion_note": "Conversao para DOCX; confira a paginacao. O ODT original foi preservado."}
+        return {
+            **result,
+            "source": str(source),
+            "converted_from": "odt",
+            "conversion_note": "Conversao para DOCX; confira a paginacao. O ODT original foi preservado.",
+        }
     validate_file_content(source.name, source.read_bytes())
     clean_values = {str(key): _clean(value) for key, value in values.items() if _clean(value)}
     if not clean_values:
@@ -913,9 +974,14 @@ def fill_document_form(
         restrict_private_file(staged)
         if not applied:
             return {
-                "source": str(source), "output": "", "written": False,
-                "applied_count": 0, "applied": [], "unmatched": unmatched,
-                "needs_review": notes.get("unresolved", []), "original_preserved": True,
+                "source": str(source),
+                "output": "",
+                "written": False,
+                "applied_count": 0,
+                "applied": [],
+                "unmatched": unmatched,
+                "needs_review": notes.get("unresolved", []),
+                "original_preserved": True,
                 "size_bytes": 0,
             }
         owned_output = False

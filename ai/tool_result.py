@@ -87,7 +87,9 @@ class ToolResult:
         detail: dict[str, Any] | None = None,
     ) -> ToolResult:
         return ToolResult(
-            ok=False, tool=tool, error=ToolError(code=code, message=message, tool=tool, detail=detail)
+            ok=False,
+            tool=tool,
+            error=ToolError(code=code, message=message, tool=tool, detail=detail),
         )
 
 

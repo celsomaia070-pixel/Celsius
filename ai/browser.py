@@ -5,6 +5,7 @@ from typing import Any
 
 from core.circuit_breaker import CircuitBreakerOpenError, get_circuit_breaker
 from core.network_security import UnsafeNetworkTargetError, validate_public_http_url
+from core.operation_control import OperationTimeoutError, check_control
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,28 @@ class BrowserAgent:
         self._page: Any = None
 
     async def start(self, headless: bool = True) -> None:
-        from playwright.async_api import async_playwright
+        from playwright.async_api import Error, async_playwright
 
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=headless)
+        try:
+            self._browser = await self._playwright.chromium.launch(headless=headless)
+        except Error as error:
+            if "Executable doesn't exist" not in str(error):
+                raise
+            # Installed Windows browsers are usable without downloading a
+            # Playwright distribution or touching the user's existing profile.
+            for channel in ("msedge", "chrome"):
+                try:
+                    self._browser = await self._playwright.chromium.launch(
+                        channel=channel, headless=headless
+                    )
+                    break
+                except Error:
+                    continue
+            if self._browser is None:
+                raise RuntimeError(
+                    "Nenhum navegador local disponível para pesquisa dinâmica."
+                ) from error
         context = await self._browser.new_context(
             viewport={"width": 1280, "height": 720},
         )
@@ -57,8 +76,7 @@ class BrowserAgent:
         if self._page is None:
             return "Erro: navegador nao iniciado."
         try:
-            snapshot = await self._page.accessibility.snapshot()
-            return self._format_tree(snapshot)
+            return str(await self._page.locator("body").aria_snapshot())
         except Exception as e:
             return f"Erro ao obter arvore: {e}"
 
@@ -125,21 +143,52 @@ def navegar_web(url: str, timeout: int = 30) -> str:
     loop = asyncio.new_event_loop()
 
     async def _run() -> str:
+        check_control()
         validated_url = validate_public_http_url(url)
-        await agent.start(headless=True)
-        await agent.execute_action({"action": "navigate", "url": validated_url})
-        tree = await agent.get_accessibility_tree()
-        url_actual = await agent.get_current_url()
-        await agent.stop()
-        return f"URL: {url_actual}\n\nArvore de acessibilidade:\n{tree[:3000]}"
+        try:
+            await agent.start(headless=True)
+            check_control()
+            await agent._page.goto(validated_url, wait_until="domcontentloaded", timeout=15000)
+            content = await agent._page.locator("body").inner_text(timeout=5000)
+            check_control()
+            url_actual = validate_public_http_url(await agent.get_current_url())
+            if len(content.strip()) < 80:
+                return f"Erro: a página {url_actual} não retornou conteúdo suficiente."
+            return f"[FONTE_WEB]\nURL: {url_actual}\n\nConteúdo da página:\n{content[:9000]}"
+        finally:
+            await agent.stop()
 
     try:
-        resultado: str = loop.run_until_complete(asyncio.wait_for(_run(), timeout=timeout))
-        _browser_navigate_cb.record_success()
+        # Static pages do not need a browser startup. The explicit web tool is
+        # still the only caller; the document/RAG/inference pipeline stays local.
+        from core.web_research import clean_html, fetch_public
+
+        try:
+            actual_url, payload = fetch_public(url, timeout=min(timeout, 8))
+            content = clean_html(payload.decode("utf-8", errors="replace"))
+        except (OSError, ValueError):
+            content = ""
+        blocked = any(
+            marker in content.lower()
+            for marker in (
+                "verify you are human",
+                "enable javascript and cookies",
+                "just a moment",
+            )
+        )
+        if len(content) >= 120 and not blocked:
+            resultado = f"[FONTE_WEB]\nURL: {actual_url}\n\nConteúdo da página:\n{content[:9000]}"
+        else:
+            resultado = loop.run_until_complete(asyncio.wait_for(_run(), timeout=timeout))
+        check_control()
+        if resultado.startswith("Erro:"):
+            _browser_navigate_cb.record_failure()
+        else:
+            _browser_navigate_cb.record_success()
     except TimeoutError:
         _browser_navigate_cb.record_failure()
         resultado = f"Timeout ao acessar {url}"
-    except (CircuitBreakerOpenError, UnsafeNetworkTargetError):
+    except (CircuitBreakerOpenError, UnsafeNetworkTargetError, OperationTimeoutError):
         raise
     except Exception as e:
         _browser_navigate_cb.record_failure()

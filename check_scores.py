@@ -1,5 +1,7 @@
 import importlib
+
 import ai.tool_retrieval as tr
+
 importlib.reload(tr)
 
 prompt = "quais documentos eu tenho?"

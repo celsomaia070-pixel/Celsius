@@ -557,16 +557,16 @@ class TestPreencherDocumento:
 
         inspection = json.loads(_tool_inspecionar_formulario_documento(str(source)))
         assert inspection["field_count"] == 1
-        result = json.loads(
-            _tool_preencher_documento(str(source), {"nome": "Maria"}, "")
-        )
+        result = json.loads(_tool_preencher_documento(str(source), {"nome": "Maria"}, ""))
         output = Path(result["output"])
         assert output != source
         assert Document(output).tables[0].cell(0, 1).text == "Maria"
 
 
 def test_pedagogical_report_uses_document_generator_not_business_report():
-    names = {tool.nome for tool in _filtrar_ferramentas("Gere um relatorio pedagogico PEI do aluno")}
+    names = {
+        tool.nome for tool in _filtrar_ferramentas("Gere um relatorio pedagogico PEI do aluno")
+    }
 
     assert "gerar_documento_local" in names
     assert "gerar_relatorio_local" not in names
@@ -601,13 +601,8 @@ def test_indexed_pedagogical_report_gets_an_artifact_backstop():
         }
     ]
 
-    assert _needs_pedagogical_report_artifact(
-        "Gere um relatorio PEI para o aluno", messages, task
-    )
-    assert not _needs_pedagogical_report_artifact(
-        "Gere um relatorio de estoque", messages, task
-    )
-
+    assert _needs_pedagogical_report_artifact("Gere um relatorio PEI para o aluno", messages, task)
+    assert not _needs_pedagogical_report_artifact("Gere um relatorio de estoque", messages, task)
 
 
 class TestDocumentFillHonestyGate:
@@ -668,9 +663,7 @@ class TestDocumentFillHonestyGate:
         messages = [
             {
                 "role": "assistant",
-                "tool_calls": [
-                    {"id": "c4", "function": {"name": "gerar_documento_local"}}
-                ],
+                "tool_calls": [{"id": "c4", "function": {"name": "gerar_documento_local"}}],
             },
             {
                 "role": "tool",

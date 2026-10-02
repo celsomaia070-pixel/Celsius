@@ -38,6 +38,7 @@ os.environ.setdefault(
 os.environ.setdefault(
     "CELSIUS_CUSTOMER_PROFILE_FILE", str(Path(_TEST_ISOLATION_DIR) / "customer_profile.json")
 )
+os.environ["CELSIUS_MEMORIAS_FILE"] = str(Path(_TEST_ISOLATION_DIR) / "memorias.json")
 
 # The decision layer is exercised explicitly in tests/test_decisions.py; keep it
 # off by default so no test depends on a running kev.serve.
@@ -50,6 +51,8 @@ os.environ.setdefault("CELSIUS_TELEMETRY_ENABLED", "false")
 # Check if PySide6 is properly installed (not just a mock)
 _PYSIDE6_AVAILABLE = False
 with contextlib.suppress(Exception):
+    from PySide6.QtCore import QObject  # noqa: F401
+
     _PYSIDE6_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
@@ -65,30 +68,6 @@ _HEAVY_MODULES = [
     # "PySide6.QtSvg", "PySide6.QtSvgWidgets",
     # llama-cpp
     "llama_cpp",
-    # opentelemetry
-    "opentelemetry",
-    "opentelemetry.trace",
-    "opentelemetry.metrics",
-    "opentelemetry.sdk",
-    "opentelemetry.sdk.trace",
-    "opentelemetry.sdk.trace.export",
-    "opentelemetry.sdk.metrics",
-    "opentelemetry.sdk.metrics.export",
-    "opentelemetry.sdk.resources",
-    "opentelemetry.exporter",
-    "opentelemetry.exporter.otlp",
-    "opentelemetry.exporter.otlp.proto",
-    "opentelemetry.exporter.otlp.proto.grpc",
-    "opentelemetry.exporter.otlp.proto.grpc.trace_exporter",
-    "opentelemetry.exporter.otlp.proto.grpc.metric_exporter",
-    "opentelemetry.instrumentation",
-    "opentelemetry.instrumentation.logging",
-    "opentelemetry.instrumentation.requests",
-    "opentelemetry.instrumentation.urllib",
-    "opentelemetry.instrumentation.httpx",
-    "opentelemetry.instrumentation.aiohttp_client",
-    "opentelemetry.semconv",
-    "opentelemetry.semconv.trace",
     # structlog
     "structlog",
     # Speech / audio
@@ -98,10 +77,9 @@ _HEAVY_MODULES = [
     "pydub",
     "pygame",
     "edge_tts",
-    # ML / AI
-    "transformers",
+    # ML / AI - mock sentence_transformers at boundary, not transformers root
+    "sentence_transformers",
     # Other heavy deps
-    "openai",
     "playwright",
     "feedparser",
     # project modules that have heavy deps in their init
@@ -129,7 +107,6 @@ _llama.switch_llama_model = MagicMock()
 _llama.LlamaManager = type("LlamaManager", (), {})
 _llama.MultiModelManager = type("MultiModelManager", (), {})
 _llama.ModelRouter = type("ModelRouter", (), {})
-
 
 
 _core_rag = sys.modules["core.rag"]

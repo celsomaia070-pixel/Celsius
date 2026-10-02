@@ -1918,6 +1918,30 @@ body[data-theme="dark"] .moon-icon {
   margin: 0 0 11px;
 }
 
+.chat-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.chat-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.chat-table-scroll th,
+.chat-table-scroll td {
+  padding: 9px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-table-scroll th {
+  font-weight: 600;
+}
+
 .message-content p:last-child,
 .message-content ul:last-child,
 .message-content ol:last-child,

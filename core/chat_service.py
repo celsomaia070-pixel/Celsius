@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import threading
 import uuid
@@ -17,6 +18,23 @@ from core.agent_modes import get_mode, is_conversational_greeting, resolve_mode
 from core.chat_attachments import AttachmentStore, StoredAttachment, prepare_prompt_attachments
 from core.chat_outputs import OutputAttachmentStore, collect_outputs
 from core.conversations import ConversationManager, get_conversation_manager
+from core.direct_actions import (
+    direct_tool_allowed,
+    inventory_report_arguments,
+    simple_memory_lookup,
+    simple_news_query,
+    youtube_open_arguments,
+)
+from core.message_intent import classify_intent, is_local_memory_read, strip_task_prefix
+from core.operation_control import (
+    OperationCancelled,
+    OperationTimeoutError,
+    bind_control,
+    check_control,
+    deadline_for_intent,
+)
+from core.quick_response import quick_response
+from core.turn_metrics import TurnMetrics, bind_metrics, phase
 
 
 def _now_iso() -> str:
@@ -53,6 +71,11 @@ class ChatJob:
     attachments: list[dict[str, Any]] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     future: Future | None = field(default=None, repr=False)
+    quick_reply: str | None = field(default=None, repr=False)
+    intent: str = "general"
+    source: str = "web"
+    status_message: str = ""
+    metrics: TurnMetrics = field(default_factory=TurnMetrics, repr=False)
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -70,6 +93,9 @@ class ChatJob:
             "chunk_count": self.chunk_count,
             # Lets the polling fallback deliver generated files too, not just SSE.
             "attachments": self.attachments,
+            "intent": self.intent,
+            "status_message": self.status_message,
+            "timings": self.metrics.public_dict(),
         }
 
 
@@ -130,7 +156,9 @@ class ChatCoordinator:
         agent_mode: str = "",
         work_agents: list[str] | None = None,
         source: str = "web",
+        work_mode: bool = False,
     ) -> dict[str, Any]:
+        metrics = TurnMetrics()
         clean_message = (message or "").strip()
         if not clean_message:
             raise ValueError("A mensagem nao pode estar vazia.")
@@ -138,10 +166,21 @@ class ChatCoordinator:
         if len(attachment_ids) > 10:
             raise ValueError("Envie no maximo 10 anexos por mensagem.")
         stored_attachments = self.attachments.resolve(attachment_ids)
+        with phase("routing", metrics=metrics):
+            intent = classify_intent(clean_message, has_attachment=bool(stored_attachments))
+            quick = quick_response(
+                clean_message, settings=self.settings, has_attachment=bool(stored_attachments)
+            )
+            if work_mode and intent.kind == "task" and not intent.explicit_task:
+                clean_message = "TAREFA: " + clean_message
+            if intent.kind in {"conversation", "general"} and not stored_attachments:
+                work_agents = []
+                if work_mode and not intent.explicit_task:
+                    agent_mode = "assistente"
         # Older Work clients prefix every turn, including greetings, with TAREFA.
         # Normalize at the shared boundary so desktop, phone and WhatsApp agree.
         if not stored_attachments and is_conversational_greeting(clean_message):
-            clean_message = re.sub(r"^TAREFA\s*:\s*", "", clean_message, flags=re.I)
+            clean_message = strip_task_prefix(clean_message)
             agent_mode = "assistente"
             work_agents = []
         # An unknown mode falls back to the default instead of failing the turn.
@@ -153,7 +192,14 @@ class ChatCoordinator:
             # an explicitly chosen non-default mode and any "modo X" command, so
             # this only ever upgrades the default lane. A pure greeting stays on
             # the assistant instead of being classified into a specialist.
-            mode = get_mode(resolve_mode(clean_message, requested=mode.id))
+            mode = get_mode(resolve_mode(clean_message, requested=mode.id, semantic=False))
+        if (
+            work_mode
+            and intent.kind == "task"
+            and mode.id == "assistente"
+            and self.settings.agent.enabled
+        ):
+            mode = get_mode("executor")
 
         with self._lock:
             active = self._jobs.get(self._active_job_id)
@@ -182,6 +228,10 @@ class ChatCoordinator:
                 attachment_ids=attachment_ids,
                 agent_mode=mode.id,
                 work_agents=work_agents or [],
+                quick_reply=quick,
+                intent=intent.kind,
+                source=(source or "web").strip().lower(),
+                metrics=metrics,
             )
             self._jobs[job.id] = job
             self._active_job_id = job.id
@@ -194,14 +244,17 @@ class ChatCoordinator:
                     "message": user_message,
                 },
             )
-            job.future = self._executor.submit(
-                self._run,
-                job,
-                clean_message,
-                history,
-                stored_attachments,
-                model_id,
-            )
+            if job.quick_reply is not None:
+                self._run(job, clean_message, history, stored_attachments, model_id)
+            else:
+                job.future = self._executor.submit(
+                    self._run,
+                    job,
+                    clean_message,
+                    history,
+                    stored_attachments,
+                    model_id,
+                )
 
         return job.public_dict()
 
@@ -303,6 +356,11 @@ class ChatCoordinator:
         attachments: list[StoredAttachment],
         model_id: str,
     ) -> None:
+        deadline = deadline_for_intent(job.intent, job.agent_mode)
+        with bind_metrics(job.metrics), bind_control(job.cancel_event.is_set, deadline):
+            self._run_turn(job, message, history, attachments, model_id)
+
+    def _run_turn(self, job, message, history, attachments, model_id):
         with self._lock:
             job.status = "running"
             job.started_at = _now_iso()
@@ -314,13 +372,18 @@ class ChatCoordinator:
         def check_cancelled() -> None:
             if job.cancel_event.is_set():
                 raise ChatCancelled()
+            check_control(deadline=deadline)
 
         def on_status(text: str) -> None:
             check_cancelled()
+            with self._lock:
+                job.status_message = text
             self.event_hub.publish("chat.status", {"job_id": job.id, "text": text})
 
         def on_chunk(chunk: str) -> None:
+            check_cancelled()
             if chunk:
+                job.metrics.first_visible_token()
                 with self._lock:
                     job.response += chunk
                     job.chunk_count += 1
@@ -331,15 +394,69 @@ class ChatCoordinator:
                 )
             check_cancelled()
 
+        # The bound deadline also covers classification and lock waits.
+        deadline = None
+        produced = []
         try:
             check_cancelled()
-            self._ensure_model_ready_callback(on_status)
-            memories = self._load_memories(message, on_status, job.conversation_id)
+            if job.quick_reply is None:
+                with phase("classification"):
+                    job.agent_mode = resolve_mode(message, requested=job.agent_mode)
+                check_cancelled()
+                direct_report = (
+                    not attachments
+                    and inventory_report_arguments(message)
+                    and direct_tool_allowed(
+                        "gerar_relatorio_local", job.agent_mode, job.work_agents
+                    )
+                )
+                direct_news = (
+                    not attachments
+                    and simple_news_query(message)
+                    and direct_tool_allowed("pesquisar_noticias", job.agent_mode, job.work_agents)
+                )
+                direct_browser = (
+                    not attachments
+                    and youtube_open_arguments(message)
+                    and direct_tool_allowed("abrir_no_navegador", job.agent_mode, job.work_agents)
+                )
+                intent = classify_intent(message, has_attachment=bool(attachments))
+                direct_memory = (
+                    not attachments
+                    and not intent.explicit_task
+                    and self.settings.features.memory
+                    and simple_memory_lookup(message)
+                    and direct_tool_allowed("buscar_memoria", job.agent_mode, job.work_agents)
+                )
+                if (
+                    not direct_report
+                    and not direct_news
+                    and not direct_browser
+                    and not direct_memory
+                    and intent.kind != "control"
+                ):
+                    with phase("model_prepare"):
+                        self._ensure_model_ready_callback(on_status)
+                check_cancelled()
+                with phase("memory"):
+                    memories = (
+                        self._load_memories(message, on_status, job.conversation_id)
+                        if intent.needs_memory
+                        else []
+                    )
+                check_cancelled()
+            else:
+                memories = []
             prompt = {
                 "pergunta": message,
                 "documento": "",
                 "nome_documento": "",
                 "memorias_relevantes": memories,
+                "memorias_consultadas": bool(
+                    job.quick_reply is None
+                    and intent.needs_memory
+                    and self.settings.features.memory
+                ),
                 "anexos": [(str(item.path), item.name) for item in attachments],
                 "modelo_solicitado": model_id or self.settings.llm_model,
                 "system_prompt": self._system_prompt(),
@@ -347,8 +464,11 @@ class ChatCoordinator:
                 "approval_scope": job.conversation_id,
                 "agent_mode": job.agent_mode or self.settings.agent.default_mode,
                 "work_agents": job.work_agents,
+                "source": job.source,
+                "deadline": deadline,
             }
-            prepare_prompt_attachments(prompt, settings=self.settings, fn_status=on_status)
+            if attachments:
+                prepare_prompt_attachments(prompt, settings=self.settings, fn_status=on_status)
             check_cancelled()
             from ai.task_runtime import is_task_command
 
@@ -358,7 +478,15 @@ class ChatCoordinator:
             with collect_outputs(self.outputs) as produced:
                 with self._lock:
                     job.attachments = produced
-                if job.work_agents and len(job.work_agents) >= 2:
+                if job.quick_reply is not None:
+                    response = job.quick_reply
+                    on_chunk(response)
+                elif (
+                    job.work_agents
+                    and len(job.work_agents) >= 2
+                    and not (direct_report or direct_news or direct_browser)
+                    and not (is_local_memory_read(message) and not attachments)
+                ):
                     from ai.multi_agent import run_multi_agent_work
 
                     response = run_multi_agent_work(
@@ -375,6 +503,7 @@ class ChatCoordinator:
                         message,
                         fn_status=on_status,
                         fn_chunk=on_chunk,
+                        should_cancel=job.cancel_event.is_set,
                     )
                 else:
                     response = self._responder(
@@ -382,21 +511,26 @@ class ChatCoordinator:
                         fn_status=on_status,
                         fn_passo=None,
                         fn_chunk=on_chunk,
+                        should_cancel=job.cancel_event.is_set,
                     )
             check_cancelled()
             response = str(response or "").strip()
             # A completed job guarantees that its temporary uploads are gone.
             self.attachments.discard(job.attachment_ids)
-            metadata: dict[str, Any] = {"source": "web", "job_id": job.id}
+            metadata: dict[str, Any] = {"source": job.source, "job_id": job.id}
             if produced:
                 metadata["attachments"] = produced
+            job.metrics.finish()
+            metadata["timings"] = job.metrics.public_dict()
             assistant_message = self.conversations.add_message(
                 job.conversation_id,
                 "assistant",
                 response,
                 metadata=metadata,
             )
-            self._kick_memory_extraction(job.conversation_id)
+            if job.quick_reply is None and classify_intent(message).needs_memory:
+                self._kick_memory_extraction(job.conversation_id)
+            job.metrics.finish()
             with self._lock:
                 job.status = "completed"
                 job.completed_at = _now_iso()
@@ -411,18 +545,46 @@ class ChatCoordinator:
                     "attachments": produced,
                 },
             )
-        except ChatCancelled:
+        except (ChatCancelled, OperationCancelled):
             self._finish_cancelled(job)
-        except BaseException as exc:
+        except OperationTimeoutError as exc:
+            text = str(exc)
+            if job.response.strip():
+                text = job.response + "\n\n" + text
+            self.conversations.add_message(
+                job.conversation_id,
+                "assistant",
+                text,
+                metadata={"job_id": job.id, "incomplete": True},
+            )
             with self._lock:
                 job.status = "failed"
                 job.completed_at = _now_iso()
                 job.error = str(exc)
+                job.response = text
+            self.event_hub.publish("chat.failed", {"job_id": job.id, "error": str(exc)})
+        except BaseException as exc:
+            failure_text = "Não foi possível concluir a resposta: " + str(exc)
+            if job.response.strip():
+                failure_text = job.response + "\n\n" + failure_text
+            with self._lock:
+                job.status = "failed"
+                job.completed_at = _now_iso()
+                job.error = str(exc)
+                job.response = failure_text
+            self.conversations.add_message(
+                job.conversation_id,
+                "assistant",
+                failure_text,
+                metadata={"job_id": job.id, "incomplete": True},
+            )
             self.event_hub.publish(
                 "chat.failed",
                 {"job_id": job.id, "error": str(exc)},
             )
         finally:
+            job.metrics.finish()
+            logging.getLogger("celsius.turns").info("turn_metrics %s", job.metrics.public_dict())
             self.attachments.discard(job.attachment_ids)
             with self._lock:
                 if self._active_job_id == job.id:
@@ -439,6 +601,8 @@ class ChatCoordinator:
                 self._active_job_id = ""
         self.attachments.discard(job.attachment_ids)
         payload: dict[str, Any] = {"job_id": job.id, "attachments": job.attachments}
+        if not partial.strip():
+            partial = "Operação cancelada antes de concluir a resposta."
         if partial.strip():
             text = marcar_interrompida(partial)
             job.response = text
@@ -480,7 +644,7 @@ class ChatCoordinator:
         from core.memory import memory_query_context
 
         user_messages = [message]
-        if conversation_id:
+        if conversation_id and not is_local_memory_read(message):
             conversation = self.conversations.load(conversation_id)
             if conversation:
                 user_messages.extend(
@@ -535,6 +699,11 @@ class ChatCoordinator:
         from core.model_router import model_start_kwargs
 
         manager = get_llama_manager()
+        from core.turn_metrics import current_metrics
+
+        metrics = current_metrics()
+        if metrics:
+            metrics.model_state = "warm" if getattr(manager, "current_model_id", None) else "cold"
         if manager.is_healthy():
             return
         model_path = self.settings.get_model_path(self.settings.llm_model)

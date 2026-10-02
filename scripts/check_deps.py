@@ -12,7 +12,9 @@ def run(cmd: list[str]) -> tuple[int, str, str]:
 
 def main() -> int:
     print("=== Dependency Diagnostic ===")
-    code, out, err = run([sys.executable, "-m", "pip", "show", "sentence-transformers", "huggingface-hub"])
+    code, out, err = run(
+        [sys.executable, "-m", "pip", "show", "sentence-transformers", "huggingface-hub"]
+    )
     print(out or err)
 
     print("\n=== Compatibility Matrix ===")
@@ -35,8 +37,9 @@ def main() -> int:
     print("=== Encoder Test ===")
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B')
-        emb = model.encode('teste de compatibilidade')
+
+        model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
+        emb = model.encode("teste de compatibilidade")
         print(f"SUCCESS: encoder works, dim={len(emb)}")
         return 0
     except Exception as e:

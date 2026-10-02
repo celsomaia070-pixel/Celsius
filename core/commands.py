@@ -10,12 +10,27 @@ from html.parser import HTMLParser
 from duckduckgo_search import DDGS
 
 _WEATHER_CODES = {
-    0: "Céu limpo", 1: "Predominantemente limpo", 2: "Parcialmente nublado",
-    3: "Nublado", 45: "Neblina", 48: "Neblina com geada", 51: "Garoa fraca",
-    53: "Garoa moderada", 55: "Garoa forte", 61: "Chuva fraca", 63: "Chuva moderada",
-    65: "Chuva forte", 71: "Neve fraca", 73: "Neve moderada", 75: "Neve forte",
-    80: "Pancadas fracas", 81: "Pancadas moderadas", 82: "Pancadas fortes",
-    95: "Trovoada", 96: "Trovoada com granizo fraco", 99: "Trovoada com granizo forte",
+    0: "Céu limpo",
+    1: "Predominantemente limpo",
+    2: "Parcialmente nublado",
+    3: "Nublado",
+    45: "Neblina",
+    48: "Neblina com geada",
+    51: "Garoa fraca",
+    53: "Garoa moderada",
+    55: "Garoa forte",
+    61: "Chuva fraca",
+    63: "Chuva moderada",
+    65: "Chuva forte",
+    71: "Neve fraca",
+    73: "Neve moderada",
+    75: "Neve forte",
+    80: "Pancadas fracas",
+    81: "Pancadas moderadas",
+    82: "Pancadas fortes",
+    95: "Trovoada",
+    96: "Trovoada com granizo fraco",
+    99: "Trovoada com granizo forte",
 }
 
 
@@ -39,16 +54,22 @@ def _weather_forecast(texto: str) -> str | None:
             places = json.loads(response.read().decode("utf-8"))
         candidates = places.get("results") or []
         location = next(
-            (item for item in candidates if item.get("country_code") == "BR" and item.get("admin1") == "São Paulo"),
+            (
+                item
+                for item in candidates
+                if item.get("country_code") == "BR" and item.get("admin1") == "São Paulo"
+            ),
             candidates[0] if candidates else None,
         )
         if not location:
             return "Nenhuma localidade foi encontrada para a previsao solicitada."
         forecast_url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(
             {
-                "latitude": location["latitude"], "longitude": location["longitude"],
+                "latitude": location["latitude"],
+                "longitude": location["longitude"],
                 "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-                "timezone": "America/Sao_Paulo", "forecast_days": 5,
+                "timezone": "America/Sao_Paulo",
+                "forecast_days": 5,
             }
         )
         request = urllib.request.Request(forecast_url, headers={"User-Agent": "Celsius/1.0"})
@@ -62,8 +83,12 @@ def _weather_forecast(texto: str) -> str | None:
         f"URL: {forecast_url}",
     ]
     for date, low, high, rain, code in zip(
-        daily.get("time", []), daily.get("temperature_2m_min", []), daily.get("temperature_2m_max", []),
-        daily.get("precipitation_probability_max", []), daily.get("weather_code", []), strict=False,
+        daily.get("time", []),
+        daily.get("temperature_2m_min", []),
+        daily.get("temperature_2m_max", []),
+        daily.get("precipitation_probability_max", []),
+        daily.get("weather_code", []),
+        strict=False,
     ):
         condition = _WEATHER_CODES.get(code, "Condição não especificada")
         lines.append(f"{date}: {condition}; mínima {low}°C; máxima {high}°C; chuva {rain}%.")
@@ -137,15 +162,22 @@ def _bing_search(texto: str) -> list[dict[str, str]]:
 
 
 def pesquisar_web(texto):
+    from core.operation_control import check_control
+    from core.web_research import search_news
+
+    check_control()
     normalized = str(texto).casefold()
-    if any(word in normalized for word in ("previsao", "previsão", "tempo", "clima", "meteorolog")):
+    if re.search(r"not[ií]cias?", normalized):
+        return search_news(str(texto))
+    if any(word in normalized for word in ("previsao", "previsão", "clima", "meteorolog")):
         forecast = _weather_forecast(str(texto))
         if forecast is not None:
             return forecast
     resultados = []
     try:
-        ddgs = DDGS()
-        for item in ddgs.text(texto, max_results=5):
+        ddgs = DDGS(timeout=8)
+        for item in ddgs.text(str(texto), max_results=5):
+            check_control()
             title = str(item.get("title", "")).strip()
             body = str(item.get("body", "")).strip()
             href = str(item.get("href", item.get("url", ""))).strip()
@@ -175,6 +207,7 @@ def pesquisar_web(texto):
             return f"Erro na pesquisa web: fallback: {fallback_error}"
     if not resultados:
         return "Nenhuma fonte web verificavel foi encontrada."
+    check_control()
     return "\n\n".join(resultados)
 
 
@@ -187,6 +220,11 @@ def _normalizar(texto):
 
 
 def executar_comando(texto):
+    from core.message_intent import has_local_source
+
+    # A generic search verb must never override the source explicitly requested.
+    if has_local_source(texto):
+        return None
     texto_lower = _normalizar(texto)
 
     if "--- inicio do documento ---" in texto_lower:

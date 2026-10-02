@@ -10,7 +10,12 @@ from core.chat_service import ChatBusyError, ChatCoordinator
 from core.settings import Settings
 from core.users import UserRole, UserService
 from core.web_api import EventHub, create_app
-from core.whatsapp import WhatsAppService, command_text, parse_contact_message, route_whatsapp_message
+from core.whatsapp import (
+    WhatsAppService,
+    command_text,
+    parse_contact_message,
+    route_whatsapp_message,
+)
 
 SELF = "5514999999999@s.whatsapp.net"
 
@@ -19,7 +24,12 @@ class FakeCoordinator:
     def __init__(self):
         self.submissions = []
         self.busy = False
-        self.job = {"id": "job1", "status": "running", "conversation_id": "abcdef123456", "attachments": []}
+        self.job = {
+            "id": "job1",
+            "status": "running",
+            "conversation_id": "abcdef123456",
+            "attachments": [],
+        }
 
     def submit(self, **kwargs):
         if self.busy:
@@ -40,7 +50,9 @@ def service(tmp_path):
     users = UserService(settings.data_dir)
     user = users.register("owner@example.test", "test-password-123")
     coordinator = FakeCoordinator()
-    instance = WhatsAppService(settings=settings, coordinator=coordinator, user_service=users, event_hub=EventHub())
+    instance = WhatsAppService(
+        settings=settings, coordinator=coordinator, user_service=users, event_hub=EventHub()
+    )
     instance.config["owner_id"] = user.id
     instance._state = "connected"
     instance._self_ids = {SELF}
@@ -60,7 +72,9 @@ def service(tmp_path):
 
 
 def receive(service, text="Celsius, gere um relatório", **changes):
-    service.receive({"type": "message", "id": "msg1", "jid": SELF, "from_me": True, "text": text, **changes})
+    service.receive(
+        {"type": "message", "id": "msg1", "jid": SELF, "from_me": True, "text": text, **changes}
+    )
 
 
 def count(service):
@@ -72,15 +86,23 @@ def test_optional_wake_name_and_contact_parsing():
     assert command_text("AUTORIZAR 1234") == "AUTORIZAR 1234"
     assert parse_contact_message("mande mensagem para meu contato João: olá") == ("João", "olá")
     assert parse_contact_message("mande mensagem para o meu contato João: olá") == ("João", "olá")
-    assert parse_contact_message("Envie uma mensagem para Maria dizendo que chegou") == ("Maria", "chegou")
+    assert parse_contact_message("Envie uma mensagem para Maria dizendo que chegou") == (
+        "Maria",
+        "chegou",
+    )
     assert parse_contact_message("Gere um relatório") is None
 
 
-@pytest.mark.parametrize("changes", [
-    {"from_me": False}, {"jid": "5514111111111@s.whatsapp.net"},
-    {"jid": "group@g.us"}, {"text": "Celsius\nResposta do agente"},
-    {"text": "x" * 20001},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"from_me": False},
+        {"jid": "5514111111111@s.whatsapp.net"},
+        {"jid": "group@g.us"},
+        {"text": "Celsius\nResposta do agente"},
+        {"text": "x" * 20001},
+    ],
+)
 def test_rejects_contacts_groups_echoes_and_oversized_commands(service, changes):
     receive(service, **changes)
     assert count(service) == 0
@@ -124,10 +146,14 @@ def test_busy_desktop_preserves_pending_request(service):
 def test_generated_documents_are_sent_from_registered_outputs(service, tmp_path):
     path = tmp_path / "report.docx"
     path.write_bytes(b"test-generated-report")
-    service.coordinator.outputs = SimpleNamespace(get=lambda _: SimpleNamespace(path=path, name="Relatório.docx"))
+    service.coordinator.outputs = SimpleNamespace(
+        get=lambda _: SimpleNamespace(path=path, name="Relatório.docx")
+    )
     receive(service)
     service._tick()
-    service.coordinator.job.update(status="completed", response="Pronto", attachments=[{"id": "output1"}])
+    service.coordinator.job.update(
+        status="completed", response="Pronto", attachments=[{"id": "output1"}]
+    )
     service._tick()
     action, payload = service.test_calls[-1]
     assert action == "send" and payload["path"] == str(path)
@@ -142,10 +168,23 @@ def test_contact_send_requires_single_use_confirmation(service):
     assert not any(payload.get("jid", "").startswith("551488") for _, payload in service.test_calls)
     code = service.db.execute("SELECT code FROM confirmations").fetchone()[0]
     service._control(("msg2", SELF, "CONFIRMAR " + code))
-    sent = [payload for action, payload in service.test_calls if action == "send" and payload.get("jid", "").startswith("551488")]
+    sent = [
+        payload
+        for action, payload in service.test_calls
+        if action == "send" and payload.get("jid", "").startswith("551488")
+    ]
     assert len(sent) == 1 and sent[0]["text"] == "relatório pronto"
     service._control(("msg3", SELF, "CONFIRMAR " + code))
-    assert len([payload for action, payload in service.test_calls if action == "send" and payload.get("jid", "").startswith("551488")]) == 1
+    assert (
+        len(
+            [
+                payload
+                for action, payload in service.test_calls
+                if action == "send" and payload.get("jid", "").startswith("551488")
+            ]
+        )
+        == 1
+    )
 
 
 def test_deactivated_owner_cannot_submit_queued_task(service):
@@ -160,8 +199,12 @@ def test_deactivated_owner_cannot_submit_queued_task(service):
 def test_restart_marks_running_request_interrupted_without_replay(service):
     receive(service)
     service._tick()
-    replacement = WhatsAppService(settings=service.settings, coordinator=service.coordinator,
-                                  user_service=service.users, event_hub=EventHub())
+    replacement = WhatsAppService(
+        settings=service.settings,
+        coordinator=service.coordinator,
+        user_service=service.users,
+        event_hub=EventHub(),
+    )
     assert replacement.db.execute("SELECT state FROM inbox").fetchone()[0] == "interrupted"
     replacement._state = "connected"
     replacement._tick()
@@ -201,10 +244,16 @@ def test_api_protects_qr_and_connection_owner(tmp_path):
     service._qr = "private-pairing-code"
     with TestClient(app) as client:
         assert client.get("/api/v1/whatsapp/status").status_code == 401
-        client.post("/api/v1/auth/login", json={"email": owner.email, "password": "test-password-123"})
+        client.post(
+            "/api/v1/auth/login", json={"email": owner.email, "password": "test-password-123"}
+        )
         response = client.get("/api/v1/whatsapp/status")
-        assert response.status_code == 200 and response.json()["qr_image"].startswith("data:image/png;base64,")
-        client.post("/api/v1/auth/login", json={"email": second.email, "password": "test-password-123"})
+        assert response.status_code == 200 and response.json()["qr_image"].startswith(
+            "data:image/png;base64,"
+        )
+        client.post(
+            "/api/v1/auth/login", json={"email": second.email, "password": "test-password-123"}
+        )
         assert client.get("/api/v1/whatsapp/status").status_code == 403
         assert client.post("/api/v1/whatsapp/connect").status_code == 403
         assert client.post("/api/v1/whatsapp/self-chat").status_code == 403
@@ -238,6 +287,7 @@ def test_initial_message_is_created_once_for_self_not_contacts(service):
 def test_failed_welcome_is_not_reported_as_sent_and_does_not_block_commands(service):
     def failed_rpc(*args, **kwargs):
         raise RuntimeError("delivery unknown")
+
     service._rpc = failed_rpc
     service.receive({"type": "connected", "self_ids": [SELF]})
     with pytest.raises(RuntimeError):
@@ -249,7 +299,7 @@ def test_failed_welcome_is_not_reported_as_sent_and_does_not_block_commands(serv
     assert count(service) == 1
     service.receive({"type": "reconnecting", "code": 515})
     assert not service.status()["self_chat_url"]
-    diagnostic = __import__('json').loads((service.root / "status.json").read_text())
+    diagnostic = __import__("json").loads((service.root / "status.json").read_text())
     assert diagnostic["disconnect_code"] == 515
     assert SELF not in str(diagnostic)
 
@@ -266,22 +316,25 @@ def test_self_chat_cannot_use_lid_as_phone_or_send_when_disconnected(service):
     assert not service.test_calls
 
 
-@pytest.mark.parametrize(("text", "mode", "task"), [
-    ("Olá celsius, tudo bem?", "assistente", False),
-    ("Oi", "assistente", False),
-    ("Boa tarde", "assistente", False),
-    ("Obrigado!", "assistente", False),
-    ("Me explique como você funciona", "assistente", False),
-    ("Celsius, gere um relatório", "executor", True),
-    ("Por favor, dê entrada de 10 peças no estoque", "estoque", True),
-    ("Pode gerar um relatório de estoque?", "estoque", True),
-    ("Quero que preencha meu documento Word", "documentos", True),
-    ("Olá Celsius, gere um novo PAEE", "documentos", True),
-    ("Pesquise as notícias de IA da semana passada", "pesquisador", True),
-    ("Qual é a previsão para os próximos 5 dias em Marília?", "pesquisador", True),
-    ("Crie um script Python", "desenvolvedor", True),
-    ("TAREFA: organize minha agenda", "executor", True),
-])
+@pytest.mark.parametrize(
+    ("text", "mode", "task"),
+    [
+        ("Olá celsius, tudo bem?", "assistente", False),
+        ("Oi", "assistente", False),
+        ("Boa tarde", "assistente", False),
+        ("Obrigado!", "assistente", False),
+        ("Me explique como você funciona", "assistente", False),
+        ("Celsius, gere um relatório", "executor", True),
+        ("Por favor, dê entrada de 10 peças no estoque", "estoque", True),
+        ("Pode gerar um relatório de estoque?", "estoque", True),
+        ("Quero que preencha meu documento Word", "documentos", True),
+        ("Olá Celsius, gere um novo PAEE", "documentos", True),
+        ("Pesquise as notícias de IA da semana passada", "pesquisador", False),
+        ("Qual é a previsão para os próximos 5 dias em Marília?", "pesquisador", False),
+        ("Crie um script Python", "desenvolvedor", True),
+        ("TAREFA: organize minha agenda", "executor", True),
+    ],
+)
 def test_messages_choose_chat_or_capable_task_mode(service, text, mode, task):
     receive(service, text)
     service._tick()
@@ -300,8 +353,14 @@ def test_greeting_does_not_reset_task_lane_and_approval_stays_in_same_conversati
     service._tick()
     assert service.coordinator.submissions[0]["agent_mode"] == "assistente"
     assert service._agent_mode == "documentos"
-    assert route_whatsapp_message("AUTORIZAR ABC123", service._agent_mode) == ("AUTORIZAR ABC123", "documentos")
-    assert route_whatsapp_message("RETOMAR abcdef123456", service._agent_mode) == ("RETOMAR abcdef123456", "documentos")
+    assert route_whatsapp_message("AUTORIZAR ABC123", service._agent_mode) == (
+        "AUTORIZAR ABC123",
+        "documentos",
+    )
+    assert route_whatsapp_message("RETOMAR abcdef123456", service._agent_mode) == (
+        "RETOMAR abcdef123456",
+        "documentos",
+    )
     assert route_whatsapp_message("TAREFAS", service._agent_mode) == ("TAREFAS", "documentos")
     service.coordinator.job.update(status="completed", response="Olá!")
     service._tick()
@@ -313,10 +372,13 @@ def test_greeting_does_not_reset_task_lane_and_approval_stays_in_same_conversati
     assert submitted["conversation_id"] == "abcdef123456"
 
 
-@pytest.mark.parametrize(("message", "expected_mode"), [
-    ("Olá celsius, tudo bem?", "assistente"),
-    ("Liste meu estoque", "estoque"),
-])
+@pytest.mark.parametrize(
+    ("message", "expected_mode"),
+    [
+        ("Olá celsius, tudo bem?", "assistente"),
+        ("Liste meu estoque", "estoque"),
+    ],
+)
 def test_whatsapp_uses_real_coordinator_and_task_gate(service, message, expected_mode):
     from ai.task_runtime import handle_task_command
 
@@ -333,8 +395,12 @@ def test_whatsapp_uses_real_coordinator_and_task_gate(service, message, expected
         result = handle_task_command(prompt, settings=service.settings, loop=loop)
         return result if result is not None else "Olá! Como posso ajudar?"
 
-    coordinator = ChatCoordinator(settings=service.settings, event_hub=EventHub(),
-                                  responder=responder, ensure_model_ready=lambda _: None)
+    coordinator = ChatCoordinator(
+        settings=service.settings,
+        event_hub=EventHub(),
+        responder=responder,
+        ensure_model_ready=lambda _: None,
+    )
     service.coordinator = coordinator
     try:
         receive(service, message)
@@ -344,16 +410,16 @@ def test_whatsapp_uses_real_coordinator_and_task_gate(service, message, expected
             job = coordinator.get_job(service._active["job_id"])
             if job["status"] in {"completed", "failed", "cancelled"}:
                 break
-            time.sleep(.01)
+            time.sleep(0.01)
         assert job["status"] == "completed"
-        assert prompts[0]["agent_mode"] == expected_mode
+        assert job["agent_mode"] == expected_mode
         assert "nao executa tarefas" not in job["response"]
         if expected_mode == "assistente":
             assert not task_calls
-            assert prompts[0]["pergunta"] == message
+            assert not prompts
         else:
-            assert len(task_calls) == 1
-            assert task_calls[0]["agent_mode"] == expected_mode
+            assert not task_calls  # A read-only consultation does not create a task.
+            assert prompts[0]["agent_mode"] == expected_mode
         service._tick()
         assert service.test_calls[-1][1]["text"] == "Celsius\n" + job["response"]
     finally:
@@ -366,3 +432,63 @@ def test_legacy_whatsapp_task_prefix_does_not_turn_greeting_into_work(service):
     submitted = service.coordinator.submissions[0]
     assert submitted["message"] == "Boa tarde"
     assert submitted["agent_mode"] == "assistente"
+
+
+def test_failed_result_delivery_is_saved_and_explicit_retry_does_not_repeat_task(service):
+    receive(service)
+    service._tick()
+    service.coordinator.job.update(status="completed", response="Relatório concluído")
+    original_rpc = service._rpc
+    service._rpc = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("delivery uncertain"))
+    service._tick()
+    assert service._active is None
+    assert service.status()["delivery"]["uncertain"] == 1
+    assert len(service.coordinator.submissions) == 1
+    service._rpc = original_rpc
+    service._tick()
+    assert service.status()["delivery"]["uncertain"] == 1
+    service._control(("retry", SELF, "REENVIAR RESULTADO"))
+    service._tick()
+    assert service.status()["delivery"]["sent"] == 1
+    assert len(service.coordinator.submissions) == 1
+    assert service.test_calls[-1][1]["text"] == "Celsius\nRelatório concluído"
+
+
+def test_disconnected_result_delivery_resumes_without_reexecuting_stock_command(service):
+    from core.whatsapp import DeliveryUnavailableError
+
+    receive(service)
+    service._tick()
+    service.coordinator.job.update(status="completed", response="Registro concluído")
+    original_rpc = service._rpc
+    service._rpc = lambda *a, **k: (_ for _ in ()).throw(DeliveryUnavailableError("offline"))
+    service._tick()
+    assert service.status()["delivery"]["queued"] == 1
+    service._rpc = original_rpc
+    service._tick()
+    assert service.status()["delivery"]["queued"] == 0
+    assert len(service.coordinator.submissions) == 1
+
+
+def test_outbox_restart_never_replays_an_uncertain_delivery(service):
+    from core.whatsapp_outbox import WhatsAppOutbox
+
+    service.outbox.enqueue("m", SELF, {"response": "Resultado salvo"})
+    item = service.outbox.pending({SELF})[0]
+    service.outbox.mark(item["id"], "sending")
+    restored = WhatsAppOutbox(service.outbox.path, data_root=service.settings.data_dir)
+    assert restored.counts({SELF})["uncertain"] == 1
+    assert not restored.pending({SELF})
+    assert not restored.pending({"other@s.whatsapp.net"})
+
+
+def test_whatsapp_result_has_readable_rows_instead_of_markdown_table(service):
+    receive(service)
+    service._tick()
+    service.coordinator.job.update(
+        status="completed", response="| Item | Quantidade |\n|---|---|\n| Filtro | 2 |"
+    )
+    service._tick()
+    text = service.test_calls[-1][1]["text"]
+    assert "• Filtro\n  Quantidade: 2" in text
+    assert "|---|" not in text

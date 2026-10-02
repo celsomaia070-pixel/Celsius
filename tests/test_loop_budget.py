@@ -59,9 +59,7 @@ class TestClassifyComplexity:
         assert classify_complexity("O que e o teorema de Bayes?").kind == CONVERSA
 
     def test_single_tool_request_is_a_simple_tool_task(self):
-        resultado = classify_complexity(
-            "Quanto tem no estoque?", ferramentas=["consultar_estoque"]
-        )
+        resultado = classify_complexity("Quanto tem no estoque?", ferramentas=["consultar_estoque"])
         assert resultado.kind == FERRAMENTA_SIMPLES
 
     def test_sequence_marker_is_multi_step(self):
@@ -72,15 +70,21 @@ class TestClassifyComplexity:
 
     def test_reading_twice_is_not_multi_step(self):
         # Two verbs from the same group are one action repeated, not two steps.
-        assert classify_complexity(
-            "consulte o estoque e veja o saldo", ferramentas=["consultar_estoque"]
-        ).kind == FERRAMENTA_SIMPLES
+        assert (
+            classify_complexity(
+                "consulte o estoque e veja o saldo", ferramentas=["consultar_estoque"]
+            ).kind
+            == FERRAMENTA_SIMPLES
+        )
 
     def test_reading_two_documents_is_multi_step(self):
         # ...but an explicit "e leia" is a second action and does count.
-        assert classify_complexity(
-            "Leia o contrato e leia a planilha", ferramentas=["ler_arquivo"]
-        ).kind == MULTI_STEP
+        assert (
+            classify_complexity(
+                "Leia o contrato e leia a planilha", ferramentas=["ler_arquivo"]
+            ).kind
+            == MULTI_STEP
+        )
 
     def test_task_session_outranks_every_textual_signal(self):
         resultado = classify_complexity(
@@ -150,7 +154,9 @@ class TestResolveBudget:
 
     def test_missing_mode_does_not_raise(self, settings_agent):
         orcamento, _ = resolve_budget(
-            "Qualquer coisa", mode=None, task_session=SimpleNamespace(task={}),
+            "Qualquer coisa",
+            mode=None,
+            task_session=SimpleNamespace(task={}),
             settings_agent=settings_agent,
         )
         assert orcamento >= 1
@@ -230,9 +236,7 @@ class TestLoopDetector:
     def test_changing_error_is_not_the_same_error(self, settings_agent):
         detector = LoopDetector(settings_agent=settings_agent)
         detector.register("salvar", {"a": 1}, "Erro: campo 'a' invalido", falhou=True)
-        repeticao = detector.register(
-            "salvar", {"a": 1}, "Erro: campo 'b' invalido", falhou=True
-        )
+        repeticao = detector.register("salvar", {"a": 1}, "Erro: campo 'b' invalido", falhou=True)
         assert not repeticao.same_error
 
     def test_success_clears_a_previous_error(self, settings_agent):
@@ -241,9 +245,7 @@ class TestLoopDetector:
         detector.register("salvar", {"a": 2}, "ok", falhou=False)
         assert detector._error is None
 
-    def test_varying_arguments_on_the_same_error_also_exhausts(
-        self, settings_agent
-    ):
+    def test_varying_arguments_on_the_same_error_also_exhausts(self, settings_agent):
         # A model retrying a rejected write usually nudges the arguments rather
         # than repeating them verbatim, so the signature never repeats.
         detector = LoopDetector(settings_agent=settings_agent)
@@ -322,31 +324,35 @@ def _fake_llama(call_specs: list[dict]) -> object:
             self.turnos += 1
             if spec is None:
                 return iter([{"choices": [{"delta": {"content": "Resposta final"}}]}])
-            return iter([
-                {
-                    "choices": [
-                        {
-                            "delta": {
-                                "tool_calls": [
-                                    {
-                                        "index": 0,
-                                        "id": f"call_{self.turnos}",
-                                        "function": {
-                                            "name": spec["name"],
-                                            "arguments": spec["arguments"],
-                                        },
-                                    }
-                                ]
+            return iter(
+                [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": f"call_{self.turnos}",
+                                            "function": {
+                                                "name": spec["name"],
+                                                "arguments": spec["arguments"],
+                                            },
+                                        }
+                                    ]
+                                }
                             }
-                        }
-                    ]
-                }
-            ])
+                        ]
+                    }
+                ]
+            )
 
     return FakeLlama()
 
 
-def _preparar_loop(monkeypatch, chamada: str, argumentos: str, *, max_turnos: int = 30) -> list[int]:
+def _preparar_loop(
+    monkeypatch, chamada: str, argumentos: str, *, max_turnos: int = 30
+) -> list[int]:
     """Drive ``loop_react`` with a model that always makes the same call."""
     from ai import react
 
@@ -356,9 +362,7 @@ def _preparar_loop(monkeypatch, chamada: str, argumentos: str, *, max_turnos: in
         def route_and_invoke(self, *_a, **_k):
             estado["n"] += 1
             assert estado["n"] <= max_turnos, "o loop nao interrompeu o ciclo"
-            return "gemma3-4b-q4km", _fake_llama(
-                [{"name": chamada, "arguments": argumentos}]
-            )
+            return "gemma3-4b-q4km", _fake_llama([{"name": chamada, "arguments": argumentos}])
 
         def get_last_decision(self):
             return None
@@ -434,7 +438,9 @@ class TestLoopWiring:
         class FakeManager:
             def route_and_invoke(self, *_a, **_k):
                 estado["n"] += 1
-                return "gemma3-4b-q4km", _fake_llama([{"name": "informacoes_sistema", "arguments": "{}"}])
+                return "gemma3-4b-q4km", _fake_llama(
+                    [{"name": "informacoes_sistema", "arguments": "{}"}]
+                )
 
             def get_last_decision(self):
                 return None

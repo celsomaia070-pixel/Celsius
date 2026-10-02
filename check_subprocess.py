@@ -1,5 +1,7 @@
 import importlib
+
 import ai.tool_retrieval as tr
+
 importlib.reload(tr)
 from ai.tools import REGISTRO_FERRAMENTAS
 

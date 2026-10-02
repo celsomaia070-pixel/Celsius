@@ -182,6 +182,7 @@ thread-safe, nunca quebra a chamada). Para o passo 3, basta sumarizar o log:
 
 ```python
 from core.decision_calibration import load_outcomes, summarize_outcomes, default_outcomes_path
+
 summary = summarize_outcomes(load_outcomes(default_outcomes_path()))
 # {'tool_guard': {'n', 'predicted_true', 'rate', 'mean_value'}, ...}
 ```
@@ -191,8 +192,13 @@ entradas com `label: 1` = risco/relevante, `0` = seguro/irrelevante e o valor
 medido em `probability`/`normalized`):
 
 ```python
-from core.decision_calibration import recommend_guard_threshold, recommend_score_threshold, report_pretty
-report = recommend_guard_threshold(sondas_noul)   # -> CELSIUS_DECISION_GUARD_RISK_THRESHOLD
+from core.decision_calibration import (
+    recommend_guard_threshold,
+    recommend_score_threshold,
+    report_pretty,
+)
+
+report = recommend_guard_threshold(sondas_noul)  # -> CELSIUS_DECISION_GUARD_RISK_THRESHOLD
 report_rag = recommend_score_threshold(sondas_score)  # -> CELSIUS_DECISION_RAG_RELEVANCE_THRESHOLD
 print(report_pretty(report), report_pretty(report_rag))
 ```

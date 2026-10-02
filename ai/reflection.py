@@ -9,8 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from core.settings import get_settings
-
 
 @dataclass(frozen=True)
 class ReflectionResult:
@@ -23,6 +21,7 @@ class ReflectionResult:
 
 
 # Triggers that warrant reflection (kept as simple predicates for testability)
+
 
 def _tools_were_expected_but_none_used(
     pergunta: str,
@@ -37,9 +36,23 @@ def _tools_were_expected_but_none_used(
     # Heuristic: question contains operational verbs but no tool was called
     texto = (pergunta or "").lower()
     operational_verbs = (
-        "liste", "busque", "encontre", "leia", "salve", "crie", "gere",
-        "consulte", "verifique", "processe", "transforme", "exporte",
-        "quantos", "qual", "quais", "onde", "quando",
+        "liste",
+        "busque",
+        "encontre",
+        "leia",
+        "salve",
+        "crie",
+        "gere",
+        "consulte",
+        "verifique",
+        "processe",
+        "transforme",
+        "exporte",
+        "quantos",
+        "qual",
+        "quais",
+        "onde",
+        "quando",
     )
     return any(v in texto for v in operational_verbs)
 
@@ -53,7 +66,9 @@ def _tool_failed_and_no_retry(
             res = str(p.resultado).lower()
             if res.startswith(("erro", "serviço", "falha")):
                 # Check if any subsequent action tried to fix it
-                later_actions = [p2 for p2 in passos if p2.tipo == "acao" and passos.index(p2) > passos.index(p)]
+                later_actions = [
+                    p2 for p2 in passos if p2.tipo == "acao" and passos.index(p2) > passos.index(p)
+                ]
                 if not later_actions:
                     return True
     return False
@@ -70,9 +85,12 @@ def _answer_contradicts_tool_result(
     for p in passos:
         if p.tipo == "observacao" and p.resultado:
             res = str(p.resultado)
-            if res and not res.lower().startswith(("erro", "serviço", "falha")):
-                if "não encontrei" in resposta_lower or "não há" in resposta_lower:
-                    return True
+            if (
+                res
+                and not res.lower().startswith(("erro", "serviço", "falha"))
+                and ("não encontrei" in resposta_lower or "não há" in resposta_lower)
+            ):
+                return True
     return False
 
 

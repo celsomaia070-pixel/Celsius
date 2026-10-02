@@ -13,13 +13,9 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -61,7 +57,6 @@ from ui.theme import ThemeMode, scheme_from_name
 from workers.ai_worker import WorkerManager
 
 logger = logging.getLogger(__name__)
-
 
 
 class ModernChatWindow(QMainWindow):
@@ -1170,7 +1165,15 @@ class ModernChatWindow(QMainWindow):
             self.work_status_label.setText("Concluído")
             # Hide after a short delay
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(2000, lambda: self.work_status_label.setText("Aguardando tarefa...") if getattr(self, "_work_mode_enabled", False) else None)
+
+            QTimer.singleShot(
+                2000,
+                lambda: (
+                    self.work_status_label.setText("Aguardando tarefa...")
+                    if getattr(self, "_work_mode_enabled", False)
+                    else None
+                ),
+            )
 
     def _on_stop_response(self) -> bool:
         stopped = self.worker_controller.stop_response()
@@ -1313,7 +1316,6 @@ class ModernChatWindow(QMainWindow):
 
     # Model handlers
 
-
     def _on_model_load_error(self, error: str):
         QMessageBox.warning(self, "Erro ao carregar modelo", error)
 
@@ -1433,7 +1435,6 @@ class ModernChatWindow(QMainWindow):
     def _on_task_mode_changed(self, mode_id: str):
         """Handle agent mode change from task panel."""
         self.input_area.set_mode(mode_id)
-
 
     # User message handler
     def _on_user_message(self, text: str):
@@ -1573,6 +1574,7 @@ class ModernChatWindow(QMainWindow):
         work_agents = []
         if getattr(self, "_work_mode_enabled", False):
             from ai.agents import classificar_tarefa
+
             agente = classificar_tarefa(text)
             if agente and agente.id != "assistente":
                 work_agents = [agente.id]
@@ -1791,8 +1793,6 @@ class ModernChatWindow(QMainWindow):
         if hasattr(self, "work_status_label"):
             self.work_status_label.hide()
             self.work_status_label.setText("")
-
-
 
     def closeEvent(self, event):
         if self._jarvis:

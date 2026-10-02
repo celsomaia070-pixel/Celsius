@@ -15,7 +15,7 @@ from ai import loop_budget, tool_retrieval
 from ai.context_budget import WorkingMemory, _simple_summarize, estimate_message_tokens, get_budget
 from ai.interruption import marcar_interrompida
 from ai.reflection import reflect, should_reflect
-from ai.system_prompt import build_system_prompt
+from ai.system_prompt import build_general_prompt, build_system_prompt
 from ai.tool_result import ToolErrorCode, ToolResult
 from ai.tool_retrieval import _normalize
 from ai.tools import (
@@ -23,12 +23,16 @@ from ai.tools import (
     _normalize_chart_arguments,
     executar_ferramenta,
 )
-from core.agent_modes import READ_CORE, filter_tools, get_mode
+from core.agent_modes import READ_CORE, READ_INVENTORY, filter_tools, get_mode
 from core.decisions import evaluate_tool_call, get_decision_client
+from core.message_intent import classify_intent, is_local_memory_read
 from core.model_router import apply_model_tool_policy, get_multi_model_manager
+from core.operation_control import check_control
 from core.settings import get_settings
 from core.telemetry import trace_span
 from core.tool_approval import APPROVAL_REQUIRED_PREFIX
+from core.turn_metrics import current_metrics, phase
+from core.web_research import is_web_lookup, query_from_history
 
 logger = logging.getLogger(__name__)
 
@@ -227,16 +231,17 @@ def _weather_evidence_for_task(task: dict[str, Any], question: str) -> str:
     return ""
 
 
-def _chart_response_from_tool_result(result: str, title: str) -> str | None:
-    if not isinstance(result, str) or "Arquivo:" not in result:
+def _chart_response_from_tool_result(result: ToolResult | str, title: str) -> str | None:
+    result_str = str(result)
+    if not isinstance(result_str, str) or "Arquivo:" not in result_str:
         return None
-    path = result.partition("Arquivo:")[2].splitlines()[0].strip()
+    path = result_str.partition("Arquivo:")[2].splitlines()[0].strip()
     if not _is_generated_chart_path(path):
         return None
     markdown = next(
         (
             line.partition("Exiba-o com:")[2].strip()
-            for line in result.splitlines()
+            for line in result_str.splitlines()
             if "Exiba-o com:" in line
         ),
         "",
@@ -323,7 +328,7 @@ def _try_direct_business_report(question: str) -> str | None:
         },
     )
     report_content = _get_report_content_display(source, title)
-    parts = [report_content, "", "---", "", result]
+    parts: list[str] = [report_content, "", "---", "", str(result)]
     if source == "Estoque":
         parts.extend(["", _inventory_report_summary()])
     return "\n".join(parts)
@@ -380,6 +385,31 @@ def _inventory_report_summary() -> str:
     return "\n".join(lines)
 
 
+def _inventory_report_brief() -> str:
+    from core.operations import get_operations_service
+
+    items = get_operations_service().list_inventory()
+    low = [item for item in items if item["needs_restock"]]
+    excess = [item for item in items if item["maximum"] > 0 and item["quantity"] > item["maximum"]]
+    lines = [
+        "**Relatório de estoque**",
+        f"- Itens cadastrados: {len(items)}",
+        f"- Unidades registradas: {sum(item['quantity'] for item in items)}",
+        f"- Itens que precisam de reposição: {len(low)}",
+        f"- Itens acima do máximo: {len(excess)}",
+    ]
+    if low:
+        lines.extend(["", "**Reposição necessária**"])
+        for item in low[:8]:
+            lines.append(
+                f"- {item['name']}: {item['quantity']} unidades; mínimo {item['minimum']}."
+            )
+        if len(low) > 8:
+            lines.append(f"Mais {len(low) - 8} itens estão detalhados no arquivo.")
+    lines.extend(["", "O inventário completo está no arquivo gerado."])
+    return "\n".join(lines)
+
+
 _LOCAL_DATA_TOOLS = {
     "estoque": "listar_estoque",
     "inventario": "listar_estoque",
@@ -425,10 +455,16 @@ def _required_local_tools(question: str) -> dict[str, dict[str, Any]]:
         if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", normalized):
             required.setdefault(tool, {})
 
-    business_request = bool(set(required) & {
-        "listar_estoque", "listar_clientes", "listar_fornecedores",
-        "listar_orcamentos", "listar_processos_prazos",
-    })
+    business_request = bool(
+        set(required)
+        & {
+            "listar_estoque",
+            "listar_clientes",
+            "listar_fornecedores",
+            "listar_orcamentos",
+            "listar_processos_prazos",
+        }
+    )
     if business_request and re.search(
         r"\b(?:relatorio|relatorios|documento|documentos|arquivo|arquivos)\b", normalized
     ):
@@ -461,25 +497,41 @@ def _requires_template_file(question: str) -> bool:
 
 def _required_template_arguments(prompt: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve real attached templates and sources without inventing file paths."""
-    attached = [item for item in prompt.get("documentos_anexados", [])
-                if isinstance(item, dict) and Path(str(item.get("caminho", ""))).is_file()]
-    templates = [item for item in attached
-                 if Path(item["caminho"]).suffix.lower() in {".docx", ".odt"}]
+    attached = [
+        item
+        for item in prompt.get("documentos_anexados", [])
+        if isinstance(item, dict) and Path(str(item.get("caminho", ""))).is_file()
+    ]
+    templates = [
+        item for item in attached if Path(item["caminho"]).suffix.lower() in {".docx", ".odt"}
+    ]
     if len(templates) > 1:
         question = _normalized_text(str(prompt.get("pergunta", "")))
-        explicit = [item for item in templates if re.search(
-            r"\b(?:preench\w*|complet\w*)\s+(?:(?:o|a|este|esse)\s+)?"
-            r"(?:(?:documento|arquivo|modelo)\s+)?[\"']?"
-            + re.escape(_normalized_text(str(item.get("nome", "")))), question,
-        )]
-        templates = explicit or [item for item in templates if re.search(
-            r"\b(?:modelo|formulario|template)\b", _normalized_text(str(item.get("nome", "")))
-        )]
+        explicit = [
+            item
+            for item in templates
+            if re.search(
+                r"\b(?:preench\w*|complet\w*)\s+(?:(?:o|a|este|esse)\s+)?"
+                r"(?:(?:documento|arquivo|modelo)\s+)?[\"']?"
+                + re.escape(_normalized_text(str(item.get("nome", "")))),
+                question,
+            )
+        ]
+        templates = explicit or [
+            item
+            for item in templates
+            if re.search(
+                r"\b(?:modelo|formulario|template)\b", _normalized_text(str(item.get("nome", "")))
+            )
+        ]
     if len(templates) != 1:
         return None
     target = Path(templates[0]["caminho"]).resolve()
-    sources = [Path(item["caminho"]).resolve() for item in attached
-               if Path(item["caminho"]).resolve() != target]
+    sources = [
+        Path(item["caminho"]).resolve()
+        for item in attached
+        if Path(item["caminho"]).resolve() != target
+    ]
     if not sources:
         from core.documents import get_document_library_service
 
@@ -489,26 +541,35 @@ def _required_template_arguments(prompt: dict[str, Any]) -> dict[str, Any] | Non
             return None
     original_name = Path(str(templates[0].get("nome") or target.name))
     suffix = ".docx" if target.suffix.lower() == ".odt" else target.suffix.lower()
-    return {"caminho_modelo": str(target), "caminhos_fontes": [str(path) for path in sources],
-            "nome_saida": f"{original_name.stem} - preenchido{suffix}"}
+    return {
+        "caminho_modelo": str(target),
+        "caminhos_fontes": [str(path) for path in sources],
+        "nome_saida": f"{original_name.stem} - preenchido{suffix}",
+    }
 
 
 def _written_template_result(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
-    names = {str(call.get("id")): call.get("function", {}).get("name")
-             for message in messages for call in message.get("tool_calls") or []}
+    names = {
+        str(call.get("id")): call.get("function", {}).get("name")
+        for message in messages
+        for call in message.get("tool_calls") or []
+    }
     for message in reversed(messages):
         name = message.get("name") or names.get(str(message.get("tool_call_id")))
         if message.get("role") != "tool" or name not in {
-            "preencher_documento", "preencher_documento_com_fontes",
+            "preencher_documento",
+            "preencher_documento_com_fontes",
         }:
             continue
         try:
             result, _ = json.JSONDecoder().raw_decode(str(message.get("content", "")).lstrip())
         except (ValueError, TypeError):
             continue
-        if isinstance(result, dict) and result.get("written") is True and Path(
-            str(result.get("output") or "")
-        ).is_file():
+        if (
+            isinstance(result, dict)
+            and result.get("written") is True
+            and Path(str(result.get("output") or "")).is_file()
+        ):
             return result
     return None
 
@@ -517,7 +578,10 @@ def _template_write_attempted(messages: list[dict[str, Any]]) -> bool:
     for message in messages:
         for call in message.get("tool_calls") or []:
             function = call.get("function", {})
-            if function.get("name") not in {"preencher_documento", "preencher_documento_com_fontes"}:
+            if function.get("name") not in {
+                "preencher_documento",
+                "preencher_documento_com_fontes",
+            }:
                 continue
             arguments = function.get("arguments", {})
             if isinstance(arguments, str):
@@ -532,7 +596,9 @@ def _template_write_attempted(messages: list[dict[str, Any]]) -> bool:
 
 def _template_completion(result: dict[str, Any]) -> str:
     name = result.get("output_name") or Path(result["output"]).name
-    response = f"Documento preenchido: {name}.\n{result.get('applied_count', 0)} campos preenchidos."
+    response = (
+        f"Documento preenchido: {name}.\n{result.get('applied_count', 0)} campos preenchidos."
+    )
     pending = list(dict.fromkeys(result.get("still_open", []) + result.get("unmatched", [])))
     if pending:
         response += "\nCampos sem preenchimento: " + ", ".join(pending) + "."
@@ -852,12 +918,13 @@ def _try_direct_stock_movement(
 
     item = matches[0]
     tool_name = "saida_estoque" if movement == "saida" else "entrada_estoque"
-    return executar_ferramenta(
+    result = executar_ferramenta(
         tool_name,
         {"item_id": item.id, "quantidade": quantity},
         require_approval=True,
         approval_scope=approval_scope,
     )
+    return str(result)
 
 
 def _chart_type_from_question(question: str) -> str:
@@ -1256,7 +1323,7 @@ def _expandir_ferramentas_por_semantica(pergunta: str, lexicais: set[str]) -> se
 
     * **Intent gate.** Semantic retrieval only runs for an operational request.
       A general-knowledge question keeps its lexical set, which is empty, so it
-      still reaches the model with no tools. A lexical hit *is* evidence of
+      still reaches the model with no tools at all. A lexical hit *is* evidence of
       operational intent, so it opens the gate on its own.
     * **Top-k.** The semantic contribution is capped by
       ``agent.tool_retrieval_top_k``, then narrowed further by the mode
@@ -1264,6 +1331,24 @@ def _expandir_ferramentas_por_semantica(pergunta: str, lexicais: set[str]) -> se
     * **Floor.** An operational request whose signals all miss gets the small
       introspection set instead of silently degrading to no tools at all.
     """
+    from ai.tool_retrieval import _is_conversational
+
+    if _is_conversational(_normalize(pergunta)):
+        return set(lexicais)
+    if is_web_lookup(pergunta):
+        # An explicit search already identifies the required capability. Avoid
+        # encoding the entire registry before consulting the user's source.
+        return set(lexicais) | {"pesquisar_web", "pesquisar_noticias", "navegar_web"}
+
+    intent = classify_intent(pergunta)
+    if (
+        intent.kind == "tools"
+        and lexicais
+        and lexicais.issubset(set(READ_INVENTORY))
+        and re.search(r"\b(?:estoque|inventario|pecas|itens|componentes)\b", _normalize(pergunta))
+    ):
+        return set(lexicais)
+
     scores = tool_retrieval.score_tools(pergunta)
     if not lexicais and not tool_retrieval.is_operational(pergunta, scores):
         # General-knowledge question: no lexical hit, no operational signal.
@@ -1300,6 +1385,10 @@ def _filtrar_ferramentas(pergunta: str, *, has_document: bool = False) -> list:
     3. the attachment and broad-request rules, which stay authoritative and
        therefore still run last.
     """
+    if not classify_intent(pergunta, has_attachment=has_document).operational:
+        return []
+    if not has_document and is_local_memory_read(pergunta):
+        return [f for f in REGISTRO_FERRAMENTAS if f.nome == "buscar_memoria"]
     relevant_tools = _expandir_ferramentas_por_semantica(
         pergunta, _keywords_para_ferramentas(pergunta)
     )
@@ -1310,9 +1399,16 @@ def _filtrar_ferramentas(pergunta: str, *, has_document: bool = False) -> list:
         # processar_arquivo twice. Keep only tools explicitly requested by the user.
         relevant_tools.discard("processar_arquivo")
         if _requires_template_file(pergunta):
-            relevant_tools.update({"listar_documentos_rag", "ler_arquivo", "processar_arquivo",
-                                   "inspecionar_formulario_documento", "preencher_documento",
-                                   "preencher_documento_com_fontes"})
+            relevant_tools.update(
+                {
+                    "listar_documentos_rag",
+                    "ler_arquivo",
+                    "processar_arquivo",
+                    "inspecionar_formulario_documento",
+                    "preencher_documento",
+                    "preencher_documento_com_fontes",
+                }
+            )
             relevant_tools.discard("gerar_documento_local")
         return [f for f in REGISTRO_FERRAMENTAS if f.nome in relevant_tools]
 
@@ -1608,12 +1704,12 @@ def _keywords_para_ferramentas(pergunta: str) -> set[str]:
         "gerar_grafico": list(CHART_KEYWORDS),
     }
 
-    pergunta_lower = pergunta.casefold()
+    pergunta_lower = _normalize(pergunta)
     relevant_tools = set()
 
     for tool_name, keywords in keywords_map.items():
         if any(
-            re.search(rf"(?<!\w){re.escape(keyword.casefold())}(?!\w)", pergunta_lower)
+            re.search(rf"(?<!\w){re.escape(_normalize(keyword))}(?!\w)", pergunta_lower)
             for keyword in keywords
         ):
             relevant_tools.add(tool_name)
@@ -1633,8 +1729,14 @@ def loop_react(
     """Main ReAct loop using native OpenAI tool calling."""
 
     def cancelado() -> bool:
+        check_control(deadline=prompt_dict.get("deadline"))
         return bool(should_cancel and should_cancel())
 
+    if should_cancel and should_cancel():
+        if task_session:
+            task_session.check()
+        return marcar_interrompida(""), []
+    check_control(should_cancel, prompt_dict.get("deadline"))
     pergunta = _sanitize_internal_markers(prompt_dict.get("pergunta", ""))
     approval_scope = str(prompt_dict.get("approval_scope", "")).strip()
     texto_doc = _sanitize_internal_markers(prompt_dict.get("documento", ""))
@@ -1643,34 +1745,226 @@ def loop_react(
     attached_files = prompt_dict.get("documentos_anexados") or []
     memorias_ativas = prompt_dict.get("memorias_ativas", True)
     memorias_fornecidas = prompt_dict.get("memorias_relevantes")
+    memorias_consultadas = bool(prompt_dict.get("memorias_consultadas"))
     document_extraction_failed = "EXTRACAO_INSUFICIENTE" in texto_doc
+    intent = classify_intent(pergunta, has_attachment=bool(texto_doc or attached_files))
+    from core.direct_actions import (
+        direct_tool_allowed,
+        inventory_report_arguments,
+        same_youtube_open,
+        simple_news_query,
+        youtube_open_arguments,
+    )
+
+    browser_arguments = youtube_open_arguments(pergunta)
+    if (
+        browser_arguments
+        and not texto_doc
+        and not attached_files
+        and not prompt_dict.get("anexos")
+        and not prompt_dict.get("disable_tools")
+        and direct_tool_allowed(
+            "abrir_no_navegador", prompt_dict.get("agent_mode"), prompt_dict.get("work_agents")
+        )
+    ):
+        if fn_status:
+            fn_status("Preparando a abertura da busca no YouTube...")
+        with phase("browser_open"):
+            if task_session:
+                previous = [
+                    step
+                    for step in task_session.task["steps"]
+                    if step.get("tool") == "abrir_no_navegador"
+                    and same_youtube_open(browser_arguments, step.get("arguments", {}))
+                ]
+                if not previous:
+                    task_session.queue(
+                        [],
+                        [
+                            {
+                                "id": "direct_youtube_open",
+                                "type": "function",
+                                "function": {
+                                    "name": "abrir_no_navegador",
+                                    "arguments": browser_arguments,
+                                },
+                            }
+                        ],
+                        {"abrir_no_navegador"},
+                    )
+                task_session.drain()
+                step = previous[-1] if previous else task_session.task["steps"][-1]
+                result = step["result"]
+            else:
+                result = executar_ferramenta(
+                    "abrir_no_navegador",
+                    browser_arguments,
+                    require_approval=True,
+                    approval_scope=approval_scope,
+                )
+        check_control(should_cancel, prompt_dict.get("deadline"))
+        response = str(result)
+        if task_session:
+            task_session.output = response
+            task_session.finish(response)
+        if fn_chunk:
+            fn_chunk(response)
+        return response, [PassoReact("resposta", response)]
+
+    news_query = simple_news_query(pergunta)
+    if (
+        news_query
+        and not texto_doc
+        and not attached_files
+        and not prompt_dict.get("anexos")
+        and not prompt_dict.get("disable_tools")
+        and direct_tool_allowed(
+            "pesquisar_noticias", prompt_dict.get("agent_mode"), prompt_dict.get("work_agents")
+        )
+    ):
+        from core.web_research import news_digest
+
+        if fn_status:
+            fn_status("Pesquisando notícias com datas e fontes verificáveis...")
+        with phase("web"):
+            if task_session:
+                task_session.queue(
+                    [],
+                    [
+                        {
+                            "id": "direct_news",
+                            "type": "function",
+                            "function": {
+                                "name": "pesquisar_noticias",
+                                "arguments": {"query": news_query},
+                            },
+                        }
+                    ],
+                    {"pesquisar_noticias"},
+                )
+                task_session.drain()
+                result = task_session.task["steps"][-1]["result"]
+            else:
+                result = executar_ferramenta("pesquisar_noticias", {"query": news_query})
+        check_control(should_cancel, prompt_dict.get("deadline"))
+        response = news_digest(str(result))
+        if task_session:
+            task_session.output = response
+            task_session.finish(response)
+        if fn_chunk:
+            fn_chunk(response)
+        return response, [PassoReact("resposta", response)]
+
+    direct_arguments = inventory_report_arguments(pergunta)
+    if (
+        direct_arguments
+        and not texto_doc
+        and not attached_files
+        and not prompt_dict.get("anexos")
+        and not prompt_dict.get("disable_tools")
+        and direct_tool_allowed(
+            "gerar_relatorio_local", prompt_dict.get("agent_mode"), prompt_dict.get("work_agents")
+        )
+    ):
+        if fn_status:
+            fn_status("Gerando o relatório com os dados confirmados do estoque...")
+        if task_session:
+            completed = [
+                step
+                for step in task_session.task["steps"]
+                if step.get("tool") == "gerar_relatorio_local"
+                and step.get("arguments") == direct_arguments
+                and step.get("status") == "succeeded"
+            ]
+            if not completed:
+                task_session.queue(
+                    [],
+                    [
+                        {
+                            "id": "direct_inventory_report",
+                            "type": "function",
+                            "function": {
+                                "name": "gerar_relatorio_local",
+                                "arguments": direct_arguments,
+                            },
+                        }
+                    ],
+                    {"gerar_relatorio_local"},
+                )
+                task_session.drain()
+            report_step = completed[-1] if completed else task_session.task["steps"][-1]
+            result = report_step["result"]
+            succeeded = report_step["status"] == "succeeded"
+        else:
+            result = executar_ferramenta("gerar_relatorio_local", direct_arguments)
+            succeeded = not isinstance(result, ToolResult) or result.ok
+        check_control(should_cancel, prompt_dict.get("deadline"))
+        response = _inventory_report_brief() if succeeded else str(result)
+        if succeeded:
+            from core.chat_outputs import output_delivery_active
+
+            response += "\n\nRelatório gerado. " + (
+                "Baixe o arquivo anexado." if output_delivery_active() else str(result)
+            )
+        if task_session:
+            task_session.output = response
+            task_session.finish(response)
+        if fn_chunk:
+            fn_chunk(response)
+        return response, [PassoReact("resposta", response)]
     chart_request = _is_chart_request(pergunta)
     template_request = _requires_template_file(pergunta)
-
-    from core.memory import buscar_memorias
 
     if memorias_fornecidas is not None:
         memorias_relevantes = [
             str(memory).strip() for memory in memorias_fornecidas if str(memory).strip()
         ]
+    elif intent.needs_memory:
+        from core.memory import buscar_memorias
+
+        check_control(should_cancel, prompt_dict.get("deadline"))
+        with phase("memory"):
+            memorias_relevantes = (
+                buscar_memorias(pergunta)
+                if pergunta and memorias_ativas and not document_extraction_failed
+                else []
+            )
+        memorias_consultadas = bool(pergunta and memorias_ativas and not document_extraction_failed)
+        check_control(should_cancel, prompt_dict.get("deadline"))
     else:
-        memorias_relevantes = (
-            buscar_memorias(pergunta)
-            if pergunta and memorias_ativas and not document_extraction_failed
-            else []
+        memorias_relevantes = []
+
+    if (
+        memorias_consultadas
+        and not texto_doc
+        and not attached_files
+        and not task_session
+        and direct_tool_allowed(
+            "buscar_memoria", prompt_dict.get("agent_mode"), prompt_dict.get("work_agents")
         )
+    ):
+        from core.direct_actions import memory_lookup_response
+
+        response = memory_lookup_response(pergunta, memorias_relevantes)
+        if response is not None:
+            check_control(should_cancel, prompt_dict.get("deadline"))
+            if fn_chunk:
+                fn_chunk(response)
+            return response, [PassoReact("resposta", response)]
 
     data_hora = datetime.now().strftime("%d/%m/%Y as %H:%M")
     settings = get_settings()
     customer_context = settings.customer_prompt_context
     response_style_context = settings.response_style_prompt_context
-    agenda_context = _agenda_prompt_context()
+    agenda_context = _agenda_prompt_context() if "agenda" in _normalize(pergunta) else ""
 
-    ferramentas_relevantes = _filtrar_ferramentas(
-        pergunta,
-        has_document=bool(texto_doc),
-    )
+    check_control(should_cancel, prompt_dict.get("deadline"))
+    with phase("tool_selection"):
+        ferramentas_relevantes = _filtrar_ferramentas(pergunta, has_document=bool(texto_doc))
+    check_control(should_cancel, prompt_dict.get("deadline"))
     if prompt_dict.get("disable_tools"):
+        ferramentas_relevantes = []
+    if memorias_consultadas and is_local_memory_read(pergunta) and not texto_doc:
         ferramentas_relevantes = []
 
     # Agent mode: an allowlist on top of relevance. The mode can only *remove*
@@ -1712,7 +2006,25 @@ def loop_react(
         ferramentas_disponiveis=[f.nome for f in ferramentas_relevantes],
         task_session=task_session,
     )
-    if settings.agent.enabled:
+    if (
+        (intent.kind == "general" or is_local_memory_read(pergunta))
+        and not texto_doc
+        and not attached_files
+    ):
+        system_content = build_general_prompt(
+            settings.assistant.name, settings.assistant.profile, data_hora
+        )
+    if is_local_memory_read(pergunta) and not texto_doc and not attached_files:
+        system_content += (
+            "\nO usuario pediu uma consulta as memorias locais. Responda com base nos "
+            "fatos registrados nas memorias fornecidas ou retornadas por buscar_memoria. "
+            "Nao use resultados web de conversas anteriores como evidencia dessa relacao. "
+            "Se nao houver registro relevante, diga que nao encontrou nas memorias; "
+            "nao invente uma relacao nem substitua a consulta por pesquisa na internet.\n"
+            "Nao acrescente afiliacoes, identidades ou explicacoes factuais ausentes nos registros. "
+            "Ausencia de registro nao comprova ausencia de relacao.\n"
+        )
+    if settings.agent.enabled and intent.operational and not is_local_memory_read(pergunta):
         if work_agents:
             # Work mode: show all active agents
             agent_labels = {
@@ -1812,24 +2124,41 @@ def loop_react(
     else:
         memorias_section = ""
 
-    if pergunta and not texto_doc:
-        try:
-            from ai.rag import buscar_contexto
+    if pergunta and not texto_doc and intent.needs_rag:
+        # Skip RAG for conversational queries to avoid unnecessary encoder loading
+        from ai.tool_retrieval import _is_conversational
 
-            rag_chunks = buscar_contexto(pergunta)
-            if rag_chunks:
-                rag_context = "\n---\n".join(rag_chunks)
-                untrusted_context.append(
-                    "<documentos_indexados_nao_confiaveis>\n"
-                    f"{rag_context}\n"
-                    "</documentos_indexados_nao_confiaveis>"
-                )
-        except Exception as e:
-            logger.debug("RAG context search failed (non-blocking): %s", e)
+        if not _is_conversational(_normalize(pergunta)):
+            try:
+                from ai.rag import buscar_contexto
+
+                check_control(should_cancel, prompt_dict.get("deadline"))
+                with phase("rag"):
+                    rag_chunks = buscar_contexto(pergunta)
+                check_control(should_cancel, prompt_dict.get("deadline"))
+                if rag_chunks:
+                    rag_context = "\n---\n".join(rag_chunks)
+                    untrusted_context.append(
+                        "<documentos_indexados_nao_confiaveis>\n"
+                        f"{rag_context}\n"
+                        "</documentos_indexados_nao_confiaveis>"
+                    )
+            except Exception as e:
+                logger.debug("RAG context search failed (non-blocking): %s", e)
 
     from ai.agents import classificar_tarefa, obter_prompt_agente
 
-    agente = classificar_tarefa(pergunta) if pergunta else None
+    check_control(should_cancel, prompt_dict.get("deadline"))
+    with phase("classification"):
+        agente = (
+            classificar_tarefa(
+                pergunta,
+                semantic=modo_da_rodada.id == "assistente" and not is_local_memory_read(pergunta),
+            )
+            if intent.operational
+            else None
+        )
+    check_control(should_cancel, prompt_dict.get("deadline"))
     if agente:
         agent_prompt = obter_prompt_agente(agente)
         if agent_prompt:
@@ -1842,7 +2171,9 @@ def loop_react(
         working_memory = WorkingMemory()
         query_terms = set(_normalize(pergunta).split()) if pergunta else set()
 
-        trimmed_history = budget.trim_history(history, query_terms=query_terms, working_memory=working_memory)
+        trimmed_history = budget.trim_history(
+            history, query_terms=query_terms, working_memory=working_memory
+        )
         for msg in trimmed_history:
             msg = dict(msg)
             msg["content"] = _sanitize_internal_markers(msg.get("content", ""))
@@ -1861,14 +2192,24 @@ def loop_react(
                 "Context budget exceeded (%.1f%%), trimming further",
                 budget_info["utilization"] * 100,
             )
-            mensagens = budget.summarize_if_needed(mensagens, summarize_fn=_simple_summarize, working_memory=working_memory, query_terms=query_terms)
+            mensagens = budget.summarize_if_needed(
+                mensagens,
+                summarize_fn=_simple_summarize,
+                working_memory=working_memory,
+                query_terms=query_terms,
+            )
             budget_info = budget.analyze_messages(mensagens, working_memory)
             if budget_info["over_budget"]:
                 logger.error(
                     "Context still over budget after summarization (%.1f%%), using minimal history",
                     budget_info["utilization"] * 100,
                 )
-                mensagens = budget.trim_history(mensagens, target_reduction=budget_info["total_used"] - budget.available_tokens, query_terms=query_terms, working_memory=working_memory)
+                mensagens = budget.trim_history(
+                    mensagens,
+                    target_reduction=budget_info["total_used"] - budget.available_tokens,
+                    query_terms=query_terms,
+                    working_memory=working_memory,
+                )
 
     if memorias_section:
         untrusted_context.append(memorias_section)
@@ -1899,6 +2240,111 @@ def loop_react(
             )
             task_session.task["messages"] = mensagens
             task_session.save()
+
+    research_evidence = ""
+    if (
+        is_web_lookup(pergunta)
+        and not texto_doc
+        and not prompt_dict.get("disable_tools")
+        and modo_da_rodada.allows("pesquisar_web")
+        and any(
+            tool["function"]["name"] in {"pesquisar_web", "pesquisar_noticias"}
+            for tool in ferramentas_openai
+        )
+    ):
+        from ai.task_runtime import _has_verifiable_web_evidence
+
+        query = query_from_history(pergunta, history)
+        name = "pesquisar_noticias" if "noticia" in _normalize(query) else "pesquisar_web"
+        if name not in {tool["function"]["name"] for tool in ferramentas_openai}:
+            name = "pesquisar_web"
+        if fn_status:
+            fn_status("Consultando fontes web e verificando o período solicitado...")
+        with phase("web"):
+            if task_session:
+                previous = [
+                    step
+                    for step in task_session.task["steps"]
+                    if step.get("tool") in {"pesquisar_web", "pesquisar_noticias"}
+                ]
+                if not previous:
+                    call = {
+                        "id": "initial_web_research",
+                        "type": "function",
+                        "function": {"name": name, "arguments": {"query": query}},
+                    }
+                    mensagens.append(
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    **call,
+                                    "function": {
+                                        "name": name,
+                                        "arguments": json.dumps(
+                                            {"query": query}, ensure_ascii=False
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                    task_session.queue(
+                        mensagens, [call], {tool["function"]["name"] for tool in ferramentas_openai}
+                    )
+                    task_session.drain()
+                    previous = [task_session.task["steps"][-1]]
+                research_evidence = "\n\n".join(str(step.get("result", "")) for step in previous)
+            else:
+                call = {
+                    "id": "initial_web_research",
+                    "type": "function",
+                    "function": {"name": name, "arguments": {"query": query}},
+                }
+                result = executar_ferramenta(name, {"query": query})
+                research_evidence = str(result)
+                mensagens.extend(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    **call,
+                                    "function": {
+                                        "name": name,
+                                        "arguments": json.dumps(
+                                            {"query": query}, ensure_ascii=False
+                                        ),
+                                    },
+                                }
+                            ],
+                        },
+                        {"role": "tool", "tool_call_id": call["id"], "content": research_evidence},
+                    ]
+                )
+        check_control(should_cancel, prompt_dict.get("deadline"))
+        if not _has_verifiable_web_evidence(research_evidence):
+            response = "A pesquisa não encontrou evidência web verificável.\n\n" + research_evidence
+            if task_session:
+                task_session.output = response
+                task_session.finish(response)
+            if fn_chunk:
+                fn_chunk(response)
+            return response, [PassoReact("resposta", response)]
+        mensagens.append(
+            {
+                "role": "user",
+                "content": (
+                    "Sintetize as fontes consultadas para responder ao pedido original. "
+                    "Use somente fatos presentes nos resultados; cite os links retornados. "
+                    "Para notícias, respeite as datas verificadas e explique o impacto com base no resumo. "
+                    "Não afirme que leu artigos completos quando recebeu apenas títulos e resumos. "
+                    "Entregue uma lista clara, sem tabelas largas ou resultados brutos de busca."
+                ),
+            }
+        )
 
     passos: list[PassoReact] = []
     if cancelado():
@@ -1965,12 +2411,14 @@ def loop_react(
     if fn_status:
         fn_status("Selecionando melhor modelo local...")
     est_tokens = sum(estimate_message_tokens(m) for m in history) if history else 0
-    model_id, llama = multi_manager.route_and_invoke(
-        pergunta,
-        has_document=has_document,
-        has_image=has_image,
-        est_tokens=est_tokens,
-    )
+    with phase("model_prepare"):
+        model_id, llama = multi_manager.route_and_invoke(
+            pergunta,
+            has_document=has_document,
+            has_image=has_image,
+            est_tokens=est_tokens,
+        )
+    check_control(should_cancel, prompt_dict.get("deadline"))
     decision = multi_manager.get_last_decision()
     if decision is not None and decision.notice and fn_status:
         fn_status(decision.notice)
@@ -2112,7 +2560,7 @@ def loop_react(
                 kwargs: dict[str, Any] = {
                     "messages": mensagens,
                     "temperature": settings.response.temperature,
-"max_tokens": min(settings.num_predict, settings.agent.task_max_tokens)
+                    "max_tokens": min(settings.num_predict, settings.agent.task_max_tokens)
                     if task_session
                     else min(settings.num_predict, settings.agent.chat_max_tokens),
                     "top_p": settings.response.top_p,
@@ -2129,6 +2577,8 @@ def loop_react(
                     kwargs["tools"] = ferramentas_openai
                     kwargs["tool_choice"] = "auto"
 
+                kwargs["should_cancel"] = should_cancel
+                kwargs["deadline"] = prompt_dict.get("deadline")
                 stream = llama.create_chat_completion(**kwargs)
             except Exception as e:
                 span.set_attribute("error", str(e))
@@ -2137,6 +2587,7 @@ def loop_react(
                 return f"Erro ao conectar com o LLM: {e}", passos
 
             conteudo_acumulado = ""
+            finish_reason = None
             tool_calls_buffer: dict[int, dict[str, str]] = {}
             tokens_repetidos = 0
             ultimo_token = ""
@@ -2162,9 +2613,13 @@ def loop_react(
                         _fechar_stream()
                         break
                     choice = chunk["choices"][0]
+                    finish_reason = choice.get("finish_reason") or finish_reason
                     delta = choice.get("delta", {})
                     content = delta.get("content") or ""
                     if content:
+                        metrics = current_metrics()
+                        if metrics:
+                            metrics.first_token()
                         combined_content = conteudo_acumulado + content
                         marker_idx = _first_internal_marker_index(combined_content)
                         stop_stream = marker_idx >= 0
@@ -2196,6 +2651,8 @@ def loop_react(
                                     fn_passo(passo_pensamento)
 
                             if fn_chunk and not chart_request and not template_request:
+                                if metrics:
+                                    metrics.first_visible_token()
                                 if not writing_emitted and fn_status:
                                     writing_emitted = True
                                     fn_status("Escrevendo resposta...")
@@ -2220,11 +2677,12 @@ def loop_react(
                 _fechar_stream()
 
             trailing_content = reasoning_filter.finish()
-            if task_session:
-                task_session.check()
             if trailing_content:
                 conteudo_acumulado += trailing_content
                 if fn_chunk and not chart_request and not template_request:
+                    metrics = current_metrics()
+                    if metrics:
+                        metrics.first_visible_token()
                     fn_chunk(trailing_content)
 
             if task_session and conteudo_acumulado.strip() and not template_request:
@@ -2234,12 +2692,29 @@ def loop_react(
                 # prose this turn produced must already be part of the report.
                 task_session.output = _limpar_resposta(_saida_da_tarefa())
 
+            if task_session:
+                task_session.check()
+            cancelado_stream = cancelado_stream or cancelado()
             if cancelado_stream:
                 if fn_status:
                     fn_status("Resposta interrompida.")
                 return marcar_interrompida(
                     _saida_da_tarefa() if task_session else conteudo_acumulado
                 ), passos
+
+            if finish_reason == "length":
+                reason = "O modelo atingiu o limite de tokens. A resposta está incompleta; o progresso foi preservado."
+                if task_session:
+                    mensagens.append({"role": "assistant", "content": conteudo_acumulado})
+                    mensagens.append(
+                        {
+                            "role": "user",
+                            "content": "Continue a partir do progresso salvo, sem repetir ações já executadas.",
+                        }
+                    )
+                    task_session.task["messages"] = mensagens
+                    task_session.pause(reason)
+                return f"{conteudo_acumulado}\n\n{reason}".strip(), passos
 
             if not tool_calls_buffer:
                 import re as _re
@@ -2284,7 +2759,7 @@ def loop_react(
             span.set_attribute("content_length", len(conteudo_acumulado))
             span.set_attribute("tool_calls_count", len(tool_calls_buffer))
 
-        tool_calls_acumulados = []
+        tool_calls_acumulados: list[dict[str, Any]] = []
         if tool_calls_buffer:
             for idx in sorted(tool_calls_buffer.keys()):
                 tc = tool_calls_buffer[idx]
@@ -2302,14 +2777,15 @@ def loop_react(
             tool_calls_msg: list[dict[str, Any]] | None = None
             if tool_calls_acumulados:
                 tool_calls_msg = []
-                for j, call in enumerate(tool_calls_acumulados):
+                for j, call in enumerate(tool_calls_acumulados):  # type: ignore[attr-defined]
+                    call_dict: dict[str, dict[str, str | dict | None]] = call  # type: ignore[assignment]
                     tool_calls_msg.append(
                         {
                             "id": f"call_{task_session.task['iterations']}_{j}"
                             if task_session
                             else f"call_{j}",
                             "type": "function",
-                            "function": call["function"],
+                            "function": call_dict["function"],
                         }
                     )
             mensagens.append(
@@ -2335,29 +2811,67 @@ def loop_react(
                     if not attempted and "preencher_documento_com_fontes" in allowed:
                         arguments = _required_template_arguments(prompt_dict)
                         if arguments:
-                            call = {"id": "document_fill_gate", "type": "function", "function": {
-                                "name": "preencher_documento_com_fontes", "arguments": arguments,
-                            }}
+                            call_var: dict[str, str | dict[str, str | dict]] = {  # type: ignore[misc]
+                                "id": "document_fill_gate",
+                                "type": "function",
+                                "function": {
+                                    "name": "preencher_documento_com_fontes",
+                                    "arguments": arguments,
+                                },
+                            }
                             if task_session:
-                                task_session.output = "Preparando uma copia preenchida do modelo anexado."
-                                mensagens.append({"role": "assistant", "content": "", "tool_calls": [{
-                                    **call, "function": {**call["function"],
-                                    "arguments": json.dumps(arguments, ensure_ascii=False)},
-                                }]})
-                                task_session.queue(mensagens, [call], allowed)
+                                task_session.output = (
+                                    "Preparando uma copia preenchida do modelo anexado."
+                                )
+                                mensagens.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": "",
+                                        "tool_calls": [
+                                            {
+                                                **call_var,  # type: ignore[dict-item]
+                                                "function": {
+                                                    **call_var["function"],  # type: ignore[dict-item]
+                                                    "arguments": json.dumps(
+                                                        arguments, ensure_ascii=False
+                                                    ),
+                                                },
+                                            }
+                                        ],
+                                    }
+                                )
+                                task_session.queue(mensagens, [call_var], allowed)
                                 task_session.drain()
                             else:
                                 result = executar_ferramenta(
-                                    "preencher_documento_com_fontes", arguments,
+                                    "preencher_documento_com_fontes",
+                                    arguments,
                                     require_approval=True,
                                     approval_scope=approval_scope,
                                 )
-                                if isinstance(result, ToolResult) and not result.ok and result.error and result.error.code == ToolErrorCode.APPROVAL_REQUIRED:
-                                    return str(result).removeprefix(APPROVAL_REQUIRED_PREFIX).strip(), passos
-                                mensagens.extend([
-                                    {"role": "assistant", "content": "", "tool_calls": [call]},
-                                    {"role": "tool", "tool_call_id": call["id"], "content": str(result)},
-                                ])
+                                if (
+                                    isinstance(result, ToolResult)
+                                    and not result.ok
+                                    and result.error
+                                    and result.error.code == ToolErrorCode.APPROVAL_REQUIRED
+                                ):
+                                    return str(result).removeprefix(
+                                        APPROVAL_REQUIRED_PREFIX
+                                    ).strip(), passos
+                                mensagens.extend(
+                                    [
+                                        {
+                                            "role": "assistant",
+                                            "content": "",
+                                            "tool_calls": [call_var],
+                                        },
+                                        {
+                                            "role": "tool",
+                                            "tool_call_id": call_var["id"],
+                                            "content": str(result),
+                                        },
+                                    ]
+                                )
                             written = _written_template_result(mensagens)
                             if written:
                                 resposta = _template_completion(written)
@@ -2376,6 +2890,10 @@ def loop_react(
                 # plausible inventory/agenda/document table without calling a
                 # tool; the authoritative module must be consulted first.
                 required_local = _required_local_tools(pergunta)
+                if memorias_consultadas:
+                    # A preloaded read is evidence even when it found no records.
+                    # Repeating it would force an unnecessary second model turn.
+                    required_local.pop("buscar_memoria", None)
                 if required_local:
                     if task_session:
                         executed_local = {
@@ -2414,9 +2932,17 @@ def loop_react(
                             task_session.drain()
                             continue
                         for call in calls:
-                            tool_name = call["function"]["name"]
-                            result = executar_ferramenta(tool_name, call["function"]["arguments"])
-                            if isinstance(result, ToolResult) and not result.ok and result.error and result.error.code == ToolErrorCode.APPROVAL_REQUIRED:
+                            call_dict2: dict[str, Any] = call
+                            tool_name = call_dict2["function"]["name"]
+                            result = executar_ferramenta(
+                                tool_name, call_dict2["function"]["arguments"]
+                            )
+                            if (
+                                isinstance(result, ToolResult)
+                                and not result.ok
+                                and result.error
+                                and result.error.code == ToolErrorCode.APPROVAL_REQUIRED
+                            ):
                                 return str(result).removeprefix(
                                     APPROVAL_REQUIRED_PREFIX
                                 ).strip(), passos
@@ -2480,16 +3006,16 @@ def loop_react(
                         )
                     else:
                         fill_done = _document_was_written(mensagens)
-                    if not fill_done and _response_claims_document_ready(
-                        conteudo_acumulado
-                    ):
+                    if not fill_done and _response_claims_document_ready(conteudo_acumulado):
                         conteudo_acumulado = _NO_DOCUMENT_RUN
 
                 passos.append(PassoReact("resposta", conteudo_acumulado))
                 if fn_passo:
                     fn_passo(passos[-1])
                 resposta_final = _limpar_resposta(
-                    _saida_da_tarefa() if task_session and not template_request else conteudo_acumulado
+                    _saida_da_tarefa()
+                    if task_session and not template_request
+                    else conteudo_acumulado
                 )
                 # A chart request is fulfilled from the local records even
                 # when the model forgot to call gerar_grafico.  This function
@@ -2512,13 +3038,13 @@ def loop_react(
                 # ── Conditional reflection ──────────────────────────────
                 # Only for non-task chat turns; task sessions have their own
                 # completion logic.  Runs at most once per turn.
-                if (
-                    settings.agent.reflection_enabled
-                    and not task_session
-                    and not template_request
-                ):
+                if settings.agent.reflection_enabled and not task_session and not template_request:
                     ferramentas_ofertadas = [f.nome for f in ferramentas_relevantes]
-                    if should_reflect(
+                    if memorias_consultadas:
+                        ferramentas_ofertadas = [
+                            name for name in ferramentas_ofertadas if name != "buscar_memoria"
+                        ]
+                    if intent.operational and should_reflect(
                         pergunta,
                         resposta_final,
                         ferramentas_ofertadas,
@@ -2566,9 +3092,10 @@ def loop_react(
         if cancelado():
             return marcar_interrompida(conteudo_acumulado), passos
 
-        for j, call in enumerate(tool_calls_acumulados):
-            nome_func = call["function"]["name"]
-            args = call["function"]["arguments"]
+        for j, call in enumerate(tool_calls_acumulados):  # type: ignore[attr-defined]
+            call_d: dict[str, dict[str, str | dict | None]] = call  # type: ignore[assignment]
+            nome_func = call_d["function"]["name"]
+            args = call_d["function"]["arguments"]
 
             if not isinstance(nome_func, str) or not isinstance(args, dict):
                 continue
@@ -2624,16 +3151,13 @@ def loop_react(
                 and not resultado.ok
                 and resultado.error
                 and resultado.error.code == ToolErrorCode.APPROVAL_REQUIRED
-            ) or (
-                isinstance(resultado, str)
-                and resultado.startswith(APPROVAL_REQUIRED_PREFIX)
-            )
+            ) or (isinstance(resultado, str) and resultado.startswith(APPROVAL_REQUIRED_PREFIX))
             if is_approval:
                 resposta_aprovacao = str(resultado).removeprefix(APPROVAL_REQUIRED_PREFIX).strip()
                 passos.append(PassoReact("resposta", resposta_aprovacao))
                 return resposta_aprovacao, passos
 
-            passo_obs = PassoReact("observacao", "", resultado=resultado)
+            passo_obs = PassoReact("observacao", "", resultado=str(resultado))
             passos.append(passo_obs)
             if fn_passo:
                 fn_passo(passo_obs)
@@ -2650,7 +3174,12 @@ def loop_react(
             resultado_str = str(resultado)
             working_memory.adicionar_resultado(f"{nome_func}: {resultado_str[:200]}")
             # If the tool returned structured data that looks like a fact, capture it
-            if nome_func in {"consultar_estoque", "ler_arquivo", "listar_documentos_rag", "buscar_web"} and resultado_str and not resultado_str.startswith("Erro"):
+            if (
+                nome_func
+                in {"consultar_estoque", "ler_arquivo", "listar_documentos_rag", "buscar_web"}
+                and resultado_str
+                and not resultado_str.startswith("Erro")
+            ):
                 working_memory.adicionar_fato(f"{nome_func} -> {resultado_str[:150]}")
 
             # Loop detection.  The tool result is already in the conversation, so
@@ -2727,10 +3256,11 @@ def _resposta_de_loop(
 ) -> tuple[str, list[PassoReact]]:
     if task_session:
         task_session.output = _limpar_resposta("\n\n".join(s for s in saida_acumulada if s.strip()))
-        task_session.pause("Limite de etapas desta execucao atingido; voce pode continuar.")
+        task_session.pause(
+            "Sem progresso verificável: ciclo repetido de ferramentas. Revise o pedido antes de continuar."
+        )
     resposta = (
-        "A execucao foi interrompida por um ciclo repetido de chamadas de "
-        f"ferramenta. {aviso}"
+        f"A execucao foi interrompida por um ciclo repetido de chamadas de ferramenta. {aviso}"
     )
     passos.append(PassoReact("resposta", resposta))
     return resposta, passos
@@ -2744,7 +3274,9 @@ def _log_turno(evento: str, campos: dict[str, Any]) -> None:
     events are the minimum needed to tell budget exhaustion, early stop and loop
     detection apart after the fact.
     """
-    logger.info("react_loop event=%s %s", evento, json.dumps(campos, ensure_ascii=False, default=str))
+    logger.info(
+        "react_loop event=%s %s", evento, json.dumps(campos, ensure_ascii=False, default=str)
+    )
 
 
 def _limpar_resposta(texto: str) -> str:

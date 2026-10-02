@@ -47,8 +47,14 @@ def create_demo(root: Path, *, fixtures_only: bool = False) -> dict:
     template.add_paragraph("Identificação e observações para acompanhamento pedagógico.")
     table = template.add_table(rows=6, cols=2)
     table.style = "Table Grid"
-    labels = ["Nome:", "Data de nascimento:", "Unidade escolar:",
-              "Necessita adaptação:", "Observações:", "Telefone:"]
+    labels = [
+        "Nome:",
+        "Data de nascimento:",
+        "Unidade escolar:",
+        "Necessita adaptação:",
+        "Observações:",
+        "Telefone:",
+    ]
     for index, label in enumerate(labels):
         table.cell(index, 0).paragraphs[0].add_run(label).bold = True
         table.cell(index, 1).paragraphs[0].add_run("").italic = True
@@ -57,8 +63,14 @@ def create_demo(root: Path, *, fixtures_only: bool = False) -> dict:
 
     # Expected result does not call the implementation under test.
     expected = Document(root / "modelo.docx")
-    expected_values = ["João da Silva", "10/04/2017", "Escola Municipal Exemplo",
-                       "(X) Sim ( ) Não", "Participa das atividades com apoio visual.", ""]
+    expected_values = [
+        "João da Silva",
+        "10/04/2017",
+        "Escola Municipal Exemplo",
+        "(X) Sim ( ) Não",
+        "Participa das atividades com apoio visual.",
+        "",
+    ]
     for index, value in enumerate(expected_values):
         if index == 3:
             expected.tables[0].cell(index, 1).paragraphs[0].runs[0].text = value
@@ -73,8 +85,9 @@ def create_demo(root: Path, *, fixtures_only: bool = False) -> dict:
 def validate_demo(root: Path) -> dict:
     from core.document_pipeline import fill_from_sources
 
-    result = fill_from_sources(root / "modelo.docx", [root / "origem.docx"],
-                               root / "resultado.docx", use_llm=False)
+    result = fill_from_sources(
+        root / "modelo.docx", [root / "origem.docx"], root / "resultado.docx", use_llm=False
+    )
     actual = Document(result["output"])
     expected = Document(root / "resultado_esperado.docx")
     expected_values = [expected.tables[0].cell(i, 1).text for i in range(6)]
@@ -84,7 +97,9 @@ def validate_demo(root: Path) -> dict:
             if name != "word/document.xml":
                 assert original.read(name) == filled.read(name), name
     assert "Telefone:" in result["still_open"]
-    (root / "validacao.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    (root / "validacao.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return result
 
 
@@ -94,8 +109,19 @@ if __name__ == "__main__":
     parser.add_argument("--fixtures-only", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     arguments = parser.parse_args()
-    result = (validate_demo(arguments.output_dir.resolve()) if arguments.validate_only
-              else create_demo(arguments.output_dir.resolve(), fixtures_only=arguments.fixtures_only))
-    print(json.dumps({"written": result["written"], "output": result["output"],
-                      "applied_count": result["applied_count"], "still_open": result["still_open"]},
-                     ensure_ascii=True))
+    result = (
+        validate_demo(arguments.output_dir.resolve())
+        if arguments.validate_only
+        else create_demo(arguments.output_dir.resolve(), fixtures_only=arguments.fixtures_only)
+    )
+    print(
+        json.dumps(
+            {
+                "written": result["written"],
+                "output": result["output"],
+                "applied_count": result["applied_count"],
+                "still_open": result["still_open"],
+            },
+            ensure_ascii=True,
+        )
+    )

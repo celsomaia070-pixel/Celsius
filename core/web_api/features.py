@@ -77,7 +77,10 @@ def add_memory(payload: MemoryCreateRequest, request: Request) -> dict:
 
 @router.get("/models")
 def list_models(request: Request) -> dict:
+    from core.llama_cpp import get_llama_manager
+
     settings = request.app.state.settings
+    runtime = get_llama_manager().runtime_info()
     items = []
     for model in GGUF_MODELS:
         model_path = settings.get_model_path(model.id)
@@ -102,6 +105,7 @@ def list_models(request: Request) -> dict:
         "ok": True,
         "current": settings.llm_model,
         "automatic_routing": True,
+        "runtime": runtime if isinstance(runtime, dict) else None,
         "items": items,
     }
 

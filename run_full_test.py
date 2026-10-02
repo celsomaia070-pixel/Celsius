@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 # Run the test in a completely fresh process
-code = '''
+code = """
 import importlib
 import ai.tool_retrieval as tr
 importlib.reload(tr)
@@ -32,11 +32,9 @@ manual = harness_mod.run("atual")
 if manual.cases:
     m0 = manual.cases[0]
     print(f"case0: id={m0.id}, offered={m0.offered_tools}, expected={m0.expected_tools}")
-'''
+"""
 
-result = subprocess.run([
-    sys.executable, "-c", code
-], capture_output=True, text=True, timeout=300)
+result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
 
 print("STDOUT:")
 print(result.stdout)

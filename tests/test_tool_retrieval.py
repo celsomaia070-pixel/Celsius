@@ -105,7 +105,9 @@ def agent_settings(monkeypatch):
 
 
 def _names(question: str, *, has_document: bool = False) -> set[str]:
-    return {tool.nome for tool in ai_react._filtrar_ferramentas(question, has_document=has_document)}
+    return {
+        tool.nome for tool in ai_react._filtrar_ferramentas(question, has_document=has_document)
+    }
 
 
 def _lexical_names(question: str) -> set[str]:
@@ -192,7 +194,9 @@ class TestSelection:
 
         assert "listar_arquivos" in _names("liste os arquivos")
 
-    def test_top_k_bounds_the_semantic_contribution(self, fake_encoder, agent_settings, monkeypatch):
+    def test_top_k_bounds_the_semantic_contribution(
+        self, fake_encoder, agent_settings, monkeypatch
+    ):
         # Every tool scores 1.0, so only the cap can hold this back. The lexical
         # hit is additive and outside the cap, hence the union is top_k + 1.
         fake_encoder("liste os documentos do cliente", DOCUMENTS)
@@ -264,7 +268,9 @@ class TestCaching:
 
         assert _names(pergunta) == _lexical_names(pergunta)
 
-    def test_disabling_retrieval_restores_lexical_only(self, fake_encoder, agent_settings, monkeypatch):
+    def test_disabling_retrieval_restores_lexical_only(
+        self, fake_encoder, agent_settings, monkeypatch
+    ):
         fake_encoder("quais documentos eu tenho", DOCUMENTS)
         monkeypatch.setattr(agent_settings, "tool_retrieval_enabled", False)
 

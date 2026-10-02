@@ -24,24 +24,25 @@ from __future__ import annotations
 import logging
 import re
 import threading
-import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
+
+from core.message_intent import classify_intent, normalize_text
+from core.operation_control import cancellable_lock, check_control
 
 logger = logging.getLogger(__name__)
 
 
 def _fold(value: str) -> str:
     """Lowercase and strip accents so "código" matches the ``codigo`` keyword."""
-    decomposed = unicodedata.normalize("NFD", str(value or ""))
-    folded = "".join(char for char in decomposed if not unicodedata.combining(char))
-    return re.sub(r"\s+", " ", folded.casefold()).strip()
+    return normalize_text(value)
 
 
 def _word_boundary(keyword: str) -> re.Pattern[str]:
     """Compile a keyword once into a word-boundary pattern."""
     return re.compile(rf"(?<!\w){re.escape(_fold(keyword))}(?!\w)")
+
 
 # ── Tool groups ─────────────────────────────────────────────
 # Grouped so a mode reads as a sentence instead of a wall of names, and so a new
@@ -419,15 +420,14 @@ DEFAULT_MODE_ID = "assistente"
 
 
 def is_conversational_greeting(text: str) -> bool:
-    """Recognize complete social messages, never a greeting followed by work."""
-    objective = re.sub(r"^\s*TAREFA\s*:\s*", "", str(text), flags=re.I)
-    words = " ".join(re.sub(r"[^\w\s]", " ", _fold(objective)).split())
-    return bool(re.fullmatch(
-        r"(?:(?:ola|oi|bom dia|boa tarde|boa noite)(?: celsius)?"
-        r"(?: tudo bem(?: com voce)?| como vai| como voce esta)?"
-        r"|(?:tudo bem(?: com voce)?|como vai|como voce esta)(?: celsius)?|obrigad[oa]|valeu)",
-        words,
-    ))
+    """Recognize complete social messages and simple capability questions.
+
+    This is intentionally strict for pure social greetings. Questions that
+    request information about the assistant's capabilities are treated as
+    conversational to trigger the fast-path response.
+    """
+    return bool(classify_intent(text).quick_key)
+
 
 #: Aliases accepted from the UI, the API and voice commands.
 _ALIASES: dict[str, str] = {}
@@ -490,9 +490,7 @@ def detect_mode(text: str) -> str | None:
     best_id: str | None = None
     best_hits = 0
     for mode in MODES:
-        hits = sum(
-            1 for keyword in mode.keywords if _word_boundary(keyword).search(normalized)
-        )
+        hits = sum(1 for keyword in mode.keywords if _word_boundary(keyword).search(normalized))
         if hits > best_hits:
             best_id, best_hits = mode.id, hits
     return best_id
@@ -540,7 +538,7 @@ def _mode_embeddings() -> dict[str, Any]:
     from core.embeddings import try_get_sentence_transformer
     from core.settings import get_settings
 
-    with _mode_embeddings_lock:
+    with cancellable_lock(_mode_embeddings_lock):
         if _mode_embeddings_cache:
             return _mode_embeddings_cache
         model = try_get_sentence_transformer(get_settings().embedding_model)
@@ -563,9 +561,7 @@ def reset_mode_embeddings() -> None:
         _mode_embeddings_cache.clear()
 
 
-def classify_mode(
-    text: str, *, min_score: float | None = None
-) -> tuple[str | None, float]:
+def classify_mode(text: str, *, min_score: float | None = None) -> tuple[str | None, float]:
     """Rank modes against the message. Returns ``(mode_id, score)``.
 
     ``(None, best_score)`` means "no mode cleared the bar"; the score is still
@@ -594,14 +590,20 @@ def classify_mode(
     try:
         import numpy as np
 
+        check_control()
         bruto = model.encode([normalized])[0]
-        consulta = bruto / np.linalg.norm(bruto)
+        check_control()
+        norm = float(np.linalg.norm(bruto))
+        if norm == 0:
+            return None, 0.0
+        consulta = bruto / norm
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Falha ao classificar modo: %s", exc)
         return None, 0.0
 
     melhor_id: str | None = None
     melhor_score = -1.0
+    segundo_score = -1.0
     for mode in MODES:
         alvo = np.asarray(embeddings[mode.id], dtype=float)
         norma = float(np.linalg.norm(alvo))
@@ -609,14 +611,13 @@ def classify_mode(
             continue
         score = float(consulta @ alvo / (float(np.linalg.norm(consulta)) * norma))
         if score > melhor_score:
+            segundo_score = melhor_score
             melhor_id, melhor_score = mode.id, score
+        elif score > segundo_score:
+            segundo_score = score
 
-    piso = (
-        float(settings.agent.auto_route_min_score)
-        if min_score is None
-        else float(min_score)
-    )
-    if melhor_id is None or melhor_score < piso:
+    piso = float(settings.agent.auto_route_min_score) if min_score is None else float(min_score)
+    if melhor_id is None or melhor_score < piso or melhor_score - segundo_score < 0.08:
         return None, max(0.0, melhor_score)
     return melhor_id, melhor_score
 
@@ -627,6 +628,7 @@ def resolve_mode(
     requested: str | None = None,
     pinned: str | None = None,
     default: str | None = None,
+    semantic: bool = True,
 ) -> str:
     """Resolve which mode a turn should run in.
 
@@ -640,8 +642,8 @@ def resolve_mode(
        oscillate between lanes while holding one workspace.
     3. **Explicit request.** A non-default mode from the UI or the API means the
        user chose it, so auto-routing stays out of the way.
-    4. **Semantic classification**, only above ``auto_route_min_score``.
-    5. **Lexical keywords** (:func:`detect_mode`).
+    4. **Lexical keywords** (:func:`detect_mode`).
+    5. **Semantic classification**, only for unresolved operational requests.
     6. **Whatever was requested**, or the configured default.
 
     Never raises: routing is an optimisation, not a precondition for answering.
@@ -662,13 +664,21 @@ def resolve_mode(
     if requested and requested_id != default_id:
         return requested_id
 
-    classificado, _score = classify_mode(text)
-    if classificado and classificado != requested_id:
-        return classificado
+    intent = classify_intent(text)
+    if not intent.operational:
+        return requested_id
+    from core.message_intent import is_local_memory_read
 
+    if is_local_memory_read(text):
+        return requested_id
     detected = detect_mode(text)
-    if detected and detected != requested_id:
+    if detected:
         return detected
+
+    if semantic:
+        classificado, _score = classify_mode(text)
+        if classificado and classificado != requested_id:
+            return classificado
 
     return requested_id
 

@@ -47,13 +47,9 @@ def prose_with_tool(text, *names):
 
 @pytest.fixture
 def harness(tmp_path, monkeypatch):
-    import ai.engine as engine
-    import ai.react as react
-    import ai.tools as tools
-    import core.agent_modes as modes
-    import core.decisions as decisions
-    import core.settings as settings_module
-    import core.tool_policy as policy
+    # Monkeypatch core.settings.get_settings BEFORE importing modules that
+    # capture the get_settings reference (e.g., loop_budget via react).
+    import core.settings as core_settings_module
 
     settings = Settings(
         base_dir=tmp_path,
@@ -63,6 +59,18 @@ def harness(tmp_path, monkeypatch):
     )
     settings.model.num_ctx = 16384
     settings.decision.enabled = False
+
+    # Must be done before importing react (which imports loop_budget)
+    monkeypatch.setattr(core_settings_module, "get_settings", lambda: settings)
+
+    import ai.engine as engine
+    import ai.react as react
+    import ai.tools as tools
+    import core.agent_modes as modes
+    import core.decisions as decisions
+    import core.settings as settings_module
+    import core.tool_policy as policy
+
     for module in (engine, react, settings_module):
         monkeypatch.setattr(module, "get_settings", lambda: settings)
     monkeypatch.setattr(decisions, "get_decision_client", lambda: SimpleNamespace(enabled=False))
@@ -128,7 +136,10 @@ def harness(tmp_path, monkeypatch):
 
     class Model:
         def create_chat_completion(self, **kwargs):
-            requests.append(copy.deepcopy(kwargs))
+            # Cancellation callbacks may own locks and cannot be deep-copied.
+            requests.append(
+                copy.deepcopy({k: v for k, v in kwargs.items() if k != "should_cancel"})
+            )
             assert replies, "Unexpected LLM invocation"
             reply = replies.pop(0)
             if isinstance(reply, BaseException):
@@ -186,12 +197,16 @@ def test_task_retains_original_docx_across_approval_and_upload_cleanup(harness, 
     document.save(upload)
     original_bytes = upload.read_bytes()
     h.replies.extend([tool_reply("criar_editar_arquivo"), answer("Dados conferidos")])
-    engine.gerar_resposta({
-        "pergunta": "TAREFA: Confira os dados e salve as informações",
-        "approval_scope": "conversation-a", "agent_mode": "executor",
-        "documento": "Nome: João da Silva", "nome_documento": "origem.docx",
-        "documentos_anexados": [{"nome": "origem.docx", "caminho": str(upload)}],
-    })
+    engine.gerar_resposta(
+        {
+            "pergunta": "TAREFA: Confira os dados e salve as informações",
+            "approval_scope": "conversation-a",
+            "agent_mode": "executor",
+            "documento": "Nome: João da Silva",
+            "nome_documento": "origem.docx",
+            "documentos_anexados": [{"nome": "origem.docx", "caminho": str(upload)}],
+        }
+    )
     task = latest(h)
     assert task["status"] == "waiting_confirmation"
     retained = Path(task["prompt"]["documentos_anexados"][0]["caminho"])
@@ -201,8 +216,9 @@ def test_task_retains_original_docx_across_approval_and_upload_cleanup(harness, 
     h.send(f"AUTORIZAR {task['steps'][0]['approval_code']}")
     assert latest(h)["status"] == "completed"
     assert retained.read_bytes() == original_bytes
-    assert any(str(retained) in message.get("content", "")
-               for message in h.requests[-1]["messages"])
+    assert any(
+        str(retained) in message.get("content", "") for message in h.requests[-1]["messages"]
+    )
 
 
 def test_approval_resumes_original_goal_and_remaining_batch_after_reopen(harness):
@@ -326,6 +342,76 @@ def test_cancelled_stream_restarts_from_checkpoint(harness):
     assert "Resposta completa" in h.send(f"RETOMAR {task['id']}")
 
 
+def test_repeated_tools_pause_without_automatic_restart(harness):
+    h = harness
+    h.replies.extend([tool_reply("ler_teste") for _ in range(15)])
+    response = h.send("TAREFA: Analise os dados")
+    assert "Sem progresso" in response
+    assert latest(h)["status"] == "paused"
+    assert len(h.requests) < 10
+
+
+def test_no_progress_guard_ignores_changing_call_ids(harness):
+    from ai.task_runtime import TaskPausedError, TaskSession
+
+    h = harness
+    task = h.store.create("conversation-a", {"pergunta": "Analise os dados"}, mode="executor")
+    session = TaskSession(h.store, task, settings=h.settings)
+    messages = []
+    for i in range(3):
+        messages.append(
+            {"role": "assistant", "content": "Mesma hipótese", "tool_calls": [{"id": str(i)}]}
+        )
+        session.before_model(messages, [], 16384)
+    messages.append(
+        {"role": "assistant", "content": "Mesma hipótese", "tool_calls": [{"id": "new"}]}
+    )
+    with pytest.raises(TaskPausedError, match="Sem progresso"):
+        session.before_model(messages, [], 16384)
+    assert h.store.get(task["id"], "conversation-a")["status"] == "paused"
+
+
+def test_truncated_model_output_is_not_task_completion(harness):
+    h = harness
+    h.replies.extend(
+        [answer("Parte do relatório") + [{"choices": [{"delta": {}, "finish_reason": "length"}]}]]
+    )
+    response = h.send("TAREFA: Analise os dados")
+    task = latest(h)
+    assert task["status"] == "paused"
+    assert "limite de tokens" in response
+    assert "Parte do relatório" in task["output"]
+
+
+def test_read_success_does_not_verify_requested_inventory_write(harness):
+    from ai.task_runtime import TaskSession
+
+    h = harness
+    task = h.store.create(
+        "conversation-a", {"pergunta": "Dê entrada em 5 peças no estoque"}, mode="executor"
+    )
+    task["steps"] = [{"tool": "listar_estoque", "status": "succeeded", "result": "5 peças"}]
+    session = TaskSession(h.store, task, settings=h.settings)
+    assert not session.finish("Entrada realizada")
+    assert task["status"] == "failed" and "não foi confirmada" in task["error"]
+
+
+def test_report_about_stock_entries_does_not_require_new_entry(harness):
+    from ai.task_runtime import TaskSession
+
+    h = harness
+    task = h.store.create(
+        "conversation-a",
+        {"pergunta": "Analise as movimentações de entrada de peças no estoque"},
+        mode="executor",
+    )
+    task["steps"] = [
+        {"tool": "historico_movimentacoes", "status": "succeeded", "result": "5 peças"}
+    ]
+    session = TaskSession(h.store, task, settings=h.settings)
+    assert session.finish("5 peças recebidas.")
+
+
 def test_prose_from_every_turn_survives_in_the_answer(harness):
     # A long batch writes in several turns.  Each turn's buffer is reset (it also
     # carries the tool-call payload), so without accumulation the answer would
@@ -393,15 +479,19 @@ def test_approval_replies_count_as_task_turns():
 
 
 def test_a_task_stops_continuing_when_the_total_time_is_spent(harness, monkeypatch):
-    import ai.react as react
     import ai.task_runtime as task_runtime
 
     h = harness
-    monkeypatch.setattr(react, "MAX_ITERACOES_TAREFA", 1)
-    # Every slice spends its turn budget on a tool call and asks to continue, so
-    # only the overall wall clock can stop the task.  It must stop and report.
+    # Use the default task budget (12 iterations) since monkeypatching the budget
+    # is fragile due to import-order issues. The test still validates the timeout
+    # behavior: after the first slice exhausts its budget, the wall-clock check
+    # (MAX_TASK_SECONDS_TOTAL=0) must pause the task with the expected message.
     monkeypatch.setattr(task_runtime, "MAX_TASK_SECONDS_TOTAL", 0)
-    h.replies.extend([prose_with_tool("Secao 1: inicio.", "ler_teste")])
+    # Provide enough replies for the first slice (default budget = 12 iterations).
+    # Each iteration consumes one reply; a tool call round-trip uses two.
+    # Keep making distinct progress so the no-progress brake does not mask the
+    # wall-clock limit this test specifically exercises.
+    h.replies.extend([prose_with_tool(f"Secao {i + 1}: inicio.", "ler_teste") for i in range(12)])
     response = h.send("TAREFA: Escreva o capitulo")
     assert "Secao 1" in response
     assert "Tempo maximo" in response
@@ -538,7 +628,7 @@ def test_research_task_cannot_complete_without_web_evidence(harness):
 
 def test_news_task_promotes_executor_to_researcher(harness):
     h = harness
-    h.replies.extend([answer("Sem fontes."), answer("Sem fontes." )])
+    h.replies.extend([answer("Sem fontes."), answer("Sem fontes.")])
     h.send("TAREFA: Liste as noticias de inteligencia artificial da semana passada")
     task = latest(h)
     assert task["mode"] == "pesquisador"

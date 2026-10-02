@@ -21,7 +21,9 @@ from core.file_validation import validate_image_content
 from core.inference_guard import LockedIterator
 from core.metrics import MetricNames, get_metrics
 from core.network_security import validate_public_http_url
+from core.operation_control import acquire_cancellable, check_control
 from core.settings import get_settings
+from core.turn_metrics import current_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,19 @@ class LlamaManager:
         self._current_model_id: str | None = None
         self._on_model_changed: Callable[[str], None] | None = None
         self._inference_lock = threading.Lock()
+        self._configured_gpu_layers: int | None = None
+        self._gpu_available: bool | None = None
+        self._cpu_fallback = False
+
+    def runtime_info(self) -> dict:
+        return {
+            "loaded": self._llm is not None,
+            "model_id": self._current_model_id,
+            "gpu_offload_available": self._gpu_available,
+            "configured_gpu_layers": self._configured_gpu_layers,
+            "cpu_fallback": self._cpu_fallback,
+            "inference_busy": self._inference_lock.locked(),
+        }
 
     @property
     def current_model_id(self) -> str | None:
@@ -166,10 +181,23 @@ class LlamaManager:
         use_mmap: bool = True,
         use_mlock: bool = True,
         verbose: bool = False,
+        should_cancel=None,
+        deadline=None,
     ) -> bool:
         """Initialize the model while no inference is using its native context."""
-        with self._inference_lock:
-            return self._start_unlocked(
+        active_metrics = current_metrics()
+        if active_metrics:
+            active_metrics.model_state = (
+                "warm" if self._llm and self._current_model_id == model_id else "cold"
+            )
+        acquire_cancellable(
+            self._inference_lock,
+            should_cancel=should_cancel,
+            deadline=deadline,
+            phase_name="model_wait",
+        )
+        try:
+            started = self._start_unlocked(
                 model_id=model_id,
                 n_gpu_layers=n_gpu_layers,
                 n_ctx=n_ctx,
@@ -179,6 +207,10 @@ class LlamaManager:
                 use_mlock=use_mlock,
                 verbose=verbose,
             )
+            check_control(should_cancel, deadline)
+            return started
+        finally:
+            self._inference_lock.release()
 
     def _start_unlocked(
         self,
@@ -254,6 +286,9 @@ class LlamaManager:
 
         # Initialize Llama - try GPU first, fall back to CPU on crash
         gpu_offload_supported = _gpu_offload_supported()
+        self._gpu_available = gpu_offload_supported
+        self._configured_gpu_layers = 0 if gpu_offload_supported is False else n_gpu_layers
+        self._cpu_fallback = n_gpu_layers != 0 and gpu_offload_supported is False
         if n_gpu_layers != 0 and gpu_offload_supported is False:
             logger.warning(
                 "A instalacao atual do llama-cpp-python nao possui backend de GPU. "
@@ -306,6 +341,8 @@ class LlamaManager:
                 tensor_split=None,
             )
             logger.info("Modelo carregado em CPU (sem GPU)")
+            self._configured_gpu_layers = 0
+            self._cpu_fallback = True
 
         self._current_model_id = model_id
         atexit.register(self.stop)
@@ -407,6 +444,8 @@ class LlamaManager:
         **kwargs: Any,
     ) -> Any:
         """Create chat completion (OpenAI-compatible API)."""
+        should_cancel = kwargs.pop("should_cancel", None)
+        deadline = kwargs.pop("deadline", None)
         metrics = get_metrics()
         call_kwargs = dict(
             messages=messages,
@@ -422,7 +461,15 @@ class LlamaManager:
 
         metrics.inc(MetricNames.LLM_REQUESTS_TOTAL, model=self._current_model_id or "unknown")
 
-        self._inference_lock.acquire()
+        active_metrics = current_metrics()
+        if active_metrics and active_metrics.model_state == "not_used":
+            active_metrics.model_state = "warm" if self._llm else "cold"
+        acquire_cancellable(
+            self._inference_lock,
+            should_cancel=should_cancel,
+            deadline=deadline,
+            phase_name="model_wait",
+        )
         lock_transferred = False
         try:
             if not self._llm:
@@ -433,8 +480,12 @@ class LlamaManager:
             ):
                 result = self._llm.create_chat_completion(**call_kwargs)
             if stream:
+                guarded = LockedIterator(
+                    result, self._inference_lock, should_cancel=should_cancel, deadline=deadline
+                )
                 lock_transferred = True
-                return LockedIterator(result, self._inference_lock)
+                return guarded
+            check_control(should_cancel, deadline)
         finally:
             if not lock_transferred:
                 self._inference_lock.release()
@@ -463,7 +514,14 @@ class LlamaManager:
         **kwargs: Any,
     ) -> Any:
         """Create text completion."""
-        self._inference_lock.acquire()
+        should_cancel = kwargs.pop("should_cancel", None)
+        deadline = kwargs.pop("deadline", None)
+        acquire_cancellable(
+            self._inference_lock,
+            should_cancel=should_cancel,
+            deadline=deadline,
+            phase_name="model_wait",
+        )
         lock_transferred = False
         try:
             if not self._llm:
@@ -476,8 +534,12 @@ class LlamaManager:
                 **kwargs,
             )
             if stream:
+                guarded = LockedIterator(
+                    result, self._inference_lock, should_cancel=should_cancel, deadline=deadline
+                )
                 lock_transferred = True
-                return LockedIterator(result, self._inference_lock)
+                return guarded
+            check_control(should_cancel, deadline)
             return result
         finally:
             if not lock_transferred:

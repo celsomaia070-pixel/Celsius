@@ -25,8 +25,12 @@ def task_requests_artifact(task: dict[str, Any]) -> bool:
     """Whether the objective promises a file rather than only an answer in chat."""
 
     objective = str(task.get("objective") or "").casefold()
-    makes_file = re.search(r"\b(?:ger\w*|cri\w*|produz\w*|emit\w*|elabor\w*|preench\w*|complet\w*)\b", objective)
-    artifact = re.search(r"\b(?:relat[oó]rio|documento|arquivo|pdf|docx|pei|paee|formul[aá]rio)\b", objective)
+    makes_file = re.search(
+        r"\b(?:ger\w*|cri\w*|produz\w*|emit\w*|elabor\w*|preench\w*|complet\w*)\b", objective
+    )
+    artifact = re.search(
+        r"\b(?:relat[oó]rio|documento|arquivo|pdf|docx|pei|paee|formul[aá]rio)\b", objective
+    )
     return bool(makes_file and artifact)
 
 
@@ -75,14 +79,19 @@ def collect_artifacts(task: dict[str, Any], data_dir: Path) -> list[dict[str, An
     """Collect files from the isolated workspace and trusted tool-result paths."""
     workspace = workspace_for(data_dir, str(task["id"]))
     input_root = workspace / "inputs"
-    candidates = {path.resolve() for path in workspace.rglob("*")
-                  if path.is_file() and not path.resolve().is_relative_to(input_root)}
+    candidates = {
+        path.resolve()
+        for path in workspace.rglob("*")
+        if path.is_file() and not path.resolve().is_relative_to(input_root)
+    }
     base = Path(data_dir).parent.resolve()
     for step in task.get("steps", []):
         result_text = str(step.get("result", ""))
         if step.get("tool") in {
-            "inspecionar_formulario_documento", "preencher_documento",
-            "preencher_documento_com_fontes", "gerar_documento_local",
+            "inspecionar_formulario_documento",
+            "preencher_documento",
+            "preencher_documento_com_fontes",
+            "gerar_documento_local",
         }:
             # Document results also contain source/evidence paths. Only the
             # confirmed written output is an artifact, never an input or preview.
@@ -90,9 +99,14 @@ def collect_artifacts(task: dict[str, Any], data_dir: Path) -> list[dict[str, An
                 payload, _ = json.JSONDecoder().raw_decode(result_text.lstrip())
             except (ValueError, TypeError):
                 continue
-            paths = ([payload["output"]] if isinstance(payload, dict)
-                     and payload.get("written") is True
-                     and isinstance(payload.get("output"), str) and payload["output"] else [])
+            paths = (
+                [payload["output"]]
+                if isinstance(payload, dict)
+                and payload.get("written") is True
+                and isinstance(payload.get("output"), str)
+                and payload["output"]
+                else []
+            )
         else:
             paths = _PATH_RE.findall(result_text)
         for raw in paths:

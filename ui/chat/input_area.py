@@ -131,7 +131,7 @@ class ModernInputArea(QWidget):
         self.btn_mic.clicked.connect(self.toggle_mic.emit)
         input_row.addWidget(self.btn_mic)
 
-# Voice toggle
+        # Voice toggle
         self.btn_voice = QPushButton()
         self.btn_voice.setIcon(icon("volume-up", s.text_muted))
         self.btn_voice.setToolTip("Modo voz (Ctrl+Shift+V)")
@@ -227,7 +227,6 @@ class ModernInputArea(QWidget):
         self.btn_voice.setChecked(not self.btn_voice.isChecked())
         self.toggle_voice.emit()
 
-
     def _on_stop(self):
         self.stop_response.emit()
 
@@ -300,7 +299,6 @@ class ModernInputArea(QWidget):
         self.btn_send.setVisible(not busy)
         self.btn_stop.setVisible(busy)
         self.input.setEnabled(not busy)
-
 
     def set_scheme(self, scheme):
         self._scheme = scheme

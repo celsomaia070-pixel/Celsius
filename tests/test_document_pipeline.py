@@ -181,7 +181,9 @@ def test_fill_from_sources_copies_values_and_keeps_original(tmp_path: Path):
     assert target.read_bytes() == original
 
     filled = Document(str(tmp_path / "saida.docx"))
-    text = " ".join(cell.text for table in filled.tables for row in table.rows for cell in row.cells)
+    text = " ".join(
+        cell.text for table in filled.tables for row in table.rows for cell in row.cells
+    )
     assert "MARIA SILVA" in text
     assert "JOÃO PEREIRA" in text
     assert "Nome anterior" not in text
@@ -209,7 +211,9 @@ def test_checkbox_reports_ambiguity_instead_of_marking_an_arbitrary_box(tmp_path
     options = ["individuals", "coletivo"]
     field = _checkbox_field("Composição do atendimento", options)
 
-    resolved, ambiguous = resolve_checkbox_values([field], {"composicao do atendimento": "algo vago"})
+    resolved, ambiguous = resolve_checkbox_values(
+        [field], {"composicao do atendimento": "algo vago"}
+    )
 
     assert resolved == {}
     assert ambiguous and "nenhuma opcao" in ambiguous[0]["reason"]

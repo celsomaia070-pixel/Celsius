@@ -19,6 +19,7 @@ from pathlib import Path
 from core.agent_modes import get_mode, resolve_mode
 from core.agent_tasks import AgentTaskStore, normalize_state
 from core.json_persistence import locked_path
+from core.operation_control import OperationCancelled, OperationTimeoutError
 from core.tool_approval import (
     APPROVAL_REQUIRED_PREFIX,
     PendingToolApproval,
@@ -104,6 +105,12 @@ def _has_verifiable_web_evidence(result: object) -> bool:
 
 def requires_research_evidence(task: dict) -> bool:
     """Identify objectives whose completion must be backed by a web step."""
+    from core.direct_actions import youtube_open_arguments
+
+    if youtube_open_arguments(
+        str(task.get("objective") or task.get("prompt", {}).get("pergunta", ""))
+    ):
+        return False
     objective = str(task.get("objective") or task.get("prompt", {}).get("pergunta", "")).lower()
     markers = (
         "noticia",
@@ -158,6 +165,7 @@ class TaskSession:
         self.task = task
         self.should_cancel = should_cancel
         self.fn_status = fn_status
+        self.settings = settings
         self.limits = resolve_task_limits(task, settings)
         self.deadline = time.monotonic() + self.limits.max_seconds
         #: Prose the ReAct engine has produced so far.  The engine refreshes it
@@ -188,6 +196,36 @@ class TaskSession:
         from ai.context_budget import estimate_messages_tokens, estimate_tokens
 
         self.check()
+        # Unique successful evidence and unique prose count as progress; merely
+        # changing call IDs or repeating a result does not.
+        evidence = {
+            json.dumps(
+                (step.get("tool"), step.get("arguments"), step.get("result")),
+                sort_keys=True,
+                default=str,
+            )
+            for step in self.task["steps"]
+            if step.get("status") == "succeeded"
+        }
+        prose = {
+            str(message.get("content"))
+            for message in messages
+            if message.get("role") == "assistant" and message.get("content")
+        }
+        progress = (frozenset(evidence), frozenset(prose))
+        if progress == getattr(self, "_last_progress", None):
+            self._stalled_turns = getattr(self, "_stalled_turns", 0) + 1
+        else:
+            self._stalled_turns = 0
+        self._last_progress = progress
+        threshold = max(
+            3, int(getattr(getattr(self.settings, "agent", None), "loop_repeat_threshold", 3))
+        )
+        if self._stalled_turns >= threshold:
+            self.pause(
+                "Sem progresso verificável: o agente repetiu etapas sem obter novos resultados. "
+                "Revise o pedido antes de continuar."
+            )
         self.task["messages"] = messages
         if self.task["iterations"] >= self.limits.max_iterations:
             self.pause("Limite total de etapas de raciocinio atingido.", "failed")
@@ -273,7 +311,11 @@ class TaskSession:
             step["status"] = "running"
             self.save()
             result = executar_ferramenta(step["tool"], args)
-            failed = not result.ok if isinstance(result, ToolResult) else str(result).startswith(("Erro", "Servico '"))
+            failed = (
+                not result.ok
+                if isinstance(result, ToolResult)
+                else str(result).startswith(("Erro", "Servico '"))
+            )
             self.record(step, str(result), failed=failed)
 
     def record(self, step, result, *, failed=False):
@@ -308,6 +350,46 @@ class TaskSession:
 
     def finish(self, response):
         from core.agent_artifacts import task_requests_artifact, verify_task
+        from core.message_intent import normalize_text
+
+        objective_words = normalize_text(self.task.get("objective", ""))
+        required = []
+        from core.direct_actions import youtube_open_arguments
+
+        browser_request = youtube_open_arguments(self.task.get("objective", ""))
+        if browser_request:
+            required.append({"abrir_no_navegador"})
+        if re.search(r"\b(?:estoque|pecas|inventario)\b", objective_words):
+            if (
+                re.search(
+                    r"(?:^|\b(?:e|agora|depois|celsius|por favor) )de entrada\b", objective_words
+                )
+                or re.search(
+                    r"\b(?:dar entrada|registre (?:a )?entrada|reponha|repor)\b", objective_words
+                )
+                or re.match(r"^(?:entrada|recebi)\b", objective_words)
+            ):
+                required.append({"entrada_estoque", "adicionar_item_estoque"})
+            if re.search(
+                r"\b(?:de baixa|dar baixa|registre (?:a )?saida|baixar|baixe)\b", objective_words
+            ) or re.match(r"^(?:saida|vendi|consumi)\b", objective_words):
+                required.append({"saida_estoque"})
+        succeeded = {
+            step.get("tool")
+            for step in self.task.get("steps", [])
+            if step.get("status") == "succeeded"
+        }
+        if any(not candidates.intersection(succeeded) for candidates in required):
+            self.task["status"] = "failed"
+            self.task["error"] = (
+                "A abertura solicitada nao foi confirmada pelo navegador do computador."
+                if browser_request
+                else "A movimentação solicitada não foi confirmada por uma ferramenta. "
+                "Consultar dados não conclui uma alteração no estoque."
+            )
+            self.task["result"] = ""
+            self.save()
+            return False
 
         research_steps = [
             step
@@ -331,20 +413,25 @@ class TaskSession:
 
         self.task["verification"] = verify_task(self.task, Path(self.store.path).parent)
         objective = str(self.task.get("objective") or "").casefold()
-        if task_requests_artifact(self.task) and re.search(r"\b(?:preench\w*|complet\w*)\b", objective):
+        if task_requests_artifact(self.task) and re.search(
+            r"\b(?:preench\w*|complet\w*)\b", objective
+        ):
             filled = False
             for step in self.task.get("steps", []):
                 if step.get("status") != "succeeded" or step.get("tool") not in {
-                    "preencher_documento", "preencher_documento_com_fontes",
+                    "preencher_documento",
+                    "preencher_documento_com_fontes",
                 }:
                     continue
                 try:
                     result, _ = json.JSONDecoder().raw_decode(str(step.get("result", "")).lstrip())
                 except (ValueError, TypeError):
                     continue
-                if isinstance(result, dict) and result.get("written") is True and Path(
-                    str(result.get("output") or "")
-                ).is_file():
+                if (
+                    isinstance(result, dict)
+                    and result.get("written") is True
+                    and Path(str(result.get("output") or "")).is_file()
+                ):
                     filled = True
             if not filled:
                 self.task["status"] = "failed"
@@ -421,6 +508,8 @@ def _executar_com_continuacao(
                 should_cancel=should_cancel,
                 task_session=session,
             )
+            if should_cancel and should_cancel():
+                session.check()
             if task["status"] not in {"completed", "failed", "cancelled"}:
                 session.pause("Execucao pausada; o progresso foi salvo.")
             return response
@@ -526,8 +615,10 @@ def handle_task_command(
                         "documento",
                         "nome_documento",
                         "memorias_relevantes",
+                        "memorias_consultadas",
                         "historico",
                         "system_prompt",
+                        "work_agents",
                     )
                     if key in prompt
                 }
@@ -605,6 +696,18 @@ def handle_task_command(
                 return f"{response}\n\nTarefa {task['id']} concluida."
             except TaskPausedError as exc:
                 return _com_relatorio(task, str(exc), retomar=task["status"] == "paused")
+            except OperationCancelled:
+                task["status"] = "cancelled"
+                task["error"] = "Execução cancelada; o progresso foi salvo."
+                session.save()
+                raise
+            except OperationTimeoutError:
+                task["status"] = "paused"
+                task["error"] = (
+                    "Limite de tempo atingido; o progresso foi salvo. Revise o estado antes de retomar."
+                )
+                session.save()
+                raise
             except BaseException:
                 # A tool that was in flight when we died has an unknown effect:
                 # never replay it silently, park the task for a human.

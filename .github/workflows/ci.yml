@@ -73,10 +73,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.in
       - name: Run tests with coverage
-        run: |
-          python -m pytest -q \
-            --cov=core --cov=ai --cov=workers --cov=ui \
-            --cov-report=term-missing --cov-report=xml
+        run: python -m pytest -q --cov=core --cov=ai --cov=workers --cov=ui --cov-report=term-missing --cov-report=xml
       - name: Enforce coverage threshold
         run: python -m coverage report --fail-under=50 --skip-empty
       - name: Upload coverage report

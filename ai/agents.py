@@ -28,9 +28,7 @@ class SubAgent:
 REGISTRO_AGENTES = [
     SubAgent(
         nome="rag_agent",
-        descricao=(
-            "Analise, busca e preenchimento de documentos Word/PDF, formularios e RAG"
-        ),
+        descricao=("Analise, busca e preenchimento de documentos Word/PDF, formularios e RAG"),
         ferramentas=[
             "inspecionar_formulario_documento",
             "preencher_documento",
@@ -182,24 +180,37 @@ def _classify_by_embedding(pergunta: str) -> SubAgent | None:
         import numpy as np
 
         query_embedding = model.encode([pergunta])[0]
+        from core.operation_control import check_control
+
+        check_control()
         # Normalize for cosine similarity
-        query_norm = query_embedding / np.linalg.norm(query_embedding)
+        norm = np.linalg.norm(query_embedding)
+        if norm == 0:
+            return None
+        query_norm = query_embedding / norm
 
         best_agent = None
         best_score = -1.0
+        second_score = -1.0
 
         for agent in REGISTRO_AGENTES:
             if not agent._embedding:
                 continue
             agent_emb = np.array(agent._embedding)
-            agent_norm = agent_emb / np.linalg.norm(agent_emb)
+            norm = np.linalg.norm(agent_emb)
+            if norm == 0:
+                continue
+            agent_norm = agent_emb / norm
             score = float(query_norm @ agent_norm)
             if score > best_score:
+                second_score = best_score
                 best_score = score
                 best_agent = agent
+            elif score > second_score:
+                second_score = score
 
         # Threshold: require minimum similarity (cosine similarity is 0-1 for normalized vectors)
-        if best_score >= 0.4 and best_agent:
+        if best_score >= 0.4 and best_score - second_score >= 0.08 and best_agent:
             return best_agent
         return None
     except Exception as e:
@@ -209,26 +220,46 @@ def _classify_by_embedding(pergunta: str) -> SubAgent | None:
 
 def _classify_by_keywords(pergunta: str) -> SubAgent | None:
     """Fallback classification using keyword matching."""
-    pergunta_lower = pergunta.lower()
+    import re
 
-    for agente in REGISTRO_AGENTES:
-        for palavra in _KEYWORD_MAP.get(agente.nome, []):
-            if palavra in pergunta_lower:
-                return agente
+    from core.message_intent import normalize_text
 
-    return None
+    pergunta_lower = normalize_text(pergunta)
+
+    matches = [
+        agente
+        for agente in REGISTRO_AGENTES
+        if any(
+            re.search(rf"\b{re.escape(normalize_text(palavra))}\b", pergunta_lower)
+            for palavra in _KEYWORD_MAP.get(agente.nome, [])
+        )
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
-def classificar_tarefa(pergunta: str) -> SubAgent | None:
+def classificar_tarefa(pergunta: str, *, semantic: bool = True) -> SubAgent | None:
     """Classify user query to select the best sub-agent.
 
-    Uses embedding-based classification with keyword fallback.
+    Uses cheap keywords first; uncertain semantics keep the general agent.
     """
     if not pergunta or len(pergunta.strip()) < 3:
         return None
 
-    # Try embedding classification first
+    from core.message_intent import classify_intent
+
+    if not classify_intent(pergunta).operational:
+        return None
+    lexical = _classify_by_keywords(pergunta)
+    if lexical:
+        return lexical
+    if not semantic:
+        return None
+
+    from core.operation_control import check_control
+
+    check_control()
     _compute_agent_embeddings()
+    check_control()
     result = _classify_by_embedding(pergunta)
     if result:
         return result

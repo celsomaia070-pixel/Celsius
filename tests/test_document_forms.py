@@ -85,11 +85,13 @@ def _checkbox_form(path: Path, *, split_paragraphs: bool) -> None:
     options = table.cell(0, 1)
     if split_paragraphs:
         # Word often puts one option per paragraph, which _clean flattens.
-        for index, text in enumerate((
-            "(  ) Educação Infantil",
-            "( X ) Ensino Fundamental ",
-            "(  ) Programas / Projetos Pedagógicos Específicos",
-        )):
+        for index, text in enumerate(
+            (
+                "(  ) Educação Infantil",
+                "( X ) Ensino Fundamental ",
+                "(  ) Programas / Projetos Pedagógicos Específicos",
+            )
+        ):
             paragraph = options.paragraphs[0] if index == 0 else options.add_paragraph()
             paragraph.add_run(text)
     else:
@@ -137,7 +139,9 @@ def test_checkbox_options_are_reported_by_inspection(tmp_path: Path):
     _checkbox_form(source, split_paragraphs=True)
 
     inspection = inspect_document_form(source)
-    groups = {field["label"]: field for field in inspection["fields"] if field["kind"] == "checkbox"}
+    groups = {
+        field["label"]: field for field in inspection["fields"] if field["kind"] == "checkbox"
+    }
 
     etapa = groups["Etapa de Ensino"]
     assert etapa["options"] == [

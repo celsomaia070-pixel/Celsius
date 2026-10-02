@@ -5,9 +5,10 @@ Keep user-facing aliases stable while loading the real provider model ids.
 
 from __future__ import annotations
 
-import sys
 import threading
 from typing import Any
+
+from core.operation_control import cancellable_lock, check_control
 
 EMBEDDING_MODEL_ALIASES = {
     "qwen3-embedding-0.6b": "Qwen/Qwen3-Embedding-0.6B",
@@ -28,13 +29,14 @@ def create_sentence_transformer(model_name: str):
     from sentence_transformers import SentenceTransformer
 
     resolved_name = resolve_embedding_model_name(model_name)
-    with _MODEL_CACHE_LOCK:
+    with cancellable_lock(_MODEL_CACHE_LOCK):
         model = _MODEL_CACHE.get(resolved_name)
         if model is None:
             model = SentenceTransformer(
                 resolved_name,
-                local_files_only=bool(getattr(sys, "frozen", False)),
+                local_files_only=True,
             )
+            check_control()
             _MODEL_CACHE[resolved_name] = model
         return model
 

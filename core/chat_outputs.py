@@ -23,14 +23,13 @@ from threading import RLock
 from core.chat_attachments import AttachmentError, StoredAttachment
 from core.file_security import restrict_private_file
 from core.file_validation import validate_file_content
+from core.json_persistence import atomic_write_json
 
 _VALID_ID = re.compile(r"^[a-f0-9]{32}$")
 
 # Tools register their output through this while a chat turn is running. It stays
 # None outside the web chat, so the desktop build simply produces no attachments.
-_active_sink: ContextVar[_OutputSink | None] = ContextVar(
-    "celsius_output_sink", default=None
-)
+_active_sink: ContextVar[_OutputSink | None] = ContextVar("celsius_output_sink", default=None)
 
 
 @dataclass
@@ -77,10 +76,7 @@ class OutputAttachmentStore:
             restrict_private_file(target)
             # The display name lives beside the file so a download still works
             # after a restart, when the in-memory map is gone.
-            (self.root / f"{attachment_id}.json").write_text(
-                json.dumps({"name": display}, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            atomic_write_json(self.root / f"{attachment_id}.json", {"name": display})
         return StoredAttachment(attachment_id, display, target, size)
 
     def get(self, attachment_id: str) -> StoredAttachment:
