@@ -1,188 +1,96 @@
 # Celsius
 
-Assistente local de IA multimodal para Windows, com chat, voz, memoria, RAG,
-analise de documentos/imagens, automacoes web e gerenciamento de estoque.
+Assistente de IA para Windows que roda modelos GGUF no próprio computador. O Celsius reúne chat, voz, leitura de arquivos, busca em documentos, agentes com ferramentas e módulos de gestão em uma aplicação desktop feita com Python e PySide6.
 
-O projeto roda modelos GGUF localmente via `llama-cpp-python`, com suporte a GPU
-quando disponivel e fallback para CPU.
+O processamento de documentos, a busca local (RAG) e a inferência funcionam sem conexão com a internet. Pesquisa na web, navegação e integrações externas são recursos opcionais e precisam de rede quando usados.
 
-## Status do Projeto
+> **Estado do projeto:** em desenvolvimento ativo. Algumas funções dependem de modelos, programas ou serviços adicionais configurados pelo usuário.
 
-- Aplicacao desktop em Python com PySide6.
-- Testes automatizados com `pytest`.
-- Lint e formatacao com `ruff`.
-- Configuracao centralizada em `core/settings.py` e `.env`.
-- Perfil empresarial local com modulos configuraveis por cliente.
-- Modelos GGUF baixados sob demanda para reduzir o tamanho do instalador padrao.
+## O que o Celsius faz
 
-## Principais Recursos
+- **Conversa local:** usa modelos GGUF por meio de `llama-cpp-python`, com aceleração por GPU quando disponível e alternativa em CPU.
+- **Documentos e conhecimento:** lê PDF, DOCX, planilhas, formatos OpenDocument, imagens e áudio; indexa conteúdo e combina busca vetorial local com BM25.
+- **Formulários e relatórios:** inspeciona e preenche formulários DOCX e PDF em uma nova cópia, além de gerar documentos, relatórios e gráficos.
+- **Voz:** transcreve áudio localmente e oferece síntese de fala. Alguns provedores de voz podem precisar de internet.
+- **Agentes com limites:** oferece os modos assistente, executor, documentos, estoque, pesquisador e desenvolvedor. Tarefas podem ser acompanhadas, pausadas, retomadas ou canceladas; operações de escrita sujeitas à política de segurança exigem confirmação.
+- **Gestão da empresa:** inclui estoque em Kanban, clientes, fornecedores, produtos e serviços, orçamentos, agenda e processos. Os módulos exibidos podem ser escolhidos nas configurações.
+- **Acesso local pelo navegador e celular:** além da interface desktop, oferece uma interface web no PC e pareamento opcional com celular na mesma rede local.
+- **Pesquisa e automação web:** disponíveis quando configuradas, com acesso à rede apenas para essas ações.
 
-- Chat com LLM local.
-- Entrada por voz com Whisper.
-- Saida por voz com `edge-tts`.
-- Anexos de PDF, DOCX, ODT, ODS, ODP, imagens e audio.
-- RAG hibrido local com indice vetorial SQLite, embeddings e BM25.
-- Memoria semantica de longo prazo.
-- Pesquisa e navegacao web.
-- Execucao controlada de codigo em sandbox.
-- Gerenciamento de estoque com interface Kanban.
-- Cadastro local de fornecedores.
-- Sidebar dinamica por modulos da empresa.
-- Base de acesso local pelo celular, com token e comandos por texto/voz.
-- Geracao de relatorios em PDF/DOCX.
-- Inspecao e preenchimento local de formularios DOCX e PDFs AcroForm, sempre em
-  uma nova copia, com entrega do resultado como anexo do chat.
-- Licenciamento com trial e chave de ativacao.
-
-## Modulos por Empresa
-
-O Celsius pode ser configurado por perfil de empresa. Em `Configuracoes`, a area
-`Modulos da empresa` permite ativar apenas os recursos relevantes para cada
-cliente. `Chat` e `Configuracoes` permanecem sempre ativos; os demais modulos
-podem ser ligados ou desligados sem alterar codigo.
-
-No primeiro uso, o assistente de configuracao pergunta nome, segmento, descricao
-e necessidades principais da empresa, sugere uma selecao inicial de modulos e
-salva tudo localmente em `data/customer_profile.json` e
-`data/celsius_settings.json`.
-
-## Acesso Pelo Celular
-
-O Celsius pode expor uma interface local para celulares na mesma rede Wi-Fi. O
-recurso fica desligado por padrao e usa token de pareamento. Em `Configuracoes`,
-use a secao `Celular` para ativar o acesso e clique em `Parear celular`. O
-Celsius inicia o acesso local e abre uma janela com QR Code e link de pareamento.
-O botao `Regenerar token` invalida links antigos e cria um novo pareamento.
-
-O painel mobile aceita comandos digitados e gravacao de voz enviada ao PC para
-transcricao local pelo Celsius. O audio e otimizado no navegador como WAV mono em
-16 kHz antes do envio. A resposta do Celsius volta para o celular em texto e pode
-ser reproduzida pela voz nativa do navegador. Por padrao, o acesso usa HTTPS
-local com certificado autoassinado gerado em `data/mobile_access`. No primeiro
-acesso, o celular pode pedir confirmacao de seguranca para esse certificado
-local. Se HTTPS for desligado, alguns navegadores podem bloquear o microfone.
+O projeto também contém suporte a integrações externas, incluindo WhatsApp. Elas são opcionais e não fazem parte do fluxo local de inferência e documentos.
 
 ## Requisitos
 
-- Windows 10/11.
-- Python 3.10 ou superior.
-- FFmpeg para audio.
-- Git, se for clonar o repositorio.
-- Inno Setup, apenas para gerar instalador.
-- GPU compativel com Vulkan recomendada para melhor desempenho.
+- Windows 10 ou 11 e Python 3.10 ou superior.
+- Espaço em disco e memória compatíveis com o modelo GGUF escolhido. O repositório não inclui modelos.
+- FFmpeg para funções de áudio.
+- Git para clonar o código; Chromium do Playwright para navegação automatizada.
+- GPU compatível é recomendada, mas a execução em CPU é possível.
 
-## Comeco Rapido
+## Começar
+
+No PowerShell:
 
 ```powershell
 git clone https://github.com/celsomaia070-pixel/Celsius.git
-cd celsius
-
+cd Celsius
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m playwright install chromium
-
 python main.py
 ```
 
-Para abrir a interface web somente neste computador, execute:
+Configure ou obtenha um modelo GGUF antes de usar o chat. Os modelos e outros recursos grandes ficam fora do Git. Veja o [guia do iniciante](docs/GUIA_INICIANTE.md) e a [configuração](docs/CONFIGURATION.md) para os próximos passos.
+
+Se o PowerShell impedir a ativação do ambiente virtual, execute `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` e tente ativá-lo novamente.
+
+### Interface web local
 
 ```powershell
 python -m core.web_api
 ```
 
-Depois acesse `http://127.0.0.1:8790/app`. O acesso pelo celular usa o
-pareamento HTTPS separado exibido pelo Celsius; por isso nao e necessario abrir
-o endereco HTTPS local no navegador do PC.
+Abra `http://127.0.0.1:8790/app` no próprio computador. O acesso pelo celular é ativado separadamente nas configurações, com token de pareamento; ele fica desligado por padrão.
 
-Se o PowerShell bloquear a ativacao do ambiente virtual:
+## Configuração e privacidade
 
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\.venv\Scripts\Activate.ps1
-```
-
-## Validacao Local
-
-```powershell
-python -m ruff check .
-python -m pytest -q
-```
-
-O total de testes evolui junto com o produto. A execucao e considerada valida
-quando ambos os comandos terminam sem erros; o CI repete essa verificacao em
-Windows e Linux.
-
-## Documentacao
-
-- [Indice da documentacao](docs/README.md)
-- [Guia do iniciante](docs/GUIA_INICIANTE.md)
-- [Desenvolvimento](docs/DEVELOPMENT.md)
-- [Arquitetura](docs/ARCHITECTURE.md)
-- [Preenchimento de documentos com fontes](docs/document-filling.md)
-- [Configuracao](docs/CONFIGURATION.md)
-- [Privacidade e protecao de dados](docs/PRIVACY.md)
-- [Build e instalador](docs/BUILD.md)
-- [Seguranca](SECURITY.md)
-- [Contribuicao](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
-
-## Estrutura Geral
-
-```text
-celsius/
-|-- main.py                  # Entrada da aplicacao
-|-- ai/                      # Motor de IA, RAG, agentes e ferramentas
-|-- core/                    # Configuracao, modelos, memoria, sandbox e servicos
-|-- processors/              # Leitura de arquivos e extracao de conteudo
-|-- workers/                 # Threads de voz, IA, TTS e execucao assinc.
-|-- ui/                      # Interface PySide6
-|-- tests/                   # Testes automatizados
-|-- scripts/                 # Scripts auxiliares
-|-- tools/                   # Ferramentas operacionais, licencas
-|-- installer/               # Build do instalador Windows
-|-- resources/               # Modelos e recursos locais, ignorado no Git
-|-- docs/                    # Documentacao do projeto
-|-- .github/                 # CI, templates e configuracoes GitHub
-`-- pyproject.toml           # Metadados, pytest, ruff, mypy e bandit
-```
-
-## Configuracao
-
-Copie `.env.example` para `.env` quando quiser sobrescrever valores padrao:
+As configurações usam variáveis com prefixo `CELSIUS_` e podem ser definidas em um `.env` local criado a partir de `.env.example`:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-As variaveis usam o prefixo `CELSIUS_`. Exemplo:
+Conversas, modelos, índices, dados da empresa e credenciais locais não devem ser enviados ao repositório. O núcleo de documentos, RAG e inferência não faz chamadas de rede. Recursos como pesquisa web, integrações e alguns serviços de voz têm requisitos próprios de conexão. Consulte [Privacidade](docs/PRIVACY.md) e [Segurança](SECURITY.md).
 
-```env
-CELSIUS_MODEL_LLM_MODEL=qwen2.5-vl-7b-q4km
-CELSIUS_MODEL_NUM_CTX=16384
-CELSIUS_TELEMETRY_ENABLED=false
-```
+## Desenvolvimento
 
-Veja mais em [Configuracao](docs/CONFIGURATION.md).
-
-## Build
-
-Build local sem embutir modelos:
+Instale também as dependências de desenvolvimento e rode as verificações antes de enviar alterações:
 
 ```powershell
-pyinstaller celsius.spec --clean
+python -m pip install -r requirements-dev.in
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest -q
 ```
 
-Build com instalador:
+`pyproject.toml` é a fonte de verdade das dependências; `requirements.txt` e `requirements-dev.in` são arquivos gerados para instalação. Veja [Desenvolvimento](docs/DEVELOPMENT.md), [Arquitetura](docs/ARCHITECTURE.md) e [Como contribuir](CONTRIBUTING.md). Para colaborar, crie uma branch, valide a mudança e abra um pull request.
 
-```powershell
-installer\build.bat
-```
+## Organização do código
 
-Veja detalhes em [Build e instalador](docs/BUILD.md).
+| Pasta | Conteúdo |
+| --- | --- |
+| `ai/` | Motor de IA, agentes, RAG e ferramentas |
+| `core/` | Configuração, segurança, persistência, serviços e API web |
+| `processors/` | Leitura e extração de conteúdo de arquivos |
+| `workers/` | Tarefas em segundo plano para manter a interface responsiva |
+| `ui/` | Interface desktop PySide6 |
+| `tests/` | Testes automatizados |
+| `docs/` | Guias e detalhes técnicos |
+| `installer/` | Empacotamento para Windows |
 
-## Licenca
+Consulte o [índice da documentação](docs/README.md) para os demais guias.
+
+## Licença
 
 MIT.
