@@ -4,6 +4,7 @@ import random
 from collections.abc import Callable
 from datetime import datetime
 
+from ai.interruption import marcar_interrompida
 from ai.react import (
     INTERNAL_CHAT_MARKERS,
     _agenda_prompt_context,
@@ -207,7 +208,7 @@ def _responder_rapido(pergunta: str) -> str | None:
 
     if limpo in COMANDOS_RAPIDOS:
         resposta = COMANDOS_RAPIDOS[limpo]
-        return resposta() if callable(resposta) else resposta
+        return str(resposta() if callable(resposta) else resposta)
 
     if limpo in {"ola", "oi", "bom dia", "boa tarde", "boa noite"}:
         return random.choice(RESPOSTAS_OLA)
@@ -219,32 +220,6 @@ def _responder_rapido(pergunta: str) -> str | None:
         return random.choice(RESPOSTAS_TUDO_BEM)
 
     return None
-
-
-class ConversationContext:
-    """Manages conversation history for a session with smart summarization."""
-
-    def __init__(self, max_history: int | None = None):
-        self.max_history = max_history or get_settings().max_history_session
-        self.history: list[dict] = []
-
-    def add_user(self, content: str) -> None:
-        self.history.append({"role": "user", "content": content})
-        self._trim()
-
-    def add_assistant(self, content: str) -> None:
-        self.history.append({"role": "assistant", "content": content})
-        self._trim()
-
-    def _trim(self) -> None:
-        if len(self.history) > self.max_history:
-            self.history = self.history[-self.max_history :]
-
-    def get_history(self) -> list[dict]:
-        return self.history.copy()
-
-    def clear(self) -> None:
-        self.history.clear()
 
 
 def _normalizar_historico_recente(history: object, pergunta_atual: str) -> list[dict]:
@@ -277,8 +252,22 @@ def gerar_resposta(
     fn_status: Callable[[str], None] | None = None,
     fn_passo: Callable[[object], None] | None = None,
     fn_chunk: Callable[[str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
     pergunta_direta = prompt_dict.get("pergunta", "").strip()
+    from ai.task_runtime import handle_task_command
+
+    task_response = handle_task_command(
+        prompt_dict,
+        settings=get_settings(),
+        loop=loop_react,
+        fn_status=fn_status,
+        fn_passo=fn_passo,
+        fn_chunk=fn_chunk,
+        should_cancel=should_cancel,
+    )
+    if task_response is not None:
+        return task_response
     texto_doc = prompt_dict.get("documento", "").strip()
     nome_doc = prompt_dict.get("nome_documento", "").strip()
 
@@ -345,6 +334,7 @@ def gerar_resposta(
         fn_passo=fn_passo,
         fn_chunk=fn_chunk,
         history=history,
+        should_cancel=should_cancel,
     )
 
     gc.collect()
@@ -388,6 +378,7 @@ def gerar_resposta_com_imagem(
     pergunta: str,
     fn_status: Callable[[str], None] | None = None,
     fn_chunk: Callable[[str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
     import base64
 
@@ -450,19 +441,38 @@ def gerar_resposta_com_imagem(
         )
 
         resposta = ""
+        cancelado = False
+
+        def _fechar_stream() -> None:
+            close = getattr(stream, "close", None)
+            if close is not None:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    close()
+
         for chunk in stream:
+            if should_cancel and should_cancel():
+                cancelado = True
+                _fechar_stream()
+                break
             token = chunk["choices"][0]["delta"].get("content", "") or ""
             combined = resposta + token
             marker_idx = _first_internal_marker_index(combined)
             if marker_idx >= 0:
                 token = combined[len(resposta) : marker_idx]
                 resposta = combined[:marker_idx]
+                _fechar_stream()
                 if token and fn_chunk:
                     fn_chunk(token)
                 break
             resposta += token
             if fn_chunk:
                 fn_chunk(token)
+        if cancelado:
+            if fn_status:
+                fn_status("Resposta interrompida.")
+            return marcar_interrompida(resposta)
         resultado = resposta.strip()
         return resultado
     except Exception as e:

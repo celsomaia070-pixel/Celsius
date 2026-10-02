@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, quote, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from core.file_security import restrict_private_file
 
-CommandCallback = Callable[[str, str], tuple[bool, str] | bool | None]
+CommandCallback = Callable[[str, str], dict[str, Any] | tuple[bool, str] | bool | None]
 VoiceCommandCallback = Callable[[bytes, str], tuple[bool, str, str] | dict | str]
 PairingCodeCallback = Callable[[], str]
 logger = logging.getLogger(__name__)
@@ -31,7 +31,15 @@ logger = logging.getLogger(__name__)
 class _NoRedirect(HTTPRedirectHandler):
     """Keep upstream redirects under the mobile HTTPS origin."""
 
-    def redirect_request(self, _req, _fp, _code, _msg, _headers, _newurl):
+    def redirect_request(
+        self,
+        _req: Any,
+        _fp: Any = None,
+        _code: int = 0,
+        _msg: str = "",
+        _headers: Any = None,
+        _newurl: str = "",
+    ) -> None:
         return None
 
 
@@ -42,7 +50,7 @@ def ensure_mobile_token(current: str = "") -> str:
     return secrets.token_urlsafe(24)
 
 
-def rotate_mobile_token(settings, current: str | None = None) -> str:
+def rotate_mobile_token(settings: Any, current: str | None = None) -> str:
     """Return a pairing token, regenerating it when none or stale.
 
     ``settings.mobile.token_rotation_days`` controls the maximum age (0 or a
@@ -74,7 +82,7 @@ def get_lan_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("8.8.8.8", 80))
-            return sock.getsockname()[0]
+            return str(sock.getsockname()[0])
     except OSError:
         return "127.0.0.1"
 
@@ -122,7 +130,7 @@ def ensure_mobile_certificate(
     )
 
     ip_value = lan_ip or get_lan_ip()
-    san_items = [x509.DNSName("localhost")]
+    san_items: list[x509.GeneralName] = [x509.DNSName("localhost")]
     for value in {"127.0.0.1", ip_value}:
         try:
             san_items.append(x509.IPAddress(ipaddress.ip_address(value)))
@@ -175,7 +183,7 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
-def _create_server_ssl_context():
+def _create_server_ssl_context() -> ssl.SSLContext:
     """Create a TLS server context unaffected by client-only truststore injection."""
 
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -220,6 +228,7 @@ class MobileAccessServer:
         self._response_lock = threading.Lock()
         self._response_version = 0
         self._last_response_text = ""
+        self._live_text = ""
         self._last_response_kind = "assistant"
         self._audio_version = 0
         self._last_audio = b""
@@ -230,6 +239,9 @@ class MobileAccessServer:
         self._auth_lock = threading.RLock()
         self._pairing_codes: dict[str, float] = {}
         self._sessions: dict[str, float] = {}
+        # Stable pairing code for display/QR code - generated once at startup
+        self._display_pairing_code: str = secrets.token_urlsafe(24)
+        self._display_pairing_expires_at = 0.0
 
     @property
     def is_running(self) -> bool:
@@ -237,13 +249,33 @@ class MobileAccessServer:
 
     @property
     def url(self) -> str:
+        """Return the mobile access URL with a stable pairing code for QR display."""
+        self._refresh_display_pairing_code()
         port = self._httpd.server_address[1] if self._httpd else self.port
         return build_mobile_url(
             self.host,
             port,
-            self._issue_pairing_code(),
+            self._display_pairing_code,
             use_https=self.use_https,
         )
+
+    @property
+    def pairing_code(self) -> str:
+        """Return the stable pairing code for QR code generation."""
+        self._refresh_display_pairing_code()
+        return self._display_pairing_code
+
+    def _refresh_display_pairing_code(self) -> None:
+        now = time.monotonic()
+        if now < self._display_pairing_expires_at:
+            return
+        with self._auth_lock:
+            now = time.monotonic()
+            if now < self._display_pairing_expires_at:
+                return
+            self._display_pairing_code = secrets.token_urlsafe(24)
+            self._display_pairing_expires_at = now + 120
+            self._pairing_codes[self._display_pairing_code] = self._display_pairing_expires_at
 
     def _purge_auth(self) -> None:
         now = time.monotonic()
@@ -264,6 +296,8 @@ class MobileAccessServer:
             self._purge_auth()
             if not self._pairing_codes.pop(code, None):
                 return ""
+            if secrets.compare_digest(code, self._display_pairing_code):
+                self._display_pairing_expires_at = 0.0
             session = secrets.token_urlsafe(32)
             self._sessions[session] = time.monotonic() + 12 * 60 * 60
             return session
@@ -273,9 +307,10 @@ class MobileAccessServer:
             self._purge_auth()
             return bool(token and token in self._sessions)
 
-    def start(self):
+    def start(self) -> "MobileAccessServer":
         if self._httpd is not None:
             return self
+        self._refresh_display_pairing_code()
         handler = self._make_handler()
         self._httpd = ThreadingHTTPServer((self.host, self.port), handler)
         if self.use_https:
@@ -292,7 +327,7 @@ class MobileAccessServer:
         self._thread.start()
         return self
 
-    def stop(self):
+    def stop(self) -> None:
         if self._httpd is None:
             return
         self._httpd.shutdown()
@@ -312,7 +347,17 @@ class MobileAccessServer:
             self._last_response_kind = kind or "assistant"
             self._response_audio_version = 0
             self._audio_chunks = []
+            self._live_text = ""
             return self._response_version
+
+    def publish_partial(self, text: str) -> None:
+        """Publish the in-progress response so paired clients see live typing."""
+
+        clean_text = (text or "").strip()
+        if not clean_text:
+            return
+        with self._response_lock:
+            self._live_text = clean_text
 
     def publish_audio(self, audio: bytes, *, mime_type: str = "audio/mpeg") -> int:
         """Publish audio generated on the PC for the latest Celsius response."""
@@ -343,6 +388,8 @@ class MobileAccessServer:
                 "version": self._response_version,
                 "text": self._last_response_text,
                 "kind": self._last_response_kind,
+                "live_text": self._live_text,
+                "live_active": bool(self._live_text),
                 "audio_version": self._response_audio_version,
                 "audio_ready": self._response_audio_version > 0,
             }
@@ -362,20 +409,20 @@ class MobileAccessServer:
                     and int(chunk["version"]) > after_audio_version
                 ):
                     return (
-                        bytes(chunk["audio"]),
+                        cast(bytes, chunk["audio"]),
                         str(chunk["mime_type"]),
                         int(chunk["version"]),
                     )
             return None
 
-    def _make_handler(self):
+    def _make_handler(self) -> type:
         server_ref = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, _format, *_args):
+            def log_message(self, _format: str, *_args: Any) -> None:
                 return
 
-            def do_GET(self):
+            def do_GET(self) -> None:
                 parsed = urlparse(self.path)
                 if parsed.path == "/":
                     code = parse_qs(parsed.query).get("pair", [""])[0]
@@ -460,7 +507,7 @@ class MobileAccessServer:
                     return
                 self._send_json({"ok": False, "error": "not_found"}, HTTPStatus.NOT_FOUND)
 
-            def do_POST(self):
+            def do_POST(self) -> None:
                 parsed = urlparse(self.path)
                 if self._is_web_proxy_path(parsed.path):
                     self._proxy_web_request()
@@ -501,7 +548,16 @@ class MobileAccessServer:
                         HTTPStatus.INTERNAL_SERVER_ERROR,
                     )
                     return
-                if isinstance(result, tuple):
+                extra: dict[str, Any] = {}
+                if isinstance(result, dict):
+                    accepted = bool(result.get("ok"))
+                    detail = str(result.get("message", "Comando enviado ao Celsius."))
+                    extra = {
+                        key: result[key]
+                        for key in ("job_id", "conversation_id", "command_submitted")
+                        if key in result
+                    }
+                elif isinstance(result, tuple):
                     accepted, detail = result
                 else:
                     accepted, detail = bool(result is not False), "Comando enviado ao Celsius."
@@ -510,10 +566,11 @@ class MobileAccessServer:
                         "ok": bool(accepted),
                         "message": detail,
                         "response_version": server_ref.latest_response()["version"],
+                        **extra,
                     }
                 )
 
-            def _handle_voice_command(self):
+            def _handle_voice_command(self) -> None:
                 if not self._authorized():
                     self._send_json({"ok": False, "error": "unauthorized"}, HTTPStatus.UNAUTHORIZED)
                     return
@@ -672,7 +729,14 @@ class MobileAccessServer:
                     headers=headers,
                     method=method,
                 )
-                opener = build_opener(_NoRedirect())
+                handlers: list[Any] = [_NoRedirect()]
+                if server_ref.web_proxy_url.lower().startswith("https://"):
+                    # The upstream is the local Celsius API, which uses the
+                    # self-signed LAN certificate generated for phone access.
+                    # TLS is still enforced on the phone-facing listener; this
+                    # hop never leaves the local machine.
+                    handlers.append(HTTPSHandler(context=ssl._create_unverified_context()))  # nosec B323
+                opener = build_opener(*handlers)
                 try:
                     with opener.open(request, timeout=60) as response:
                         return response.read(), response.headers, response.status
@@ -690,7 +754,9 @@ class MobileAccessServer:
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("X-Frame-Options", "DENY")
 
-            def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK):
+            def _send_json(
+                self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK
+            ) -> None:
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -699,7 +765,7 @@ class MobileAccessServer:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def _send_html(self, html: str, *, session: str = ""):
+            def _send_html(self, html: str, *, session: str = "") -> None:
                 body = html.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -718,7 +784,7 @@ class MobileAccessServer:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def _send_audio(self, audio: bytes, mime_type: str, audio_version: int):
+            def _send_audio(self, audio: bytes, mime_type: str, audio_version: int) -> None:
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", mime_type or "audio/mpeg")
                 self.send_header("Cache-Control", "no-store")
@@ -749,7 +815,7 @@ class MobileAccessRuntime:
     def set_sink(self, sink: object) -> None:
         self.sink = sink
 
-    def command(self, message: str, source: str) -> tuple[bool, str] | bool | None:
+    def command(self, message: str, source: str) -> dict[str, Any] | tuple[bool, str] | bool | None:
         if self.sink is None:
             return (
                 False,
@@ -796,6 +862,8 @@ def start_for_settings(
     *,
     command_callback: CommandCallback,
     voice_command_callback: VoiceCommandCallback | None = None,
+    web_proxy_url: str = "",
+    web_pairing_code_callback: PairingCodeCallback | None = None,
 ) -> tuple[MobileAccessServer, str]:
     """Start the mobile server using app settings; returns (server, notice)."""
     host = settings.mobile.host if settings.mobile.allow_lan else "127.0.0.1"
@@ -826,6 +894,8 @@ def start_for_settings(
             use_https=https,
             cert_file=cert_file if https else None,
             key_file=key_file if https else None,
+            web_proxy_url=web_proxy_url,
+            web_pairing_code_callback=web_pairing_code_callback,
         )
 
     server = build(use_https)
@@ -842,1007 +912,415 @@ def start_for_settings(
     return server, notice
 
 
-def _mobile_html(_token: str, voice_enabled: bool) -> str:
+def _mobile_html(_token: str, voice_enabled: bool = True) -> str:
     voice_flag = "true" if voice_enabled else "false"
-    return f"""<!doctype html>
+    return f"""
+<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Celsius Project AI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Celsius</title>
   <style>
     :root {{
       color-scheme: dark;
-      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-      background: #0D1117;
-      color: #E6EDF3;
+      --bg: #050706;
+      --panel: rgba(28, 32, 30, .88);
+      --panel-strong: #202522;
+      --bubble-user: #303632;
+      --bubble-ai: transparent;
+      --bubble-error: rgba(127, 29, 29, .48);
+      --text: #f4f6f5;
+      --muted: #a0a7a3;
+      --quiet: #717975;
+      --accent: #79d8b4;
+      --accent-strong: #20b887;
+      --danger: #ef5b64;
+      --ok: #67d6a7;
     }}
     * {{ box-sizing: border-box; }}
+    html, body {{ height: 100%; }}
     body {{
       margin: 0;
-      min-height: 100vh;
-      background: #0D1117;
-      color: #E6EDF3;
+      background:
+        radial-gradient(circle at 50% 27%, rgba(45, 111, 88, .18), transparent 34%),
+        radial-gradient(circle at 18% 82%, rgba(38, 74, 62, .11), transparent 32%),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.45 Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      overflow: hidden;
     }}
-    .app-shell {{
-      width: min(100%, 560px);
-      min-height: 100vh;
-      margin: 0 auto;
-      display: grid;
-      grid-template-rows: auto auto 1fr auto;
-      gap: 14px;
-      padding: 16px;
-    }}
-    .topbar {{
+    header {{
+      min-height: 70px;
+      padding: max(14px, env(safe-area-inset-top)) 18px 8px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 10px 2px 4px;
+      gap: 11px;
+      z-index: 3;
     }}
-    .brand {{
-      display: flex;
-      align-items: baseline;
-      gap: 6px;
-      letter-spacing: 0;
-      white-space: nowrap;
-    }}
-    .brand strong {{ color: #E6EDF3; font-size: 25px; line-height: 1; }}
-    .brand span {{ color: #8B949E; font-size: 17px; font-weight: 600; }}
-    .brand b {{ color: #58A6FF; font-size: 17px; }}
-    .connection-chip {{
-      border: 1px solid #30363D;
-      background: #161B22;
-      color: #8B949E;
-      border-radius: 999px;
-      padding: 6px 10px;
-      font-size: 12px;
-      font-weight: 700;
-    }}
-    .panel {{
-      border: 1px solid #30363D;
-      background: #161B22;
-      border-radius: 8px;
-      padding: 14px;
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
-    }}
-    .section-row {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 10px;
-    }}
-    .section-title {{
-      color: #E6EDF3;
-      font-size: 13px;
-      font-weight: 800;
-      text-transform: uppercase;
-    }}
-    .hint {{
-      color: #8B949E;
-      font-size: 13px;
-      line-height: 1.45;
-      margin: 0 0 12px;
-    }}
-    .voice-stage {{
+    .brand-mark {{
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 12px;
       display: grid;
       place-items: center;
-      gap: 14px;
-      padding: 20px 12px 10px;
-    }}
-    .voice-orb {{
-      --level: 0;
-      width: 176px;
-      aspect-ratio: 1;
-      border-radius: 50%;
-      border: 1px solid rgba(88, 166, 255, 0.38);
-      background:
-        radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 0 9%),
-        radial-gradient(circle at 50% 45%, rgba(88, 166, 255, 0.92), rgba(35, 134, 54, 0.72) 40%, rgba(88, 166, 255, 0.14) 72%),
-        #0D1117;
-      box-shadow:
-        0 0 calc(22px + var(--level) * 56px) rgba(88, 166, 255, 0.42),
-        inset 0 0 42px rgba(255, 255, 255, 0.08);
-      transform: scale(calc(1 + var(--level) * 0.12));
-      transition: transform 90ms linear, box-shadow 90ms linear, filter 160ms ease;
-    }}
-    .voice-orb.listening {{
-      animation: orbPulse 2.4s ease-in-out infinite;
-      filter: saturate(1.18);
-    }}
-    .voice-orb.speaking {{
-      border-color: rgba(126, 231, 135, 0.62);
-      filter: hue-rotate(26deg) saturate(1.35);
-    }}
-    .voice-state {{
-      color: #E6EDF3;
-      min-height: 20px;
-      font-size: 14px;
-      font-weight: 760;
-      text-align: center;
-    }}
-    .voice-substate {{
-      color: #8B949E;
-      min-height: 18px;
-      font-size: 12px;
-      text-align: center;
-    }}
-    .voice-primary {{
-      width: min(100%, 280px);
-      background: #1F6FEB;
-      border-color: #58A6FF;
-      color: #FFFFFF;
-    }}
-    .voice-primary.active {{
-      background: #DA3633;
-      border-color: #F85149;
-    }}
-    @keyframes orbPulse {{
-      0%, 100% {{ box-shadow: 0 0 24px rgba(88, 166, 255, 0.36), inset 0 0 42px rgba(255, 255, 255, 0.08); }}
-      50% {{ box-shadow: 0 0 48px rgba(88, 166, 255, 0.58), inset 0 0 48px rgba(255, 255, 255, 0.12); }}
-    }}
-    textarea {{
-      width: 100%;
-      min-height: 132px;
-      resize: vertical;
-      border-radius: 8px;
-      border: 1px solid #30363D;
-      background: #0D1117;
-      color: #E6EDF3;
-      padding: 13px;
-      font-size: 16px;
-      line-height: 1.45;
-      outline: none;
-    }}
-    textarea:focus {{ border-color: #58A6FF; }}
-    .actions {{
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 10px;
-    }}
-    .secondary-actions {{
-      grid-template-columns: 1fr 1fr;
-      margin-top: 10px;
-    }}
-    #test {{ grid-column: 1 / -1; }}
-    button {{
-      min-height: 46px;
-      border: 1px solid #30363D;
-      background: #21262D;
-      color: #E6EDF3;
-      border-radius: 8px;
-      padding: 12px 14px;
+      background: linear-gradient(145deg, rgba(121,216,180,.2), rgba(255,255,255,.03));
+      box-shadow: inset 0 1px rgba(255,255,255,.1);
+      color: var(--accent);
       font-weight: 750;
       font-size: 15px;
-      cursor: pointer;
     }}
-    button:disabled {{
-      cursor: not-allowed;
-      opacity: 0.55;
-    }}
-    button.primary {{
-      background: #238636;
-      border-color: #238636;
-      color: #FFFFFF;
-    }}
-    button.voice {{
-      background: #1F6FEB;
-      border-color: #1F6FEB;
-      color: #FFFFFF;
-    }}
-    button.subtle {{
-      background: #161B22;
-      color: #8B949E;
-    }}
-    .toggle {{
-      color: #8B949E;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      font-weight: 650;
-      user-select: none;
-    }}
-    .toggle input {{ accent-color: #58A6FF; }}
-    #response {{
-      min-height: 128px;
-      white-space: pre-wrap;
-      border: 1px solid #30363D;
-      background: #0D1117;
-      border-radius: 8px;
-      padding: 14px;
-      color: #E6EDF3;
-      line-height: 1.5;
-      font-size: 15px;
-    }}
-    #status {{
-      position: sticky;
-      bottom: 0;
-      min-height: 44px;
-      border: 1px solid #30363D;
-      background: #161B22;
-      color: #8B949E;
-      border-radius: 8px;
-      padding: 12px 14px;
-      font-size: 13px;
-      line-height: 1.35;
-    }}
-    .top-actions {{
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-    }}
-    .theme-toggle {{
-      min-height: 34px;
-      border-radius: 999px;
-      padding: 7px 10px;
-      font-size: 12px;
-      font-weight: 800;
-    }}
-    :root {{
-      color-scheme: light;
-      --bg: #FFFFFF;
-      --surface: #FAFAFA;
-      --surface-strong: #F5F5F5;
-      --input: #FFFFFF;
-      --text: #171717;
-      --muted: #525252;
-      --faint: #737373;
-      --border: #E5E5E5;
-      --border-strong: #D4D4D4;
-      --brand: #171717;
-      --brand-soft: #F5F5F5;
-      --accent: #2563EB;
-      --accent-hover: #1D4ED8;
-      --success: #16A34A;
-      --danger: #DC2626;
-      --shadow: rgba(15, 23, 42, 0.08);
-    }}
-    body.dark {{
-      color-scheme: dark;
-      --bg: #0D1117;
-      --surface: #161B22;
-      --surface-strong: #21262D;
-      --input: #0D1117;
-      --text: #E6EDF3;
-      --muted: #8B949E;
-      --faint: #6E7681;
-      --border: #30363D;
-      --border-strong: #484F58;
-      --brand: #58A6FF;
-      --brand-soft: #1A3A5C;
-      --accent: #1F6FEB;
-      --accent-hover: #388BF0;
-      --success: #3FB950;
-      --danger: #F85149;
-      --shadow: rgba(0, 0, 0, 0.22);
-    }}
-    body {{
-      background: var(--bg);
-      color: var(--text);
-    }}
-    .brand strong {{ color: var(--text); }}
-    .brand span {{ color: var(--muted); }}
-    .brand b {{ color: var(--accent); }}
-    .connection-chip,
-    .panel,
-    #status {{
-      border-color: var(--border);
-      background: var(--surface);
-      color: var(--muted);
-      box-shadow: 0 8px 20px var(--shadow);
-    }}
-    .section-title,
-    .voice-state {{
-      color: var(--text);
-    }}
-    .hint,
-    .voice-substate,
-    .toggle {{
-      color: var(--muted);
-    }}
-    textarea,
-    #response {{
-      border-color: var(--border);
-      background: var(--input);
-      color: var(--text);
-    }}
-    textarea:focus {{ border-color: var(--accent); }}
-    button {{
-      border-color: var(--border);
-      background: var(--surface-strong);
-      color: var(--text);
-    }}
-    button.primary {{
-      background: var(--success);
-      border-color: var(--success);
-      color: #FFFFFF;
-    }}
-    button.voice,
-    .voice-primary {{
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #FFFFFF;
-    }}
-    button.subtle,
-    .theme-toggle {{
-      background: var(--surface);
-      color: var(--muted);
-      border-color: var(--border);
-    }}
-    .composer-panel {{
-      padding: 0;
-      overflow: hidden;
-    }}
-    .composer-toggle {{
-      width: 100%;
-      min-height: 58px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      border: 0;
-      border-radius: 0;
-      background: var(--surface);
-      color: var(--text);
-      padding: 16px;
-      text-align: left;
-    }}
-    .composer-toggle span {{
-      font-weight: 800;
-      font-size: 15px;
-    }}
-    .composer-toggle small {{
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-    }}
-    .composer-toggle::after {{
-      content: "+";
-      width: 28px;
-      height: 28px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      display: grid;
-      place-items: center;
-      color: var(--accent);
-      font-size: 20px;
-      line-height: 1;
-      flex: 0 0 auto;
-    }}
-    .composer-toggle[aria-expanded="true"]::after {{
-      content: "-";
-    }}
-    .composer-body {{
-      border-top: 1px solid var(--border);
-      padding: 16px;
-    }}
-    .composer-body[hidden] {{
-      display: none;
-    }}
-    .voice-primary.active {{
-      background: var(--danger);
-      border-color: var(--danger);
-    }}
-    .voice-orb {{
-      position: relative;
-      overflow: hidden;
-      width: 172px;
-      background:
-        radial-gradient(circle at center, var(--input) 0 34%, transparent 35%),
-        conic-gradient(from 180deg, var(--accent), var(--success), var(--accent));
-      border: 1px solid var(--border-strong);
-      box-shadow:
-        0 0 calc(10px + var(--level) * 36px) rgba(37, 99, 235, 0.22),
-        inset 0 0 0 14px color-mix(in srgb, var(--surface) 72%, transparent);
-      transform: scale(calc(1 + var(--level) * 0.08));
-    }}
-    .voice-orb::before,
-    .voice-orb::after {{
-      content: "";
-      position: absolute;
-      inset: 20%;
-      border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-      border-radius: 50%;
-      transform: scale(calc(1 + var(--level) * 0.55));
-      opacity: calc(0.25 + var(--level) * 0.55);
-      transition: transform 90ms linear, opacity 90ms linear;
-    }}
-    .voice-orb::after {{
-      inset: 34%;
-      background: var(--accent);
-      border: 0;
-      box-shadow: 0 0 calc(12px + var(--level) * 28px) rgba(37, 99, 235, 0.38);
-      opacity: calc(0.78 + var(--level) * 0.2);
-    }}
-    .voice-orb.listening {{
-      animation: voiceRing 2.1s ease-in-out infinite;
-      filter: none;
-    }}
-    .voice-orb.speaking {{
-      border-color: color-mix(in srgb, var(--success) 65%, var(--border));
-      filter: none;
-    }}
-    @keyframes voiceRing {{
-      0%, 100% {{ box-shadow: 0 0 18px rgba(37, 99, 235, 0.16), inset 0 0 0 14px color-mix(in srgb, var(--surface) 72%, transparent); }}
-      50% {{ box-shadow: 0 0 42px rgba(37, 99, 235, 0.34), inset 0 0 0 10px color-mix(in srgb, var(--surface) 64%, transparent); }}
-    }}
-    @supports not (color: color-mix(in srgb, white, black)) {{
-      .voice-orb {{ box-shadow: 0 0 24px rgba(37, 99, 235, 0.22); }}
-      .voice-orb::before {{ border-color: rgba(37, 99, 235, 0.28); }}
-    }}
-    @media (max-width: 420px) {{
-      .app-shell {{ padding: 12px; gap: 12px; }}
-      .brand strong {{ font-size: 23px; }}
-      .brand span, .brand b {{ font-size: 15px; }}
-      .topbar {{ align-items: flex-start; }}
-      .top-actions {{ flex-direction: column; align-items: flex-end; }}
-      .actions, .secondary-actions {{ grid-template-columns: 1fr; }}
-      button {{ width: 100%; }}
-      .theme-toggle {{ width: auto; }}
-    }}
-
-    /* Celsius mobile - identidade visual compartilhada com o site */
-    :root {{
-      color-scheme: light;
-      --page: #F4F7F6;
-      --surface: #FFFFFF;
-      --surface-soft: #EAF1EF;
-      --ink: #14211F;
-      --muted: #52615E;
-      --faint: #7C8A86;
-      --line: #CFDBD7;
-      --line-strong: #A9BBB5;
-      --primary: #087E72;
-      --primary-strong: #05645B;
-      --primary-soft: #DFF1ED;
-      --green: #237B4B;
-      --green-soft: #E2F1E8;
-      --coral: #C9463C;
-      --focus: #E59B2D;
-      --shadow-soft: 0 8px 24px rgba(20, 33, 31, 0.08);
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: var(--page);
-      color: var(--ink);
-    }}
-    body.dark {{
-      color-scheme: dark;
-      --page: #101715;
-      --surface: #18211F;
-      --surface-soft: #202D2A;
-      --ink: #EDF5F2;
-      --muted: #AABBB5;
-      --faint: #728780;
-      --line: #344440;
-      --line-strong: #52655F;
-      --primary: #42C6B7;
-      --primary-strong: #7ED8CE;
-      --primary-soft: #1D403B;
-      --green: #69C58D;
-      --green-soft: #1D3D2A;
-      --coral: #FF8178;
-      --focus: #FFC267;
-      --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
-    }}
-    html {{
-      min-height: 100%;
-      background: var(--page);
-    }}
-    body {{
-      min-width: 320px;
-      min-height: 100svh;
-      background: var(--page);
-      color: var(--ink);
-      font-size: 15px;
-      line-height: 1.5;
-      letter-spacing: 0;
-    }}
-    button,
-    textarea,
-    input {{
-      font: inherit;
-      letter-spacing: 0;
-    }}
-    button:focus-visible,
-    textarea:focus-visible,
-    input:focus-visible {{
-      outline: 3px solid var(--focus);
-      outline-offset: 2px;
-    }}
-    .app-shell {{
-      width: min(100%, 600px);
-      min-height: 100svh;
-      grid-template-rows: auto auto auto auto;
-      align-content: start;
-      gap: 14px;
-      padding: 0 18px 24px;
-    }}
-    .topbar {{
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      min-height: 72px;
-      margin: 0 -18px;
-      padding: 0 18px;
-      border-bottom: 1px solid var(--line);
-      background: color-mix(in srgb, var(--surface) 94%, transparent);
-      backdrop-filter: blur(14px);
-    }}
-    .brand {{
-      align-items: center;
-      gap: 5px;
-      color: var(--ink);
-    }}
-    .brand strong,
-    .brand span,
-    .brand b {{
-      font-size: 17px;
-      line-height: 1;
-    }}
-    .brand strong {{ color: var(--ink); font-weight: 780; }}
-    .brand span {{ color: var(--muted); font-weight: 650; }}
-    .brand b {{ color: var(--primary); font-weight: 800; }}
-    .top-actions {{
-      flex-direction: row;
-      align-items: center;
-      gap: 8px;
-    }}
-    .connection-chip {{
-      min-height: 32px;
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface);
-      color: var(--muted);
-      box-shadow: none;
-      padding: 6px 9px;
-      font-size: 11px;
-      font-weight: 700;
-    }}
-    .connection-chip::before {{
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 0 3px var(--green-soft);
-    }}
-    .theme-toggle {{
-      width: 68px;
-      min-height: 36px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface);
-      color: var(--ink);
-      padding: 7px 9px;
-      font-size: 11px;
-      font-weight: 700;
-    }}
-    .theme-toggle:hover {{
-      border-color: var(--primary);
-      color: var(--primary);
-    }}
-    .panel {{
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--surface);
-      box-shadow: var(--shadow-soft);
-      padding: 18px;
-    }}
-    .voice-panel {{
-      margin-top: 4px;
-      overflow: hidden;
-    }}
-    .panel-heading {{
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--line);
-    }}
-    .eyebrow {{
+    .brand-copy {{ min-width: 0; }}
+    .brand-copy span {{
       display: block;
-      margin-bottom: 4px;
-      color: var(--primary);
-      font-size: 11px;
-      font-weight: 800;
+      margin-top: 1px;
+      color: var(--quiet);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .08em;
       text-transform: uppercase;
     }}
-    .panel-heading h1 {{
+    header h1 {{
       margin: 0;
-      color: var(--ink);
-      font-size: 21px;
-      line-height: 1.2;
-      font-weight: 760;
+      font-size: 16px;
+      font-weight: 680;
+      line-height: 1.1;
+      letter-spacing: -.01em;
     }}
-    .privacy-chip {{
-      flex: 0 0 auto;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface-soft);
+    .chip {{
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 0 11px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 999px;
+      background: rgba(255,255,255,.035);
+      font-size: 11px;
       color: var(--muted);
-      padding: 6px 8px;
-      font-size: 10px;
-      font-weight: 700;
     }}
-    .voice-stage {{
-      gap: 12px;
-      padding: 26px 8px 4px;
+    .chip .dot {{
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 4px rgba(103,214,167,.08), 0 0 10px rgba(103,214,167,.5);
     }}
-    .voice-orb {{
-      --level: 0;
+    .stage {{
       position: relative;
-      width: 156px;
-      aspect-ratio: 1;
-      overflow: visible;
-      border: 1px solid var(--line-strong);
-      border-radius: 50%;
-      background: var(--surface-soft);
-      box-shadow:
-        0 0 0 calc(10px + var(--level) * 12px) color-mix(in srgb, var(--primary) 10%, transparent),
-        0 0 calc(18px + var(--level) * 34px) color-mix(in srgb, var(--primary) 30%, transparent);
-      transform: scale(calc(1 + var(--level) * 0.06));
-      transition: transform 90ms linear, box-shadow 90ms linear;
+      min-height: 280px;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 6px 20px 16px;
     }}
-    .voice-orb::before {{
-      content: "";
-      position: absolute;
-      inset: 22px;
-      border: 1px solid color-mix(in srgb, var(--primary) 46%, var(--line));
-      border-radius: 50%;
-      background: var(--surface);
-      transform: scale(calc(1 + var(--level) * 0.18));
-      transition: transform 90ms linear;
-    }}
-    .voice-orb::after {{
-      content: "C";
-      position: absolute;
-      inset: 48px;
+    .orb-wrap {{
+      position: relative;
       display: grid;
       place-items: center;
-      border: 0;
+      width: min(92vw, 49vh, 380px);
+      aspect-ratio: 1;
+      isolation: isolate;
+    }}
+    .orb-wrap::before,
+    .orb-wrap::after {{
+      position: absolute;
       border-radius: 50%;
-      background: var(--primary);
-      color: #FFFFFF;
-      box-shadow: 0 8px 24px color-mix(in srgb, var(--primary) 32%, transparent);
-      font-size: 28px;
-      font-weight: 800;
-      opacity: 1;
-      transform: scale(calc(1 + var(--level) * 0.2));
-      transition: transform 90ms linear, background 160ms ease;
+      content: "";
+      pointer-events: none;
     }}
-    .voice-orb.listening {{
-      animation: celsiusVoiceRing 1.8s ease-in-out infinite;
-      filter: none;
+    .orb-wrap::before {{
+      inset: 4%;
+      border: 1px solid rgba(121,216,180,.08);
+      box-shadow: 0 0 70px rgba(45,170,128,.14);
     }}
-    .voice-orb.listening::after {{ background: #286FA1; }}
-    .voice-orb.speaking {{ border-color: var(--green); filter: none; }}
-    .voice-orb.speaking::after {{ background: var(--green); }}
-    @keyframes celsiusVoiceRing {{
-      0%, 100% {{
-        box-shadow:
-          0 0 0 10px color-mix(in srgb, var(--primary) 8%, transparent),
-          0 0 18px color-mix(in srgb, var(--primary) 22%, transparent);
-      }}
-      50% {{
-        box-shadow:
-          0 0 0 17px color-mix(in srgb, var(--primary) 13%, transparent),
-          0 0 38px color-mix(in srgb, var(--primary) 34%, transparent);
-      }}
+    .orb-wrap::after {{
+      inset: 17%;
+      z-index: -1;
+      background: rgba(46, 152, 117, .16);
+      filter: blur(34px);
     }}
-    .voice-state {{
-      min-height: 22px;
-      color: var(--ink);
-      font-size: 16px;
-      font-weight: 760;
+    canvas#orb {{ width: 100%; height: 100%; }}
+    .stage-copy {{
+      min-height: 58px;
+      margin-top: -7px;
+      text-align: center;
     }}
-    .voice-substate {{
-      max-width: 360px;
-      min-height: 36px;
-      color: var(--muted);
+    .stage-copy strong {{
+      display: block;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 620;
+      letter-spacing: -.02em;
+    }}
+    #orbHint {{
+      min-height: 20px;
+      margin-top: 5px;
       font-size: 12px;
-      line-height: 1.5;
-    }}
-    button {{
-      min-height: 44px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface);
-      color: var(--ink);
-      padding: 10px 14px;
-      font-size: 14px;
-      font-weight: 720;
-      transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
-    }}
-    button:hover {{ border-color: var(--primary); }}
-    button:active {{ transform: translateY(1px); }}
-    button:disabled {{ opacity: 0.48; }}
-    .voice-primary,
-    button.primary,
-    button.voice {{
-      border-color: var(--primary);
-      background: var(--primary);
-      color: #FFFFFF;
-    }}
-    .voice-primary:hover,
-    button.primary:hover,
-    button.voice:hover {{
-      border-color: var(--primary-strong);
-      background: var(--primary-strong);
-    }}
-    .voice-primary {{ width: min(100%, 300px); min-height: 48px; }}
-    .voice-primary.active {{
-      border-color: var(--coral);
-      background: var(--coral);
-    }}
-    button.subtle {{
-      border-color: var(--line);
-      background: var(--surface);
       color: var(--muted);
     }}
-    button.subtle:hover {{
-      border-color: var(--primary);
-      background: var(--primary-soft);
-      color: var(--primary);
+    #chat {{
+      flex: 0 1 auto;
+      max-height: 26dvh;
+      overflow-y: auto;
+      padding: 0 18px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
     }}
-    .composer-panel {{ padding: 0; overflow: hidden; }}
-    .composer-toggle {{
-      width: 100%;
-      min-height: 60px;
-      border: 0;
-      border-radius: 0;
-      background: var(--surface);
-      color: var(--ink);
-      padding: 16px 18px;
+    #chat::-webkit-scrollbar {{ display: none; }}
+    .msg {{
+      max-width: 88%;
+      padding: 10px 13px;
+      border-radius: 18px;
+      font-size: 14px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
     }}
-    .composer-toggle:hover {{
+    .msg.user {{
+      align-self: flex-end;
+      background: var(--bubble-user);
+      border-bottom-right-radius: 6px;
+    }}
+    .msg.ai {{
+      align-self: flex-start;
+      background: var(--bubble-ai);
+      color: #e4e9e6;
+      padding-left: 2px;
+    }}
+    .msg.err {{
+      align-self: flex-start;
+      background: var(--bubble-error);
+      border-bottom-left-radius: 4px;
+    }}
+    .msg.ref {{
+      align-self: center;
+      background: transparent;
+      color: var(--muted);
+      font-size: clamp(11px, 3.2vw, 13px);
+      padding: 2px 8px;
+      max-width: 92%;
+    }}
+    .empty {{
+      margin: 0 auto;
+      text-align: center;
+      color: var(--quiet);
+      font-size: 12px;
+      padding: 0 20px;
+    }}
+    footer {{
+      position: relative;
+      z-index: 4;
+      padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: linear-gradient(transparent, rgba(5,7,6,.97) 26%);
+    }}
+    #input {{
+      flex: 1;
+      resize: none;
+      min-height: 50px;
+      max-height: 120px;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 25px;
+      padding: 14px 16px;
+      font: 14px/1.35 inherit;
+      outline: none;
+      box-shadow: inset 0 1px rgba(255,255,255,.035);
+    }}
+    #input:focus {{ border-color: rgba(121,216,180,.42); }}
+    #input::placeholder {{ color: #727a76; }}
+    .icon-btn {{
+      width: 50px;
+      height: 50px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 50%;
+      background: var(--panel);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform .16s ease, background .16s ease, box-shadow .16s ease;
+    }}
+    .icon-btn:active {{ transform: scale(.93); }}
+    .icon-btn:disabled {{ opacity: 0.4; }}
+    .icon-btn.send {{
+      width: 46px;
+      height: 46px;
       border-color: transparent;
-      background: var(--surface-soft);
+      background: #f2f5f3;
+      color: #111513;
     }}
-    .composer-toggle span {{ font-size: 14px; font-weight: 760; }}
-    .composer-toggle small {{
-      margin-left: auto;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 650;
+    .icon-btn.mic {{
+      width: 58px;
+      height: 58px;
+      border-color: rgba(121,216,180,.28);
+      background: linear-gradient(145deg, #88e2c0, #47bd91);
+      color: #062118;
+      box-shadow: 0 8px 28px rgba(32,184,135,.22), inset 0 1px rgba(255,255,255,.38);
     }}
-    .composer-toggle::after {{
-      width: 30px;
-      height: 30px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--primary);
+    .icon-btn.mic.rec {{ background: var(--danger); color: #fff; }}
+    .icon-btn.mic.busy {{ animation: pulsebusy 1.4s infinite; }}
+    @keyframes pulsebusy {{
+      0%, 100% {{ box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.35); }}
+      50% {{ box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); }}
     }}
-    .composer-body {{ border-color: var(--line); padding: 18px; }}
-    .hint {{ color: var(--muted); font-size: 12px; }}
-    textarea {{
-      min-height: 120px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--page);
-      color: var(--ink);
-      padding: 13px 14px;
-      font-size: 16px;
-      line-height: 1.5;
-    }}
-    textarea::placeholder {{ color: var(--faint); }}
-    textarea:focus {{ border-color: var(--primary); }}
-    .actions {{ gap: 10px; margin-top: 12px; }}
-    .secondary-actions {{ margin-top: 10px; }}
-    .section-row {{
-      margin-bottom: 12px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--line);
-    }}
-    .section-title {{
-      color: var(--ink);
-      font-size: 12px;
-      font-weight: 800;
-    }}
-    .toggle {{ color: var(--muted); font-size: 12px; }}
-    .toggle input {{
-      width: 34px;
-      height: 18px;
-      accent-color: var(--primary);
-    }}
-    #response {{
-      min-height: 132px;
-      overflow-wrap: anywhere;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--page);
-      color: var(--ink);
-      padding: 15px;
-      font-size: 14px;
-      line-height: 1.6;
-    }}
-    #status {{
-      position: sticky;
-      bottom: 12px;
-      z-index: 15;
-      min-height: 46px;
-      margin: 0;
-      border: 1px solid var(--line);
-      border-left: 4px solid var(--primary);
-      border-radius: 6px;
-      background: var(--surface);
-      color: var(--muted);
-      box-shadow: var(--shadow-soft);
-      padding: 12px 14px;
-      font-size: 12px;
-    }}
-    @media (max-width: 460px) {{
-      .app-shell {{ gap: 12px; padding: 0 12px 20px; }}
-      .topbar {{
-        min-height: 64px;
-        margin: 0 -12px;
-        padding: 0 12px;
-        align-items: center;
-      }}
-      .brand strong, .brand span, .brand b {{ font-size: 15px; }}
-      .top-actions {{ flex-direction: row; }}
-      .connection-chip {{ min-height: 30px; padding: 5px 8px; }}
-      .theme-toggle {{ width: 58px; min-height: 34px; padding: 6px; }}
-      .panel {{ padding: 15px; }}
-      .panel-heading h1 {{ font-size: 19px; }}
-      .privacy-chip {{
-        max-width: 110px;
-        white-space: normal;
-        text-align: right;
-      }}
-      .voice-orb {{ width: 142px; }}
-      .voice-orb::after {{ inset: 43px; }}
-      .actions, .secondary-actions {{ grid-template-columns: 1fr 1fr; }}
-      button {{ width: auto; }}
-    }}
-    @media (max-width: 350px) {{
-      .brand span {{ display: none; }}
-      .actions, .secondary-actions {{ grid-template-columns: 1fr; }}
-      button {{ width: 100%; }}
+    .icon-btn svg {{ width: 21px; height: 21px; }}
+    .icon-btn.mic svg {{ width: 25px; height: 25px; }}
+    @media (max-height: 700px) {{
+      header {{ min-height: 58px; padding-top: 10px; }}
+      .stage {{ min-height: 230px; padding-bottom: 4px; }}
+      .orb-wrap {{ width: min(64vw, 38vh, 260px); }}
+      #chat {{ max-height: 21dvh; }}
     }}
   </style>
 </head>
 <body>
-  <main class="app-shell">
-    <header class="topbar">
-      <div class="brand" aria-label="Celsius Project AI">
-        <strong>Celsius</strong><span>Project</span><b>AI</b>
-      </div>
-      <div class="top-actions">
-        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Alternar tema">Escuro</button>
-        <div id="connectionChip" class="connection-chip">Local</div>
-      </div>
-    </header>
-
-    <section class="panel voice-panel">
-      <div class="panel-heading">
-        <div>
-          <span class="eyebrow">Assistente local</span>
-          <h1>Fale com o Celsius</h1>
-        </div>
-        <span class="privacy-chip">Processado no seu PC</span>
-      </div>
-      <div class="voice-stage">
-        <div id="voiceOrb" class="voice-orb" aria-hidden="true"></div>
-        <div id="voiceState" class="voice-state">Aguardando "Celsius"</div>
-        <div id="voiceSubstate" class="voice-substate">Diga Celsius para ativar o assistente.</div>
-        <button id="voiceSession" class="voice-primary" type="button">Ativar escuta</button>
-      </div>
-    </section>
-
-    <section id="textComposerPanel" class="panel composer-panel collapsed">
-      <button id="toggleComposer" class="composer-toggle" type="button" aria-expanded="false" aria-controls="composerBody">
-        <span>Digitar mensagem</span>
-        <small>Opcional</small>
-      </button>
-      <div id="composerBody" class="composer-body" hidden>
-        <p class="hint">Use quando preferir escrever ou revisar a pergunta antes de enviar.</p>
-        <textarea id="message" placeholder="Digite sua mensagem para o Celsius..."></textarea>
-        <div class="actions">
-          <button id="record" class="voice" type="button">Gravar voz</button>
-          <button id="send" class="primary" type="button">Enviar</button>
-        </div>
-        <div class="actions secondary-actions">
-          <button id="test" class="subtle" type="button">Testar conexao</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-row">
-        <div class="section-title">Resposta</div>
-        <label class="toggle"><input id="autoSpeak" type="checkbox" checked> Audio</label>
-      </div>
-      <div id="response">A resposta do Celsius aparecera aqui.</div>
-      <div class="actions secondary-actions">
-        <button id="speak" class="subtle" type="button">Ouvir</button>
-        <button id="stopSpeak" class="subtle" type="button">Parar audio</button>
-      </div>
-    </section>
-
-    <p id="status">Pronto para conectar ao Celsius.</p>
-  </main>
+  <header>
+    <div class="brand-mark">C</div>
+    <div class="brand-copy"><h1>Celsius</h1><span>Conversa por voz</span></div>
+    <div class="chip"><span class="dot"></span><span id="statusText">Local</span></div>
+  </header>
+  <div class="stage">
+    <div class="orb-wrap"><canvas id="orb" width="340" height="340"></canvas></div>
+    <div class="stage-copy">
+      <strong id="voiceState">Como posso ajudar?</strong>
+      <div id="orbHint"></div>
+    </div>
+  </div>
+  <div id="chat">
+    <div class="empty" id="chatEmpty">Fale ou digite para conversar com o Celsius.</div>
+  </div>
+  <footer>
+    <textarea id="input" rows="1" placeholder="Mensagem ao Celsius"></textarea>
+    <button class="icon-btn send" id="sendBtn" type="button" title="Enviar" aria-label="Enviar">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 20.85 12 3.4 3.6l.5 6.5 10.7 1.9-10.7 1.9z"/></svg>
+    </button>
+    <button class="icon-btn mic" id="micBtn" type="button" title="Falar ao vivo" aria-label="Falar ao vivo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+    </button>
+  </footer>
   <script>
     if (location.search) history.replaceState(null, "", location.pathname);
     const voiceEnabled = {voice_flag};
-    const message = document.querySelector("#message");
-    const statusEl = document.querySelector("#status");
-    const responseEl = document.querySelector("#response");
-    const connectionChip = document.querySelector("#connectionChip");
-    const themeToggle = document.querySelector("#themeToggle");
-    const toggleComposerBtn = document.querySelector("#toggleComposer");
-    const composerBody = document.querySelector("#composerBody");
-    const recordBtn = document.querySelector("#record");
-    const voiceSessionBtn = document.querySelector("#voiceSession");
-    const voiceOrb = document.querySelector("#voiceOrb");
-    const voiceState = document.querySelector("#voiceState");
-    const voiceSubstate = document.querySelector("#voiceSubstate");
-    const autoSpeak = document.querySelector("#autoSpeak");
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const TARGET_SAMPLE_RATE = 16000;
+
+    function $(id) {{ return document.getElementById(id); }}
+    const statusText = $("statusText");
+    const voiceState = $("voiceState");
+    const orbHint = $("orbHint");
+    const chatEl = $("chat");
+    const chatEmpty = $("chatEmpty");
+    const inputEl = $("input");
+    const sendBtn = $("sendBtn");
+    const micBtn = $("micBtn");
+    const orbCanvas = $("orb");
+    const orbCtx = orbCanvas.getContext("2d");
+
+    function resizeOrb() {{
+      const rect = orbCanvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const px = Math.round(Math.max(1, rect.width) * dpr);
+      if (orbCanvas.width !== px) orbCanvas.width = px;
+      if (orbCanvas.height !== px) orbCanvas.height = px;
+    }}
+    window.addEventListener("resize", resizeOrb);
+    window.addEventListener("orientationchange", function () {{
+      setTimeout(resizeOrb, 120);
+    }});
+    if (window.visualViewport) {{
+      window.visualViewport.addEventListener("resize", resizeOrb);
+    }}
+    resizeOrb();
+
     let lastResponseVersion = 0;
-    let lastResponseText = "";
     let lastResponseAudioVersion = 0;
-    let responsePollTimer = null;
     const responseAudio = new Audio();
     let responseAudioUrl = "";
-    let mobileAudioPlaying = false;
-    let mobileAudioStopRequested = false;
-    let audioContext = null;
-    let audioStream = null;
-    let audioSource = null;
-    let audioProcessor = null;
-    let audioChunks = [];
+    let responsePollTimer = null;
+    let audioCtx = null;
+    let stream = null;
+    let sourceNode = null;
+    let processor = null;
     let recording = false;
-    let recordingTimer = null;
-    let voiceConversationActive = false;
-    let autoListening = false;
-    let speechDetected = false;
+    let autoStopping = false;
+    let chunks = [];
+    let samplesBuffer = null;
     let speechStartedAt = 0;
     let silenceStartedAt = 0;
-    let autoStopping = false;
-    let voiceActivationInProgress = false;
     let noiseFloor = 0.006;
-    const MIN_VOICE_THRESHOLD = 0.012;
-    const SILENCE_TO_SEND_MS = 500;
-    const MIN_SPEECH_MS = 220;
-    const AUTO_MAX_RECORDING_MS = 10000;
+    let micDrive = 0;
+    let decodedBuffer = null;
+    let decodedRate = 0;
+    let decodeCtx = null;
+    let orbState = "idle";
+    let drive = 0;
+    let rings = [];
 
-    function applyMobileTheme(theme) {{
-      const dark = theme === "dark";
-      document.body.classList.toggle("dark", dark);
-      themeToggle.textContent = dark ? "Claro" : "Escuro";
-      localStorage.setItem("celsiusMobileTheme", dark ? "dark" : "light");
-    }}
-
-    themeToggle.addEventListener("click", () => {{
-      applyMobileTheme(document.body.classList.contains("dark") ? "light" : "dark");
-    }});
-    applyMobileTheme(localStorage.getItem("celsiusMobileTheme") || "light");
-
-    function setComposerExpanded(expanded, focusInput = false) {{
-      toggleComposerBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
-      toggleComposerBtn.querySelector("span").textContent = expanded ? "Ocultar campo" : "Digitar mensagem";
-      composerBody.hidden = !expanded;
-      if (expanded && focusInput) {{
-        setTimeout(() => message.focus(), 80);
+    function setStatus(text) {{
+      statusText.textContent = text;
+      const normalized = (text || "").toLowerCase();
+      if (normalized.includes("ouvindo") || normalized.includes("gravando")) {{
+        voiceState.textContent = "Estou ouvindo";
+      }} else if (normalized.includes("process") || normalized.includes("enviando")) {{
+        voiceState.textContent = "Pensando...";
+      }} else if (normalized.includes("falando")) {{
+        voiceState.textContent = "Respondendo";
+      }} else if (normalized.includes("erro")) {{
+        voiceState.textContent = "Tente novamente";
+      }} else if (normalized.includes("conectado") || normalized.includes("local")) {{
+        voiceState.textContent = "Como posso ajudar?";
       }}
     }}
+    function setHint(text) {{ orbHint.textContent = text || ""; }}
+    function setDot(ok) {{
+      const dot = document.querySelector(".chip .dot");
+      dot.style.background = ok ? "var(--ok)" : "#64748b";
+      dot.style.boxShadow = ok ? "0 0 6px var(--ok)" : "none";
+    }}
 
-    toggleComposerBtn.addEventListener("click", () => {{
-      const expanded = toggleComposerBtn.getAttribute("aria-expanded") === "true";
-      setComposerExpanded(!expanded, !expanded);
-    }});
+    function addMsg(role, text) {{
+      if (chatEmpty) chatEmpty.remove();
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text || "";
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return div;
+    }}
 
-    async function fetchJson(path, options = {{}}, timeoutMs = 12000) {{
+    function replaceAiBubble(text) {{
+      let bubble = chatEl.querySelector(":scope > .msg.ai, :scope > .msg.err");
+      if (!bubble) bubble = addMsg("ai", "");
+      bubble.textContent = text || "";
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return bubble;
+    }}
+
+    function sleep(ms) {{ return new Promise(resolve => setTimeout(resolve, ms)); }}
+
+    async function fetchJson(path, options, timeoutMs) {{
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const timer = setTimeout(() => controller.abort(), timeoutMs || 12000);
       try {{
         const response = await fetch(path, {{
           ...options,
@@ -1850,71 +1328,19 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
           signal: controller.signal
         }});
         let data = {{}};
-        try {{
-          data = await response.json();
-        }} catch (error) {{
-          data = {{}};
-        }}
+        try {{ data = await response.json(); }} catch (err) {{ data = {{}}; }}
         if (!response.ok && !data.message) {{
-          data.message = `Erro HTTP ${{response.status}} ao falar com o Celsius.`;
+          data.message = "Erro HTTP " + response.status + " ao falar com o Celsius.";
         }}
         return data;
-      }} catch (error) {{
-        if (error.name === "AbortError") {{
-          return {{
-            ok: false,
-            message: "Tempo esgotado. Verifique se o Celsius esta aberto, se o celular esta na mesma rede e se o firewall permitiu a porta."
-          }};
+      }} catch (err) {{
+        if (err.name === "AbortError") {{
+          return {{ ok: false, message: "Tempo esgotado. Verifique a rede Wi-Fi e o firewall." }};
         }}
-        return {{
-          ok: false,
-          message: "Falha de conexao com o Celsius. Confirme o aviso do certificado, a rede Wi-Fi e o firewall do Windows."
-        }};
+        return {{ ok: false, message: "Falha de conexao. Confirme o certificado e a rede Wi-Fi." }};
       }} finally {{
         clearTimeout(timer);
       }}
-    }}
-
-    async function sendCommand(source = "phone") {{
-      const text = message.value.trim();
-      if (!text) {{
-        setComposerExpanded(true, true);
-        statusEl.textContent = "Digite uma mensagem ou inicie a conversa por voz.";
-        return;
-      }}
-      statusEl.textContent = "Enviando...";
-      document.querySelector("#send").disabled = true;
-      const data = await fetchJson("/api/command", {{
-        method: "POST",
-        headers: {{
-          "Content-Type": "application/json"
-        }},
-        body: JSON.stringify({{ message: text, source }})
-      }});
-      statusEl.textContent = data.message || (data.ok ? "Enviado." : "Erro ao enviar.");
-      if (data.ok) {{
-        lastResponseVersion = Number(data.response_version || lastResponseVersion);
-        message.value = "";
-        setComposerExpanded(false);
-        waitForResponse();
-      }}
-      document.querySelector("#send").disabled = false;
-    }}
-
-    document.querySelector("#send").addEventListener("click", () => sendCommand("phone_text"));
-    document.querySelector("#test").addEventListener("click", async () => {{
-      statusEl.textContent = "Testando conexao...";
-      const data = await fetchJson("/api/status");
-      statusEl.textContent = data.ok
-        ? `Conexao ok com ${{data.name}}. HTTPS: ${{data.https ? "sim" : "nao"}}.`
-        : (data.message || "Nao consegui confirmar a conexao.");
-      connectionChip.textContent = data.ok ? "Conectado" : "Offline";
-    }});
-    document.querySelector("#speak").addEventListener("click", () => playPcAudio(lastResponseVersion));
-    document.querySelector("#stopSpeak").addEventListener("click", stopPcAudio);
-
-    function sleep(ms) {{
-      return new Promise(resolve => setTimeout(resolve, ms));
     }}
 
     function clearResponseAudio() {{
@@ -1923,22 +1349,23 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
       responseAudio.load();
       if (responseAudioUrl) URL.revokeObjectURL(responseAudioUrl);
       responseAudioUrl = "";
+      decodedBuffer = null;
+      decodedRate = 0;
     }}
 
     function stopPcAudio() {{
-      mobileAudioStopRequested = true;
       responseAudio.pause();
       responseAudio.currentTime = 0;
-      statusEl.textContent = "Audio pausado no celular.";
+      setHint("Audio parado.");
     }}
 
-    async function loadPcAudio(responseVersion, retries = 12) {{
+    async function loadPcAudio(responseVersion, retries) {{
       if (!responseVersion) return false;
-      for (let attempt = 0; attempt < retries; attempt++) {{
-        const url = `/api/last-audio?response_version=${{responseVersion}}&after_audio_version=${{lastResponseAudioVersion}}&t=${{Date.now()}}`;
-        const response = await fetch(url, {{
-          credentials: "same-origin"
-        }});
+      const tries = retries || 16;
+      for (let attempt = 0; attempt < tries; attempt++) {{
+        const url = "/api/last-audio?response_version=" + responseVersion
+          + "&after_audio_version=" + lastResponseAudioVersion + "&t=" + Date.now();
+        const response = await fetch(url, {{ credentials: "same-origin" }});
         if (response.status === 200) {{
           const blob = await response.blob();
           clearResponseAudio();
@@ -1947,6 +1374,7 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
           lastResponseAudioVersion = Number(
             response.headers.get("X-Celsius-Audio-Version") || lastResponseAudioVersion
           );
+          startDecode(blob);
           return true;
         }}
         if (response.status !== 204) return false;
@@ -1955,75 +1383,238 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
       return false;
     }}
 
-    async function playPcAudio(responseVersion) {{
-      if (mobileAudioPlaying) return;
-      if (!responseVersion) {{
-        statusEl.textContent = "Ainda nao ha resposta com audio para tocar.";
-        return;
-      }}
-      mobileAudioPlaying = true;
-      mobileAudioStopRequested = false;
+    function startDecode(blob) {{
       try {{
-        while (!mobileAudioStopRequested) {{
-          statusEl.textContent = "Aguardando audio gerado no PC...";
-          const loaded = await loadPcAudio(responseVersion);
-          if (!loaded || mobileAudioStopRequested) break;
-          statusEl.textContent = "Reproduzindo audio gerado no PC.";
-          await new Promise(resolve => {{
-            responseAudio.onended = resolve;
-            responseAudio.onerror = resolve;
-            responseAudio.play().catch(() => {{
-              statusEl.textContent = "Toque em Ouvir para liberar o audio no celular.";
-              resolve();
-            }});
-          }});
-        }}
-        if (!mobileAudioStopRequested) {{
-          statusEl.textContent = "Audio concluido.";
-        }}
-      }} finally {{
-        mobileAudioPlaying = false;
+        decodeCtx = decodeCtx || new AudioContextClass();
+        blob.arrayBuffer()
+          .then(buf => decodeCtx.decodeAudioData(buf))
+          .then(decoded => {{
+            if (!responseAudio.src) return;
+            decodedBuffer = decoded.getChannelData(0);
+            decodedRate = decoded.sampleRate;
+          }})
+          .catch(() => {{ decodedBuffer = null; }});
+      }} catch (err) {{
+        decodedBuffer = null;
       }}
     }}
 
-    async function waitForResponse() {{
+    function playbackLevel() {{
+      if (responseAudio.paused || responseAudio.ended || !decodedBuffer || !decodedRate) return 0;
+      const start = Math.floor(responseAudio.currentTime * decodedRate);
+      if (start < 0 || start >= decodedBuffer.length - 1) return 0;
+      const win = Math.min(4000, decodedBuffer.length - start - 1);
+      let sum = 0;
+      for (let i = 0; i < win; i++) {{
+        const s = decodedBuffer[start + i];
+        sum += s * s;
+      }}
+      return Math.sqrt(sum / win) * 6;
+    }}
+
+    async function playPcAudio(responseVersion) {{
+      if (!responseVersion) return false;
+      const loaded = await loadPcAudio(responseVersion);
+      if (!loaded) {{
+        setHint("Ainda sem audio gerado no PC.");
+        return false;
+      }}
+      try {{
+        await responseAudio.play();
+        setHint("Celsius falando...");
+        orbState = "idle";
+        return true;
+      }} catch (err) {{
+        setHint("Toque na esfera para ouvir a resposta.");
+        return false;
+      }}
+    }}
+
+    function toggleOrbPlayback() {{
+      if (!responseAudio.src) return;
+      if (!responseAudio.paused) {{
+        stopPcAudio();
+        return;
+      }}
+      playPcAudio(lastResponseVersion);
+    }}
+
+    orbCanvas.addEventListener("pointerdown", () => {{
+      if (recording) return;
+      toggleOrbPlayback();
+    }});
+
+    async function sendCommand(text) {{
+      const clean = (text || "").trim();
+      if (!clean) return;
+      addMsg("user", clean);
+      inputEl.value = "";
+      inputEl.style.height = "42px";
+      sendBtn.disabled = true;
+      setStatus("Enviando...");
+      const data = await fetchJson("/api/command", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{ message: clean, source: "phone_text" }})
+      }}, 20000);
+      if (data.ok) {{
+        lastResponseVersion = Number(data.response_version || lastResponseVersion);
+        waitForResponse();
+      }} else {{
+        setStatus("Erro");
+        addMsg("ref", data.message || "Nao foi possivel enviar a mensagem.");
+      }}
+    }}
+
+    function waitForResponse() {{
       clearInterval(responsePollTimer);
-      statusEl.textContent = "Aguardando resposta do Celsius...";
+      setStatus("Gerando...");
+      setHint("");
+      orbState = "thinking";
+      replaceAiBubble("");
       const started = Date.now();
       responsePollTimer = setInterval(async () => {{
-        const data = await fetchJson(`/api/last-response?after=${{lastResponseVersion}}`, {{}}, 12000);
+        const data = await fetchJson(
+          "/api/last-response?after=" + lastResponseVersion, {{}}, 12000
+        );
+        if (data.ok && data.live_active && data.live_text) {{
+          replaceAiBubble(data.live_text);
+          return;
+        }}
         if (data.ok && data.has_new && data.text) {{
           clearInterval(responsePollTimer);
           lastResponseVersion = Number(data.version || lastResponseVersion);
-          lastResponseText = data.text;
-          mobileAudioStopRequested = true;
-          lastResponseAudioVersion = 0;
-          clearResponseAudio();
-          responseEl.textContent = data.text;
-          statusEl.textContent = data.kind === "error" ? "O Celsius retornou um erro." : "Resposta recebida.";
-          setVoiceVisualState(data.kind === "error" ? "idle" : "speaking");
-          if (autoSpeak.checked && data.kind !== "error") {{
-            playPcAudio(lastResponseVersion).finally(() => resumeVoiceConversation());
-          }} else {{
-            resumeVoiceConversation();
-          }}
+          const isError = data.kind === "error";
+          const bubble = replaceAiBubble(data.text);
+          if (isError) bubble.className = "msg err";
+          setStatus(isError ? "Erro no PC" : "Resposta recebida");
+          orbState = "idle";
+          if (!isError) playPcAudio(lastResponseVersion);
           return;
         }}
         if (Date.now() - started > 120000) {{
           clearInterval(responsePollTimer);
-          statusEl.textContent = "Ainda sem resposta nova. Veja se o Celsius terminou de responder no PC.";
+          setStatus("Sem resposta");
+          setHint("Veja se o Celsius terminou de responder no PC.");
+          orbState = "idle";
         }}
-      }}, 1500);
+      }}, 1200);
     }}
 
-    async function blobToBase64(blob) {{
-      const buffer = await blob.arrayBuffer();
-      let binary = "";
-      const bytes = new Uint8Array(buffer);
-      for (let i = 0; i < bytes.byteLength; i++) {{
-        binary += String.fromCharCode(bytes[i]);
+    function calculateRms(samples) {{
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+      return Math.sqrt(sum / Math.max(1, samples.length));
+    }}
+
+    async function startRecording() {{
+      if (recording) return;
+      try {{
+        stream = await navigator.mediaDevices.getUserMedia({{
+          audio: {{
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1
+          }}
+        }});
+        audioCtx = audioCtx || new AudioContextClass();
+        if (audioCtx.state === "suspended") await audioCtx.resume();
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        chunks = [];
+        samplesBuffer = null;
+        speechStartedAt = 0;
+        silenceStartedAt = 0;
+        noiseFloor = 0.006;
+        autoStopping = false;
+        recording = true;
+        micDrive = 0;
+        orbState = "listening";
+        setStatus("Ouvindo voce...");
+        setHint("Continue falando; para de falar para enviar.");
+        micBtn.classList.add("rec");
+        processor.onaudioprocess = (event) => {{
+          const samples = event.inputBuffer.getChannelData(0);
+          samplesBuffer = samples;
+          const level = calculateRms(samples);
+          micDrive = Math.min(1, level * 10);
+          if (!recording) return;
+          chunks.push(new Float32Array(samples));
+          const now = Date.now();
+          const threshold = Math.max(0.012, Math.min(0.034, noiseFloor * 2.8));
+          if (level <= threshold) {{
+            noiseFloor = Math.min(0.012, noiseFloor * 0.96 + level * 0.04);
+            if (speechStartedAt && !silenceStartedAt) silenceStartedAt = now;
+          }} else {{
+            if (!speechStartedAt) speechStartedAt = now;
+            silenceStartedAt = 0;
+          }}
+          if (speechStartedAt && silenceStartedAt
+            && now - speechStartedAt >= 300 && now - silenceStartedAt >= 1100) {{
+            if (!autoStopping) {{ autoStopping = true; stopRecording(); }}
+          }}
+        }};
+        sourceNode.connect(processor);
+        processor.connect(audioCtx.destination);
+        setTimeout(() => {{ if (recording) stopRecording(); }}, 15000);
+      }} catch (err) {{
+        setStatus("Microfone bloqueado");
+        setHint("Autorize o microfone do site HTTPS no navegador.");
+        orbState = "idle";
+        cleanupAudio();
       }}
-      return btoa(binary);
+    }}
+
+    function hasEnergy(list) {{
+      for (const c of list) {{
+        let s = 0;
+        for (let i = 0; i < c.length; i++) s += c[i] * c[i];
+        if (Math.sqrt(s / Math.max(1, c.length)) > 0.008) return true;
+      }}
+      return false;
+    }}
+
+    async function stopRecording() {{
+      if (!recording) return;
+      recording = false;
+      micBtn.classList.remove("rec");
+      orbState = "idle";
+      micDrive = 0;
+      const audio = chunks.slice();
+      const hasSpeech = Boolean(audio.length && hasEnergy(audio));
+      const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
+      cleanupAudio();
+      if (!hasSpeech) {{
+        setStatus("Pronto");
+        setHint("Nenhuma fala detectada.");
+        return;
+      }}
+      setStatus("Transcrevendo no PC...");
+      await sendVoice(encodeWav(audio, sampleRate));
+    }}
+
+    function cleanupAudio() {{
+      if (processor) processor.disconnect();
+      if (sourceNode) sourceNode.disconnect();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (audioCtx && audioCtx.state === "running") audioCtx.close().catch(() => {{}});
+      audioCtx = null;
+      stream = null;
+      sourceNode = null;
+      processor = null;
+      samplesBuffer = null;
+      chunks = [];
+      micDrive = 0;
+    }}
+
+    function blobToBase64(blob) {{
+      return new Promise((resolve, reject) => {{
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      }});
     }}
 
     function flattenAudio(chunks) {{
@@ -2074,7 +1665,6 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
       view.setUint16(34, 16, true);
       writeAscii(view, 36, "data");
       view.setUint32(40, samples.length * 2, true);
-
       let index = 44;
       for (let i = 0; i < samples.length; i++) {{
         const sample = Math.max(-1, Math.min(1, samples[i]));
@@ -2085,14 +1675,10 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
     }}
 
     function writeAscii(view, offset, text) {{
-      for (let i = 0; i < text.length; i++) {{
-        view.setUint8(offset + i, text.charCodeAt(i));
-      }}
+      for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
     }}
 
-    async function sendVoiceBlob(blob, autoMode = false) {{
-      statusEl.textContent = autoMode ? "Enviando sua fala para o Celsius..." : "Enviando voz otimizada para o PC...";
-      if (!autoMode) recordBtn.disabled = true;
+    async function sendVoice(blob) {{
       const data = await fetchJson("/api/voice-command", {{
         method: "POST",
         headers: {{ "Content-Type": "application/json" }},
@@ -2101,282 +1687,149 @@ def _mobile_html(_token: str, voice_enabled: bool) -> str:
           mime_type: blob.type || "audio/wav"
         }})
       }}, 45000);
-      recordBtn.disabled = voiceConversationActive;
-      if (data.transcript) message.value = data.transcript;
-      statusEl.textContent = data.message || (data.ok ? "Voz enviada." : "Erro ao enviar voz.");
-      if (data.ok && data.command_submitted === false) {{
-        if (data.wake_detected && data.acknowledgement) {{
-          setVoiceVisualState("armed");
-          await speakWakeAcknowledgement(data.acknowledgement);
-        }} else {{
-          setVoiceVisualState("listening");
-        }}
-        resumeVoiceConversation(120);
-      }} else if (data.ok) {{
-        lastResponseVersion = Number(data.response_version || lastResponseVersion);
-        setVoiceVisualState("thinking");
-        waitForResponse();
-      }} else {{
-        resumeVoiceConversation();
-      }}
-    }}
-
-    function speakWakeAcknowledgement(text) {{
-      if (!("speechSynthesis" in window) || !text) return Promise.resolve();
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "pt-BR";
-      utterance.rate = 1.12;
-      utterance.pitch = 0.92;
-      return new Promise(resolve => {{
-        utterance.onend = resolve;
-        utterance.onerror = resolve;
-        window.speechSynthesis.speak(utterance);
-      }});
-    }}
-
-    function calculateRms(samples) {{
-      let sum = 0;
-      for (let i = 0; i < samples.length; i++) {{
-        sum += samples[i] * samples[i];
-      }}
-      return Math.sqrt(sum / Math.max(1, samples.length));
-    }}
-
-    function setVoiceVisualState(state) {{
-      voiceOrb.classList.toggle("listening", state === "listening");
-      voiceOrb.classList.toggle("speaking", state === "speaking");
-      if (state === "listening") {{
-        voiceState.textContent = "Aguardando \"Celsius\"";
-        voiceSubstate.textContent = "Diga Celsius para ativar o assistente.";
-      }} else if (state === "armed") {{
-        voiceState.textContent = "Estou ouvindo";
-        voiceSubstate.textContent = "Pode falar seu pedido agora.";
-      }} else if (state === "speaking") {{
-        voiceState.textContent = "Celsius respondendo";
-        voiceSubstate.textContent = "O audio gerado no PC sera reproduzido aqui.";
-      }} else if (state === "thinking") {{
-        voiceState.textContent = "Pensando";
-        voiceSubstate.textContent = "Sua fala foi enviada para o Celsius.";
-      }} else if (state === "needs-gesture") {{
-        voiceState.textContent = "Ative o microfone";
-        voiceSubstate.textContent = "Toque em Ativar escuta e permita o uso do microfone.";
-      }} else {{
-        voiceState.textContent = "Aguardando \"Celsius\"";
-        voiceSubstate.textContent = "Diga Celsius para ativar o assistente.";
-        voiceOrb.style.setProperty("--level", 0);
-      }}
-    }}
-
-    function updateVoiceOrb(level) {{
-      const scaled = Math.min(1, Math.max(0, level * 12));
-      voiceOrb.style.setProperty("--level", scaled.toFixed(3));
-    }}
-
-    function handleAutoVoiceLevel(level) {{
-      const now = Date.now();
-      const threshold = Math.max(MIN_VOICE_THRESHOLD, Math.min(0.034, noiseFloor * 2.8));
-      if (!speechDetected && level <= threshold) {{
-        noiseFloor = Math.min(0.012, noiseFloor * 0.96 + level * 0.04);
-        return;
-      }}
-      if (level > threshold) {{
-        if (mobileAudioPlaying) stopPcAudio();
-        if (!speechDetected) {{
-          speechDetected = true;
-          speechStartedAt = now;
-          voiceState.textContent = "Ouvindo voce";
-        }}
-        silenceStartedAt = 0;
-        return;
-      }}
-      if (!speechDetected) return;
-      if (!silenceStartedAt) silenceStartedAt = now;
-      const speechMs = now - speechStartedAt;
-      const silenceMs = now - silenceStartedAt;
-      if (!autoStopping && speechMs >= MIN_SPEECH_MS && silenceMs >= SILENCE_TO_SEND_MS) {{
-        autoStopping = true;
-        stopLocalRecording(true);
-      }}
-    }}
-
-    async function startLocalRecording(autoMode = false) {{
-      audioStream = await navigator.mediaDevices.getUserMedia({{
-        audio: {{
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1
-        }}
-      }});
-      audioContext = new AudioContextClass();
-      if (audioContext.state === "suspended") await audioContext.resume();
-      if (audioContext.state !== "running") {{
-        audioStream.getTracks().forEach(track => track.stop());
-        await audioContext.close();
-        audioStream = null;
-        audioContext = null;
-        throw new Error("O navegador exige um toque para iniciar o audio.");
-      }}
-      audioSource = audioContext.createMediaStreamSource(audioStream);
-      audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-      audioChunks = [];
-      speechDetected = false;
-      speechStartedAt = 0;
-      silenceStartedAt = 0;
-      autoStopping = false;
-      noiseFloor = 0.006;
-      autoListening = autoMode;
-      audioProcessor.onaudioprocess = event => {{
-        const samples = new Float32Array(event.inputBuffer.getChannelData(0));
-        const level = calculateRms(samples);
-        updateVoiceOrb(level);
-        if (!recording) return;
-        audioChunks.push(samples);
-        if (autoListening) handleAutoVoiceLevel(level);
-      }};
-      audioSource.connect(audioProcessor);
-      audioProcessor.connect(audioContext.destination);
-      recording = true;
-      if (autoMode) {{
-        setVoiceVisualState("listening");
-        statusEl.textContent = "Escuta ativa. Diga Celsius para comecar.";
-        recordingTimer = setTimeout(() => stopLocalRecording(true), AUTO_MAX_RECORDING_MS);
-      }} else {{
-        recordBtn.textContent = "Parar e enviar";
-        statusEl.textContent = "Gravando no celular...";
-        recordingTimer = setTimeout(() => stopLocalRecording(false), 15000);
-      }}
-    }}
-
-    async function stopLocalRecording(autoMode = false) {{
-      if (!recording) return;
-      recording = false;
-      clearTimeout(recordingTimer);
-      if (!autoMode) {{
-        recordBtn.textContent = "Preparando envio...";
-        recordBtn.disabled = true;
-      }} else {{
-        setVoiceVisualState("thinking");
-      }}
-
-      if (audioProcessor) audioProcessor.disconnect();
-      if (audioSource) audioSource.disconnect();
-      if (audioStream) audioStream.getTracks().forEach(track => track.stop());
-      const sampleRate = audioContext ? audioContext.sampleRate : 44100;
-      if (audioContext) await audioContext.close();
-      audioContext = null;
-      audioStream = null;
-      audioSource = null;
-      audioProcessor = null;
-
-      if (!audioChunks.length || (autoMode && !speechDetected)) {{
-        statusEl.textContent = autoMode ? "Nenhuma fala detectada." : "Nenhum audio capturado.";
-        recordBtn.textContent = "Gravar voz";
-        recordBtn.disabled = voiceConversationActive;
-        resumeVoiceConversation();
-        return;
-      }}
-      await sendVoiceBlob(encodeWav(audioChunks, sampleRate), autoMode);
-      recordBtn.textContent = "Gravar voz";
-      recordBtn.disabled = voiceConversationActive;
-    }}
-
-    function stopAudioCaptureOnly() {{
-      recording = false;
-      autoListening = false;
-      clearTimeout(recordingTimer);
-      if (audioProcessor) audioProcessor.disconnect();
-      if (audioSource) audioSource.disconnect();
-      if (audioStream) audioStream.getTracks().forEach(track => track.stop());
-      if (audioContext) audioContext.close();
-      audioContext = null;
-      audioStream = null;
-      audioSource = null;
-      audioProcessor = null;
-      audioChunks = [];
-      updateVoiceOrb(0);
-    }}
-
-    async function startVoiceConversation() {{
-      if (voiceActivationInProgress) return;
-      if (voiceConversationActive) {{
-        voiceConversationActive = false;
-        voiceSessionBtn.classList.remove("active");
-        voiceSessionBtn.textContent = "Ativar escuta";
-        recordBtn.disabled = false;
-        stopAudioCaptureOnly();
-        stopPcAudio();
-        setVoiceVisualState("idle");
-        statusEl.textContent = "Conversa por voz encerrada.";
-        return;
-      }}
-      voiceActivationInProgress = true;
-      voiceConversationActive = true;
-      voiceSessionBtn.classList.add("active");
-      voiceSessionBtn.textContent = "Pausar escuta";
-      recordBtn.disabled = true;
-      try {{
-        await startLocalRecording(true);
-      }} catch (error) {{
-        stopAudioCaptureOnly();
-        voiceConversationActive = false;
-        voiceSessionBtn.classList.remove("active");
-        voiceSessionBtn.textContent = "Ativar escuta";
-        recordBtn.disabled = false;
-        setVoiceVisualState("needs-gesture");
-        statusEl.textContent = "Toque em Ativar escuta e autorize o microfone deste site HTTPS.";
-      }} finally {{
-        voiceActivationInProgress = false;
-      }}
-    }}
-
-    function resumeVoiceConversation(delayMs = 300) {{
-      if (!voiceConversationActive || recording) return;
-      setTimeout(() => {{
-        if (!voiceConversationActive || recording) return;
-        startLocalRecording(true).catch(() => {{
-          voiceConversationActive = false;
-          voiceSessionBtn.classList.remove("active");
-          voiceSessionBtn.textContent = "Ativar escuta";
-          recordBtn.disabled = false;
-          setVoiceVisualState("idle");
-        }});
-      }}, delayMs);
-    }}
-
-    function scheduleAutomaticWakeListening() {{
-      setTimeout(() => {{
-        if (!voiceConversationActive) startVoiceConversation();
-      }}, 250);
-      document.addEventListener("pointerdown", () => {{
-        if (!voiceConversationActive && !voiceActivationInProgress) {{
-          startVoiceConversation();
-        }}
-      }}, {{ once: true, capture: true }});
-    }}
-
-    if (!voiceEnabled || !navigator.mediaDevices || !AudioContextClass) {{
-      recordBtn.disabled = true;
-      voiceSessionBtn.disabled = true;
-      recordBtn.textContent = "Gravacao local indisponivel";
-      voiceSessionBtn.textContent = "Voz indisponivel";
-    }} else {{
-      voiceSessionBtn.addEventListener("click", startVoiceConversation);
-      recordBtn.addEventListener("click", async () => {{
-        if (recording) {{
-          await stopLocalRecording(false);
+      if (data.ok && data.transcript) {{
+        addMsg("user", data.transcript);
+        if (data.command_submitted === false) {{
+          setStatus("Escuta ativa");
+          setHint("Fale seu pedido agora.");
+          orbState = "listening";
           return;
         }}
-        try {{
-          await startLocalRecording(false);
-        }} catch (error) {{
-          stopAudioCaptureOnly();
-          statusEl.textContent = "Microfone bloqueado. Use o botao de voz do teclado ou habilite HTTPS.";
+        lastResponseVersion = Number(data.response_version || lastResponseVersion);
+        waitForResponse();
+      }} else {{
+        setStatus("Erro ao enviar voz");
+        addMsg("ref", data.message || "Nao foi possivel enviar a voz.");
+        orbState = "idle";
+      }}
+    }}
+
+    micBtn.addEventListener("click", async () => {{
+      if (recording) {{
+        await stopRecording();
+        return;
+      }}
+      if (!voiceEnabled || !navigator.mediaDevices || !AudioContextClass) {{
+        setStatus("Voz indisponivel neste navegador");
+        return;
+      }}
+      await startRecording();
+    }});
+
+    sendBtn.addEventListener("click", () => sendCommand(inputEl.value));
+
+    inputEl.addEventListener("keydown", (event) => {{
+      if (event.key === "Enter" && !event.shiftKey) {{
+        event.preventDefault();
+        sendCommand(inputEl.value);
+      }}
+    }});
+
+    inputEl.addEventListener("input", () => {{
+      inputEl.style.height = "42px";
+      inputEl.style.height = Math.min(120, inputEl.scrollHeight) + "px";
+      sendBtn.disabled = !inputEl.value.trim();
+    }});
+
+    responseAudio.addEventListener("ended", () => {{
+      orbState = "idle";
+      setHint("Toque na esfera para ouvir de novo.");
+    }});
+
+    responseAudio.addEventListener("pause", () => {{
+      if (orbState === "speaking") orbState = "idle";
+    }});
+
+    function sphereColor(state) {{
+      if (state === "speaking") return [167, 139, 250];
+      if (state === "listening") return [104, 218, 177];
+      if (state === "thinking") return [110, 168, 245];
+      return [72, 177, 143];
+    }}
+
+    function drawOrb(now) {{
+      const w = orbCanvas.width;
+      const h = orbCanvas.height;
+      const state = orbState;
+      const level = Math.max(micDrive, playbackLevel());
+      let target = level;
+      if (state === "thinking") target = Math.max(target, 0.35);
+      if (state === "speaking") target = Math.max(target, 0.5);
+      drive += (target - drive) * 0.1;
+      const breathe = 0.5 + 0.5 * Math.sin(now / 900);
+      const scale = 1 + drive * 0.3 + (state === "idle" ? breathe * 0.05 : 0);
+      const r = w * 0.35 * scale;
+      const base = sphereColor(state);
+
+      rings.push({{ r: r, speed: 1.6, alpha: Math.max(0, Math.min(0.6, drive * 0.7)) }});
+      rings.forEach(ring => {{
+        ring.r += ring.speed;
+        ring.alpha *= 0.94;
+      }});
+      rings = rings.filter(ring => ring.alpha > 0.02 && ring.r < w * 0.7);
+
+      orbCtx.clearRect(0, 0, w, h);
+      const cx = w / 2;
+      const cy = h / 2;
+
+      const glue = "rgba(" + base[0] + "," + base[1] + "," + base[2] + ",";
+      const glow = orbCtx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.9);
+      glow.addColorStop(0, glue + (0.22 * drive + 0.08) + ")");
+      glow.addColorStop(1, glue + "0)");
+      orbCtx.fillStyle = glow;
+      orbCtx.fillRect(0, 0, w, h);
+
+      for (const ring of rings) {{
+        orbCtx.beginPath();
+        orbCtx.arc(cx, cy, ring.r, 0, Math.PI * 2);
+        orbCtx.strokeStyle = glue + ring.alpha + ")";
+        orbCtx.lineWidth = 2;
+        orbCtx.stroke();
+      }}
+
+      const hi0 = Math.min(255, base[0] + 45);
+      const hi1 = Math.min(255, base[1] + 45);
+      const hi2 = Math.min(255, base[2] + 45);
+      const gn = orbCtx.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.1, cx, cy, r * 1.15);
+      gn.addColorStop(0, "rgb(" + hi0 + "," + hi1 + "," + hi2 + ")");
+      gn.addColorStop(0.45, "rgb(" + base[0] + "," + base[1] + "," + base[2] + ")");
+      gn.addColorStop(1, "rgb(" + Math.round(base[0] * 0.25) + "," + Math.round(base[1] * 0.25) + "," + Math.round(base[2] * 0.25) + ")");
+      orbCtx.beginPath();
+      orbCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      orbCtx.fillStyle = gn;
+      orbCtx.fill();
+
+      const coreAlpha = Math.min(0.7, 0.2 + drive * 0.55 + (state === "speaking" ? 0.2 : 0));
+      const coreGlow = orbCtx.createRadialGradient(cx, cy, 1, cx, cy, r * 0.6);
+      coreGlow.addColorStop(0, "rgba(255,255,255," + coreAlpha + ")");
+      coreGlow.addColorStop(1, "rgba(255,255,255,0)");
+      orbCtx.beginPath();
+      orbCtx.arc(cx, cy, r * 0.6, 0, Math.PI * 2);
+      orbCtx.fillStyle = coreGlow;
+      orbCtx.fill();
+
+      requestAnimationFrame(drawOrb);
+    }}
+
+    try {{
+      if (!navigator.mediaDevices || !AudioContextClass) {{
+        micBtn.disabled = true;
+        micBtn.title = "Voz indisponivel";
+      }}
+      inputEl.style.height = "42px";
+      sendBtn.disabled = true;
+      requestAnimationFrame(drawOrb);
+      fetchJson("/api/status", {{}}, 6000).then(data => {{
+        if (data.ok) {{
+          setStatus("Conectado");
+          setDot(true);
+          setHint("Fale ao vivo ou digite uma mensagem.");
         }}
       }});
-      scheduleAutomaticWakeListening();
+    }} catch (err) {{
+      setStatus("Erro ao iniciar");
     }}
   </script>
 </body>
-</html>"""
+</html>
+"""

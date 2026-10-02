@@ -6,7 +6,7 @@ Falls back to no-op if opentelemetry packages are not installed.
 
 import logging
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from typing import Any
 
@@ -30,25 +30,29 @@ except ImportError:
 
 _INSTRUMENTORS_AVAILABLE = False
 try:
-    from opentelemetry.instrumentation.logging import LoggingInstrumentor  # type: ignore[no-redef]
-    from opentelemetry.instrumentation.requests import (
+    from opentelemetry.instrumentation.logging import (
+        LoggingInstrumentor,  # type: ignore[no-redef,import-not-found]
+    )
+    from opentelemetry.instrumentation.requests import (  # type: ignore[no-redef,import-not-found]
         RequestsInstrumentor,  # type: ignore[no-redef]
     )
-    from opentelemetry.instrumentation.urllib import URLLibInstrumentor  # type: ignore[no-redef]
+    from opentelemetry.instrumentation.urllib import (  # type: ignore[no-redef,import-not-found]
+        URLLibInstrumentor,  # type: ignore[no-redef]
+    )
 
     _INSTRUMENTORS_AVAILABLE = True
 except ImportError:
     pass
 
 try:
-    from opentelemetry.instrumentation.httpx import (
+    from opentelemetry.instrumentation.httpx import (  # type: ignore[no-redef,import-not-found]
         HTTPXClientInstrumentor,  # type: ignore[no-redef]
     )
 except ImportError:
     HTTPXClientInstrumentor = None  # type: ignore[assignment,misc]
 
 try:
-    from opentelemetry.instrumentation.aiohttp_client import (
+    from opentelemetry.instrumentation.aiohttp_client import (  # type: ignore[no-redef,import-not-found]
         AioHttpClientInstrumentor,  # type: ignore[no-redef]
     )
 except ImportError:
@@ -83,42 +87,42 @@ class MetricNames:
 
 
 class _NoOpSpan:
-    def __enter__(self):
+    def __enter__(self) -> "_NoOpSpan":
         return self
 
-    def __exit__(self, *a):
+    def __exit__(self, *a: Any) -> None:
         pass
 
-    def set_attribute(self, *a):
+    def set_attribute(self, *a: Any) -> None:
         pass
 
-    def set_status(self, *a):
+    def set_status(self, *a: Any) -> None:
         pass
 
-    def record_exception(self, *a):
+    def record_exception(self, *a: Any) -> None:
         pass
 
 
 class _NoOpTracer:
-    def start_as_current_span(self, name, **kw):
+    def start_as_current_span(self, name: str, **kw: Any) -> Any:
         return _NoOpSpan()
 
 
 class _NoOpCounter:
-    def add(self, *a, **kw):
+    def add(self, *a: Any, **kw: Any) -> None:
         pass
 
 
 class _NoOpHistogram:
-    def record(self, *a, **kw):
+    def record(self, *a: Any, **kw: Any) -> None:
         pass
 
 
 class _NoOpMeter:
-    def create_counter(self, *a, **kw):
+    def create_counter(self, *a: Any, **kw: Any) -> _NoOpCounter:
         return _NoOpCounter()
 
-    def create_histogram(self, *a, **kw):
+    def create_histogram(self, *a: Any, **kw: Any) -> _NoOpHistogram:
         return _NoOpHistogram()
 
 
@@ -246,9 +250,9 @@ def shutdown_telemetry() -> None:
     _meter = None
 
 
-def trace_function(name: str | None = None, attributes: dict | None = None):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
+def trace_function(name: str | None = None, attributes: dict[str, Any] | None = None) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Any:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             tracer = get_tracer()
             span_name = name or f"{func.__module__}.{func.__qualname__}"
             with tracer.start_as_current_span(span_name) as span:
@@ -272,7 +276,7 @@ def trace_function(name: str | None = None, attributes: dict | None = None):
 
 
 @contextmanager
-def trace_span(name: str, attributes: dict | None = None) -> Generator:
+def trace_span(name: str, attributes: dict[str, Any] | None = None) -> Generator[Any, None, None]:
     tracer = get_tracer()
     with tracer.start_as_current_span(name) as span:
         if attributes:
@@ -289,13 +293,13 @@ def trace_span(name: str, attributes: dict | None = None) -> Generator:
             raise
 
 
-def record_metric(name: str, value: float, attributes: dict | None = None) -> None:
+def record_metric(name: str, value: float, attributes: dict[str, Any] | None = None) -> None:
     meter = get_meter()
     counter = meter.create_counter(name)
     counter.add(value, attributes or {})
 
 
-def record_histogram(name: str, value: float, attributes: dict | None = None) -> None:
+def record_histogram(name: str, value: float, attributes: dict[str, Any] | None = None) -> None:
     meter = get_meter()
     histogram = meter.create_histogram(name)
     histogram.record(value, attributes or {})

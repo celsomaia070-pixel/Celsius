@@ -230,3 +230,61 @@ CELSIUS_FEATURE_VOICE_INPUT=true
 CELSIUS_FEATURE_VOICE_OUTPUT=true
 CELSIUS_FEATURE_IMAGE_ANALYSIS=true
 ```
+
+## Camada de Decisão (Jev/Kev)
+
+A camada Jev/Kev roda localmente em `http://127.0.0.1:8009` (servidor `kev.serve`).
+Desligada por padrão.
+
+```env
+CELSIUS_DECISION_ENABLED=false
+CELSIUS_DECISION_PROVIDER=local
+CELSIUS_DECISION_BASE_URL=http://127.0.0.1:8009
+CELSIUS_DECISION_MODEL=kev-latest
+CELSIUS_DECISION_TIMEOUT_MS=4000
+CELSIUS_DECISION_GUARD_RISK_THRESHOLD=0.70
+CELSIUS_DECISION_GUARD_UNCERTAINTY_BAND=0.15
+CELSIUS_DECISION_RAG_RELEVANCE_THRESHOLD=0.60
+CELSIUS_DECISION_RAG_MAX_GATED_CHUNKS=5
+CELSIUS_DECISION_MODEL_ROUTING=true
+CELSIUS_DECISION_RECORD_OUTCOMES=true
+CELSIUS_DECISION_HEALTH_CACHE_SECONDS=15.0
+CELSIUS_DECISION_MODEL_ROUTE_MIN_MARGIN=0.15
+CELSIUS_DECISION_MODEL_ROUTE_MIN_CONFIDENCE=0.35
+CELSIUS_DECISION_RAG_CALIBRATION_MODE=true
+CELSIUS_DECISION_RAG_PRUNE_ENABLED=false
+CELSIUS_DECISION_RAG_MIN_SAMPLES=30
+CELSIUS_DECISION_RAG_PRUNE_MARGIN=0.15
+```
+
+Para habilitar:
+1. Suba o servidor: `powershell -ExecutionPolicy Bypass -File scripts\kev-server.ps1`
+2. Defina `CELSIUS_DECISION_ENABLED=true` no `.env`
+3. No desktop, selecione "Auto (JEV)" no seletor de modelos
+
+## Modos Agênticos
+
+O Celsius tem 6 modos agênticos que definem quais ferramentas estão disponíveis e se podem planejar tarefas:
+
+| Modo | Ferramentas | Planejamento | Rede | Uso |
+|------|-------------|--------------|------|-----|
+| `assistente` | Leitura + memória | Não | Não | Chat geral, consultas |
+| `executor` | Leitura + escrita + relatórios | Sim | Não | Execução de objetivos |
+| `documentos` | RAG + leitura | Sim | Não | Análise de documentos |
+| `estoque` | Estoque (leitura/escrita) + relatórios | Sim | Não | Movimentação de estoque |
+| `pesquisador` | Web + leitura + RAG | Sim | Sim | Pesquisa na web |
+| `desenvolvedor` | Código + arquivos | Sim | Não | Desenvolvimento |
+
+Configuração via `.env`:
+```env
+CELSIUS_AGENT_ENABLED=true
+CELSIUS_AGENT_DEFAULT_MODE=assistente
+CELSIUS_AGENT_MAX_STEPS=24
+CELSIUS_AGENT_MAX_SECONDS=600
+CELSIUS_AGENT_MAX_ATTEMPTS=2
+CELSIUS_AGENT_MAX_PLAN_ITEMS=6
+```
+
+No desktop: use o seletor "Modo" na área de entrada.
+No web: o `modeSelect` salva em `localStorage` `celsius-agent-mode`.
+Por voz: "Celsius, entre no modo estoque" ou apenas "modo estoque".

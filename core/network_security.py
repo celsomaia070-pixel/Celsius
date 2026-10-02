@@ -28,7 +28,7 @@ def validate_public_http_url(url: str) -> str:
 
     try:
         addresses = {
-            item[4][0]
+            str(item[4][0])
             for item in socket.getaddrinfo(
                 parsed.hostname,
                 parsed.port or (443 if parsed.scheme.lower() == "https" else 80),

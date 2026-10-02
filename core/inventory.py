@@ -1,10 +1,12 @@
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from core.json_persistence import locked_path
 from core.settings import get_settings
@@ -66,7 +68,7 @@ class ItemEstoque:
     created_at: str = ""
     updated_at: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
         if not self.created_at:
             self.created_at = now
@@ -78,10 +80,10 @@ class ItemEstoque:
         return ColunaKanban(self.localizacao)
 
     @coluna.setter
-    def coluna(self, value: ColunaKanban):
+    def coluna(self, value: ColunaKanban) -> None:
         self.localizacao = value.value
 
-    def atualizar_coluna_automaticamente(self):
+    def atualizar_coluna_automaticamente(self) -> None:
         if self.quantidade <= 0:
             self.coluna = ColunaKanban.A_COMPRAR
         elif self.quantidade <= self.estoque_min:
@@ -131,7 +133,7 @@ class Movimentacao:
     quantidade_nova: int
     timestamp: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.timestamp:
             self.timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
@@ -144,7 +146,7 @@ class Movimentacao:
 
 
 class InventoryService:
-    def __init__(self, settings=None, data_file: Path | None = None):
+    def __init__(self, settings: Any | None = None, data_file: Path | None = None):
         self.settings = settings or get_settings()
         self.data_file = Path(data_file) if data_file else self.settings.inventory_file
         self._db_path = db_path_for(self.data_file)
@@ -156,21 +158,21 @@ class InventoryService:
         self._load_error: Exception | None = None
         self._load()
 
-    def add_listener(self, callback):
+    def add_listener(self, callback: Callable[[str, Any], None]) -> None:
         self._listeners.append(callback)
 
-    def _notify(self, event: str, data=None):
+    def _notify(self, event: str, data: Any = None) -> None:
         for cb in self._listeners:
             try:
                 cb(event, data)
             except Exception as e:
                 logger.warning("Listener error: %s", e)
 
-    def _load(self):
+    def _load(self) -> None:
         with self._lock, locked_path(self._db_path):
             self._load_unlocked()
 
-    def _load_unlocked(self):
+    def _load_unlocked(self) -> None:
         self._items = {}
         self._movimentacoes = []
         self._load_error = None
@@ -195,14 +197,14 @@ class InventoryService:
         except FileNotFoundError:
             return None
 
-    def _refresh_if_changed(self):
+    def _refresh_if_changed(self) -> None:
         if self._signature() == self._file_signature:
             return
         with locked_path(self._db_path):
             if self._signature() != self._file_signature:
                 self._load_unlocked()
 
-    def _save_unlocked(self):
+    def _save_unlocked(self) -> None:
         if self._load_error is not None:
             raise RuntimeError(
                 "O estoque nao foi salvo porque o arquivo existente esta invalido."
@@ -263,7 +265,7 @@ class InventoryService:
             self._refresh_if_changed()
             return [i for i in self._items.values() if i.coluna == coluna]
 
-    def get_movimentacoes(self, item_id: str = None) -> list[Movimentacao]:
+    def get_movimentacoes(self, item_id: str | None = None) -> list[Movimentacao]:
         with self._lock:
             self._refresh_if_changed()
             if item_id:
@@ -308,10 +310,10 @@ class InventoryService:
     def editar_item(
         self,
         item_id: str,
-        nome: str = None,
-        categoria: str = None,
-        estoque_min: int = None,
-        estoque_max: int = None,
+        nome: str | None = None,
+        categoria: str | None = None,
+        estoque_min: int | None = None,
+        estoque_max: int | None = None,
     ) -> ItemEstoque | None:
         with self._lock, locked_path(self._db_path):
             self._load_unlocked()

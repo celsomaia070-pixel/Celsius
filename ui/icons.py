@@ -163,6 +163,7 @@ _S = {
         '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" '
         'fill="none" stroke="{c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
+    "stop": ('<rect x="6" y="6" width="12" height="12" rx="2.5" fill="{c}"/>'),
 }
 
 

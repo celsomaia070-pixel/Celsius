@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from typing import Annotated
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from core.chat_attachments import AttachmentError
@@ -19,6 +20,8 @@ class ChatMessageRequest(BaseModel):
     conversation_id: str = ""
     attachment_ids: list[str] = Field(default_factory=list, max_length=10)
     model_id: str = ""
+    agent_mode: str = ""
+    work_agents: list[str] = Field(default_factory=list)
 
 
 @router.get("/conversations")
@@ -68,6 +71,24 @@ async def upload_attachment(
     return {"ok": True, "attachment": attachment.public_dict()}
 
 
+@router.get("/attachments/{attachment_id}")
+async def download_attachment(attachment_id: str, request: Request) -> FileResponse:
+    """Serve a file the assistant produced so the user can save it."""
+    try:
+        stored = request.app.state.chat_coordinator.outputs.get(attachment_id)
+    except AttachmentError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # The name comes from our own record, not the request, so it cannot be used
+    # to inject headers; quoting keeps non-ASCII names readable to the browser.
+    filename = quote(stored.name)
+    return FileResponse(
+        stored.path,
+        media_type="application/octet-stream",
+        filename=stored.name,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
 @router.post("/messages", status_code=status.HTTP_202_ACCEPTED)
 async def send_message(payload: ChatMessageRequest, request: Request) -> dict:
     try:
@@ -76,6 +97,8 @@ async def send_message(payload: ChatMessageRequest, request: Request) -> dict:
             conversation_id=payload.conversation_id,
             attachment_ids=payload.attachment_ids,
             model_id=payload.model_id,
+            agent_mode=payload.agent_mode,
+            work_agents=payload.work_agents,
         )
     except ChatBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

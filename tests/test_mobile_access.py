@@ -76,47 +76,35 @@ class TestMobileAccess:
 
         assert _create_server_ssl_context() is native_context
 
-    def test_mobile_page_uses_single_optimized_voice_button(self):
+    def test_mobile_page_uses_sphere_chat_voice_interface(self):
         html = _mobile_html("secret", True)
 
         assert "Falar comando" not in html
         assert "SpeechRecognition" not in html
-        assert "speechSynthesis" in html
-        assert "Gravar voz" in html
-        assert "Parar e enviar" in html
-        assert "Digitar mensagem" in html
-        assert "composerBody" in html
+        assert "SpeechDetection" not in html
         assert "token=" not in html
-        assert "Bearer ${token}" not in html
-        assert 'aria-expanded="false"' in html
-        assert "Use quando preferir escrever" in html
-        assert "voiceOrb" in html
-        assert "Ativar escuta" in html
-        assert 'Aguardando "Celsius"' in html
-        assert "scheduleAutomaticWakeListening" in html
-        assert "command_submitted" in html
-        assert "themeToggle" in html
-        assert "celsiusMobileTheme" in html
-        assert "color-scheme: light" in html
-        assert "voiceRing" in html
-        assert "SILENCE_TO_SEND_MS" in html
-        assert "MIN_VOICE_THRESHOLD" in html
-        assert 'audioContext.state !== "running"' in html
-        assert "audioContext.resume()" in html
-        assert "noiseSuppression: true" in html
-        assert 'setVoiceVisualState("needs-gesture")' in html
-        assert "resumeVoiceConversation" in html
-        assert "TARGET_SAMPLE_RATE = 16000" in html
+        assert "Bearer " not in html
+        assert "voiceSession" not in html
+        assert "themeToggle" not in html
+        assert "composerBody" not in html
+        assert "scheduleAutomaticWakeListening" not in html
+        assert "voiceEnabled = true;" in html
+        assert 'canvas id="orb"' in html
+        assert "drawOrb" in html
+        assert "playbackLevel" in html
+        assert "micDrive" in html
+        assert 'id="micBtn"' in html
+        assert 'id="sendBtn"' in html
+        assert 'id="input"' in html
+        assert "waitForResponse" in html
+        assert "/api/command" in html
+        assert "/api/voice-command" in html
         assert "/api/last-audio" in html
-        assert "Celsius mobile - identidade visual compartilhada com o site" in html
-        assert "--page: #F4F7F6" in html
-        assert "--surface: #FFFFFF" in html
-        assert "--primary: #087E72" in html
-        assert "--page: #101715" in html
-        assert "--primary: #42C6B7" in html
-        assert "Processado no seu PC" in html
-        assert "Fale com o Celsius" in html
-        assert "Ocultar campo" in html
+        assert "command_submitted" in html
+        assert "TARGET_SAMPLE_RATE = 16000" in html
+        assert "encodeWav" in html
+        assert "noiseSuppression: true" in html
+        assert "history.replaceState" in html
 
     def test_generates_pairing_token(self):
         token = ensure_mobile_token()
@@ -160,6 +148,18 @@ class TestMobileAccess:
             server.stop()
 
         assert "no-store" in cache_control
+
+    def test_consumed_qr_link_is_replaced_immediately(self):
+        server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
+        try:
+            first_url = server.url
+            with urllib.request.urlopen(first_url, timeout=5):
+                pass
+            second_url = server.url
+        finally:
+            server.stop()
+
+        assert second_url != first_url
 
     def test_accepts_authorized_command(self):
         received = []
@@ -206,6 +206,51 @@ class TestMobileAccess:
         assert response["text"] == "Resposta pronta"
         assert response["audio_ready"] is False
         assert stale["has_new"] is False
+
+    def test_publish_partial_streams_live_text_without_consuming_version(self):
+        server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
+        try:
+            server.publish_partial("Ol")
+            partial = server.latest_response()
+            version = partial["version"]
+            final = server.publish_response("Ola final")
+        finally:
+            server.stop()
+
+        assert partial["live_active"] is True
+        assert partial["live_text"] == "Ol"
+        assert version == 0
+        assert server.latest_response()["live_active"] is False
+        assert final == 1
+        assert server.latest_response()["text"] == "Ola final"
+
+    def test_live_text_not_final_via_http_endpoint(self):
+        server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
+        try:
+            server.publish_partial("Gerando...")
+            port = server._httpd.server_address[1]
+            response = _request_json(
+                f"http://127.0.0.1:{port}/api/last-response?after=0",
+                token="secret",
+            )
+        finally:
+            server.stop()
+
+        assert response["ok"] is True
+        assert response["has_new"] is False
+        assert response["live_active"] is True
+        assert response["live_text"] == "Gerando..."
+
+    def test_publish_partial_ignores_empty(self):
+        server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
+        try:
+            server.publish_partial("   ")
+            state = server.latest_response()
+        finally:
+            server.stop()
+
+        assert state["live_active"] is False
+        assert state["live_text"] == ""
 
     def test_publishes_pc_generated_audio_for_mobile_client(self):
         server = MobileAccessServer("127.0.0.1", 0, "secret", lambda *_args: True).start()
@@ -349,6 +394,33 @@ class TestMobileAccess:
         assert response["wake_detected"] is True
         assert response["command_submitted"] is False
         assert response["response_version"] == 0
+
+    def test_command_callback_can_return_job_metadata(self):
+        server = MobileAccessServer(
+            "127.0.0.1",
+            0,
+            "secret",
+            lambda *_args: {
+                "ok": True,
+                "message": "Comando enviado ao Celsius.",
+                "job_id": "job-mobile-1",
+                "conversation_id": "abc123def456",
+                "command_submitted": True,
+            },
+        ).start()
+        try:
+            port = server._httpd.server_address[1]
+            response = _request_json(
+                f"http://127.0.0.1:{port}/api/command",
+                token="secret",
+                payload={"message": "Ola", "source": "phone_text"},
+            )
+        finally:
+            server.stop()
+
+        assert response["ok"] is True
+        assert response["job_id"] == "job-mobile-1"
+        assert response["conversation_id"] == "abc123def456"
 
     def test_serves_status_over_https_with_local_certificate(self, tmp_path):
         pytest.importorskip("cryptography", reason="HTTPS local depende de cryptography")

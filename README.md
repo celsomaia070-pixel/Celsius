@@ -30,6 +30,8 @@ quando disponivel e fallback para CPU.
 - Sidebar dinamica por modulos da empresa.
 - Base de acesso local pelo celular, com token e comandos por texto/voz.
 - Geracao de relatorios em PDF/DOCX.
+- Inspecao e preenchimento local de formularios DOCX e PDFs AcroForm, sempre em
+  uma nova copia, com entrega do resultado como anexo do chat.
 - Licenciamento com trial e chave de ativacao.
 
 ## Modulos por Empresa
@@ -85,6 +87,16 @@ python -m playwright install chromium
 python main.py
 ```
 
+Para abrir a interface web somente neste computador, execute:
+
+```powershell
+python -m core.web_api
+```
+
+Depois acesse `http://127.0.0.1:8790/app`. O acesso pelo celular usa o
+pareamento HTTPS separado exibido pelo Celsius; por isso nao e necessario abrir
+o endereco HTTPS local no navegador do PC.
+
 Se o PowerShell bloquear a ativacao do ambiente virtual:
 
 ```powershell
@@ -109,6 +121,7 @@ Windows e Linux.
 - [Guia do iniciante](docs/GUIA_INICIANTE.md)
 - [Desenvolvimento](docs/DEVELOPMENT.md)
 - [Arquitetura](docs/ARCHITECTURE.md)
+- [Preenchimento de documentos com fontes](docs/document-filling.md)
 - [Configuracao](docs/CONFIGURATION.md)
 - [Privacidade e protecao de dados](docs/PRIVACY.md)
 - [Build e instalador](docs/BUILD.md)

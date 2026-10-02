@@ -1,20 +1,181 @@
+import base64
+import json
 import re
 import urllib.parse
+import urllib.request
 import webbrowser
 from datetime import datetime
+from html.parser import HTMLParser
 
 from duckduckgo_search import DDGS
 
+_WEATHER_CODES = {
+    0: "Céu limpo", 1: "Predominantemente limpo", 2: "Parcialmente nublado",
+    3: "Nublado", 45: "Neblina", 48: "Neblina com geada", 51: "Garoa fraca",
+    53: "Garoa moderada", 55: "Garoa forte", 61: "Chuva fraca", 63: "Chuva moderada",
+    65: "Chuva forte", 71: "Neve fraca", 73: "Neve moderada", 75: "Neve forte",
+    80: "Pancadas fracas", 81: "Pancadas moderadas", 82: "Pancadas fortes",
+    95: "Trovoada", 96: "Trovoada com granizo fraco", 99: "Trovoada com granizo forte",
+}
+
+
+def _weather_forecast(texto: str) -> str | None:
+    """Return a location-specific forecast from Open-Meteo's public API."""
+    match = re.search(r"\bem\s+(.+?)\s*$", texto, re.IGNORECASE)
+    if not match:
+        match = re.search(r"\bpara\s+(.+?)\s*$", texto, re.IGNORECASE)
+    if not match:
+        return None
+    place = match.group(1).strip(" .,!?")
+    place = re.sub(r"(?:\s|,)+(?:sp|sao paulo|são paulo)$", "", place, flags=re.IGNORECASE)
+    if not place:
+        return None
+    geocode_url = "https://geocoding-api.open-meteo.com/v1/search?" + urllib.parse.urlencode(
+        {"name": place, "count": 10, "language": "pt", "format": "json"}
+    )
+    try:
+        request = urllib.request.Request(geocode_url, headers={"User-Agent": "Celsius/1.0"})
+        with urllib.request.urlopen(request, timeout=12) as response:  # nosec B310 - fixed HTTPS host
+            places = json.loads(response.read().decode("utf-8"))
+        candidates = places.get("results") or []
+        location = next(
+            (item for item in candidates if item.get("country_code") == "BR" and item.get("admin1") == "São Paulo"),
+            candidates[0] if candidates else None,
+        )
+        if not location:
+            return "Nenhuma localidade foi encontrada para a previsao solicitada."
+        forecast_url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(
+            {
+                "latitude": location["latitude"], "longitude": location["longitude"],
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "timezone": "America/Sao_Paulo", "forecast_days": 5,
+            }
+        )
+        request = urllib.request.Request(forecast_url, headers={"User-Agent": "Celsius/1.0"})
+        with urllib.request.urlopen(request, timeout=12) as response:  # nosec B310 - fixed HTTPS host
+            forecast = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return f"Erro na consulta meteorologica: {exc}"
+    daily = forecast.get("daily") or {}
+    lines = [
+        f"[FONTE_WEB] Open-Meteo — previsao para {location['name']}, {location.get('admin1', '')}",
+        f"URL: {forecast_url}",
+    ]
+    for date, low, high, rain, code in zip(
+        daily.get("time", []), daily.get("temperature_2m_min", []), daily.get("temperature_2m_max", []),
+        daily.get("precipitation_probability_max", []), daily.get("weather_code", []), strict=False,
+    ):
+        condition = _WEATHER_CODES.get(code, "Condição não especificada")
+        lines.append(f"{date}: {condition}; mínima {low}°C; máxima {high}°C; chuva {rain}%.")
+    return "\n".join(lines)
+
+
+class _BingResultParser(HTMLParser):
+    """Small dependency-free parser used when DuckDuckGo returns no items."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[dict[str, str]] = []
+        self._in_result = False
+        self._in_title = False
+        self._in_body = False
+        self._href = ""
+        self._title: list[str] = []
+        self._body: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        classes = set(str(attributes.get("class", "")).split())
+        if tag == "li" and "b_algo" in classes:
+            self._in_result = True
+            self._title, self._body, self._href = [], [], ""
+        elif self._in_result and tag == "a" and not self._href:
+            self._href = str(attributes.get("href", ""))
+            self._in_title = True
+        elif self._in_result and tag in {"p", "div"}:
+            self._in_body = True
+
+    def handle_endtag(self, tag):
+        if not self._in_result:
+            return
+        if tag == "a":
+            self._in_title = False
+        elif tag in {"p", "div"}:
+            self._in_body = False
+        elif tag == "li":
+            title = " ".join("".join(self._title).split())
+            body = " ".join("".join(self._body).split())
+            if self._href.startswith(("http://", "https://")) and title:
+                self.results.append({"title": title, "body": body, "href": self._href})
+            self._in_result = False
+
+    def handle_data(self, data):
+        if self._in_title:
+            self._title.append(data)
+        elif self._in_body:
+            self._body.append(data)
+
+
+def _bing_search(texto: str) -> list[dict[str, str]]:
+    url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(texto)
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(request, timeout=12) as response:  # nosec B310 - fixed HTTPS host
+        parser = _BingResultParser()
+        parser.feed(response.read().decode("utf-8", errors="replace"))
+        for item in parser.results:
+            parsed = urllib.parse.urlparse(item["href"])
+            query = urllib.parse.parse_qs(parsed.query)
+            encoded = query.get("u", [""])[0]
+            if encoded.startswith("a1"):
+                try:
+                    decoded = base64.urlsafe_b64decode(encoded[2:] + "===").decode()
+                    if decoded.startswith(("http://", "https://")):
+                        item["href"] = decoded
+                except (ValueError, UnicodeDecodeError):
+                    pass
+        return parser.results[:5]
+
 
 def pesquisar_web(texto):
+    normalized = str(texto).casefold()
+    if any(word in normalized for word in ("previsao", "previsão", "tempo", "clima", "meteorolog")):
+        forecast = _weather_forecast(str(texto))
+        if forecast is not None:
+            return forecast
     resultados = []
     try:
         ddgs = DDGS()
         for item in ddgs.text(texto, max_results=5):
-            resultados.append(f"- {item.get('title', '')}\n{item.get('body', '')}")
+            title = str(item.get("title", "")).strip()
+            body = str(item.get("body", "")).strip()
+            href = str(item.get("href", item.get("url", ""))).strip()
+            if not href:
+                continue
+            resultados.append(f"[FONTE_WEB] {title}\n{body}\nURL: {href}")
     except Exception as e:
-        return f"Erro na pesquisa: {e}"
-    return "\n".join(resultados)
+        # DuckDuckGo occasionally responds successfully but yields no parsed
+        # entries. Bing is a read-only fallback so current-information queries
+        # do not silently become an unsourced model response.
+        try:
+            fallback = _bing_search(texto)
+            resultados.extend(
+                f"[FONTE_WEB] {item['title']}\n{item['body']}\nURL: {item['href']}"
+                for item in fallback
+            )
+        except Exception as fallback_error:
+            return f"Erro na pesquisa web: {e}; fallback: {fallback_error}"
+    if not resultados:
+        try:
+            fallback = _bing_search(texto)
+            resultados.extend(
+                f"[FONTE_WEB] {item['title']}\n{item['body']}\nURL: {item['href']}"
+                for item in fallback
+            )
+        except Exception as fallback_error:
+            return f"Erro na pesquisa web: fallback: {fallback_error}"
+    if not resultados:
+        return "Nenhuma fonte web verificavel foi encontrada."
+    return "\n\n".join(resultados)
 
 
 def _normalizar(texto):

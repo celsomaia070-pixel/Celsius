@@ -11,6 +11,7 @@ from core.chat_service import ChatBusyError, ChatCoordinator
 from core.conversations import ConversationManager
 from core.settings import Settings
 from core.web_api.events import EventHub
+from ai.interruption import INTERRUPTED_MARKER
 
 
 @pytest.fixture
@@ -48,6 +49,89 @@ def _coordinator(chat_settings, tmp_path, responder) -> ChatCoordinator:
         responder=responder,
         ensure_model_ready=lambda _status: None,
     )
+
+
+@pytest.mark.parametrize("message", ["TAREFA: Boa tarde", "TAREFA: Olá Celsius, tudo bem?", "Boa tarde"])
+def test_greetings_from_old_work_clients_do_not_enter_task_runner(chat_settings, tmp_path, message):
+    prompts = []
+
+    def responder(prompt, **kwargs):
+        from ai.task_runtime import is_task_command
+        prompts.append(prompt)
+        assert not is_task_command(prompt["pergunta"])
+        return "Boa tarde! Como posso ajudar?"
+
+    coordinator = _coordinator(chat_settings, tmp_path, responder)
+    try:
+        job = coordinator.submit(message=message, agent_mode="executor", work_agents=["executor", "documentos"])
+        result = _wait_for_terminal(coordinator, job["id"])
+        assert result["status"] == "completed"
+        assert prompts[0]["agent_mode"] == "assistente"
+        assert not prompts[0]["work_agents"]
+        assert not prompts[0]["pergunta"].startswith("TAREFA:")
+        conversation = coordinator.conversations.load(job["conversation_id"])
+        assert conversation["messages"][0]["content"] == prompts[0]["pergunta"]
+    finally:
+        coordinator.shutdown()
+
+
+def test_greeting_followed_by_work_is_not_stripped(chat_settings, tmp_path):
+    prompts = []
+
+    def responder(prompt, **kwargs):
+        prompts.append(prompt)
+        return "Solicitação de trabalho recebida."
+
+    coordinator = _coordinator(chat_settings, tmp_path, responder)
+    try:
+        job = coordinator.submit(message="TAREFA: Boa tarde, gere um relatório de estoque", agent_mode="estoque")
+        assert _wait_for_terminal(coordinator, job["id"])["status"] == "completed"
+        assert prompts[0]["pergunta"].startswith("TAREFA:")
+        assert prompts[0]["agent_mode"] == "estoque"
+    finally:
+        coordinator.shutdown()
+
+
+def test_ensure_model_ready_applies_profile_runtime_kwargs(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from core.model_router import get_model_profile
+
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"gguf")
+    settings = SimpleNamespace(
+        llm_model="qwen2.5-vl-7b-q4km",
+        get_model_path=lambda _mid: model_file,
+        model=SimpleNamespace(
+            num_ctx=2048,
+            n_gpu_layers=0,
+            n_batch=512,
+            n_threads=4,
+            use_mmap=True,
+            use_mlock=False,
+        ),
+    )
+
+    class _Manager:
+        def is_healthy(self):
+            return False
+
+        def start(self, **kwargs):
+            self.kwargs = kwargs
+            return True
+
+    manager = _Manager()
+    import core.llama_cpp as llama_cpp_module
+
+    monkeypatch.setattr(llama_cpp_module, "get_llama_manager", lambda: manager)
+
+    coordinator = ChatCoordinator.__new__(ChatCoordinator)
+    coordinator.settings = settings
+    coordinator._ensure_model_ready(lambda *_: None)
+
+    profile = get_model_profile("qwen2.5-vl-7b-q4km")
+    assert manager.kwargs["n_ctx"] == profile.default_n_ctx
+    assert manager.kwargs["n_gpu_layers"] == profile.default_n_gpu_layers
 
 
 class TestAttachmentStore:
@@ -176,6 +260,33 @@ class TestChatCoordinator:
             coordinator.shutdown()
 
         assert cancelled["status"] == "cancelled"
+
+    def test_cancel_preserves_marked_partial_response(self, chat_settings, tmp_path):
+        started = threading.Event()
+
+        def responder(_prompt, *, fn_status, fn_chunk, **_kwargs):
+            started.set()
+            fn_chunk("Trecho parcial")
+            while True:
+                fn_status("Elaborando...")
+                time.sleep(0.01)
+
+        coordinator = _coordinator(chat_settings, tmp_path, responder)
+        try:
+            first = coordinator.submit(message="Pergunta longa")
+            assert started.wait(timeout=1)
+            coordinator.cancel(first["id"])
+            cancelled = _wait_for_terminal(coordinator, first["id"])
+            conversation = coordinator.get_conversation(cancelled["conversation_id"])
+        finally:
+            coordinator.shutdown()
+
+        assert cancelled["status"] == "cancelled"
+        assert "Trecho parcial" in cancelled["response"]
+        assert INTERRUPTED_MARKER in cancelled["response"]
+        assistant_messages = [m for m in conversation["messages"] if m["role"] == "assistant"]
+        assert assistant_messages
+        assert INTERRUPTED_MARKER in assistant_messages[-1]["content"]
 
 
 @pytest.mark.asyncio

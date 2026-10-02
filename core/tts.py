@@ -358,7 +358,13 @@ class EdgeTTSProvider:
         for voice, options in attempts:
             try:
                 audio = bytearray()
-                communicate = edge_tts.Communicate(speech_text, voice, **options)
+                communicate = edge_tts.Communicate(
+                    speech_text,
+                    voice,
+                    rate=options.get("rate", "+0%"),
+                    volume=options.get("volume", "+0%"),
+                    pitch=options.get("pitch", "+0Hz"),
+                )
                 async for item in communicate.stream():
                     if item.get("type") == "audio":
                         audio.extend(item.get("data", b""))

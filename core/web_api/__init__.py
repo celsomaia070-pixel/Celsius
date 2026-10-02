@@ -10,7 +10,7 @@ from core.mobile_access import _create_server_ssl_context
 # ``python -m core.web_api`` imports this package before its __main__. Restore
 # stdlib SSL here so runpy/asyncio cannot cache pip's client-only wrapper.
 _native_ssl_context = _create_server_ssl_context()
-ssl.SSLContext = type(_native_ssl_context)
+ssl.SSLContext = type(_native_ssl_context)  # type: ignore[misc]
 del _native_ssl_context
 
 __all__ = ["EventHub", "create_app", "get_event_hub"]

@@ -21,7 +21,7 @@ def _find_dejavu_font() -> str | None:
 
 class GeradorRelatorio:
     @staticmethod
-    def gerar_markdown(titulo: str, conteudo: str, metadados: dict = None) -> str:
+    def gerar_markdown(titulo: str, conteudo: str, metadados: dict | None = None) -> str:
         data = datetime.now().strftime("%d/%m/%Y %H:%M")
         meta_linhas = ""
         if metadados:
@@ -31,7 +31,9 @@ class GeradorRelatorio:
         return f"# {titulo}\n\n*Gerado em: {data}*\n\n{meta_linhas}\n---\n\n{conteudo}\n"
 
     @staticmethod
-    def exportar_pdf(titulo: str, conteudo: str, caminho_saida: str, metadados: dict = None):
+    def exportar_pdf(
+        titulo: str, conteudo: str, caminho_saida: str, metadados: dict | None = None
+    ) -> str:
         from fpdf import FPDF
 
         pdf = FPDF()
@@ -92,7 +94,9 @@ class GeradorRelatorio:
         return caminho_saida
 
     @staticmethod
-    def exportar_xlsx(titulo: str, conteudo: str, caminho_saida: str, metadados: dict = None):
+    def exportar_xlsx(
+        titulo: str, conteudo: str, caminho_saida: str, metadados: dict | None = None
+    ) -> str:
         from openpyxl import Workbook
         from openpyxl.styles import Font
         from openpyxl.utils import get_column_letter
@@ -137,7 +141,9 @@ class GeradorRelatorio:
         return caminho_saida
 
     @staticmethod
-    def exportar_docx(titulo: str, conteudo: str, caminho_saida: str, metadados: dict = None):
+    def exportar_docx(
+        titulo: str, conteudo: str, caminho_saida: str, metadados: dict | None = None
+    ) -> str:
         import docx
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Pt

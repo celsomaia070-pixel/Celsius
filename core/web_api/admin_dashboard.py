@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
 from core.conversation_history import ConversationHistoryService
+from core.decision_calibration import load_outcomes
+from core.metrics import MetricNames, get_metrics
 from core.users import User, UserRole, UserService
 from core.web_api.auth_users import require_admin
 
@@ -54,6 +57,24 @@ class SystemHealth(BaseModel):
     users_dir_exists: bool
     conversations_dir_exists: bool
     reports_dir_exists: bool
+
+
+class DecisionKindStats(BaseModel):
+    n: int
+    predicted_true: int
+    rate: float
+    mean_value: float
+
+
+class DecisionStatsResponse(BaseModel):
+    enabled: bool
+    outcomes_file: str
+    total_outcomes: int
+    total_provider_fallbacks: int
+    fallback_rate: float
+    by_kind: dict[str, DecisionKindStats]
+    requests_total: dict[str, float]
+    latency_ms: dict[str, float]
 
 
 _start_time = datetime.now(timezone.utc)
@@ -182,4 +203,78 @@ async def get_system_health(request: Request, admin: User = Depends(require_admi
         users_dir_exists=(data_dir / "users").exists(),
         conversations_dir_exists=(data_dir / "conversation_history").exists(),
         reports_dir_exists=(data_dir / "reports").exists(),
+    )
+
+
+def _decision_requests_totals() -> dict[str, float]:
+    metrics = get_metrics()
+    totals: dict[str, float] = {}
+    for status in ("ok", "error", "fallback", "disabled"):
+        totals[status] = metrics.get_counter(MetricNames.DECISION_REQUESTS_TOTAL, status=status)
+    return totals
+
+
+def _decision_latency_ms() -> dict[str, float]:
+    stats = get_metrics().get_histogram_stats(MetricNames.DECISION_LATENCY_SECONDS)
+    if stats["count"] == 0:
+        return {"count": 0.0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0}
+    return {
+        "count": float(stats["count"]),
+        "avg_ms": round(stats["avg"] * 1000.0, 2),
+        "p50_ms": round(stats["p50"] * 1000.0, 2),
+        "p95_ms": round(stats["p95"] * 1000.0, 2),
+        "p99_ms": round(stats["p99"] * 1000.0, 2),
+    }
+
+
+def _decision_outcomes(settings: Any) -> tuple[list[dict[str, Any]], Path]:
+    logs_dir = getattr(settings, "logs_dir", None) or Path(settings.base_dir) / "logs"
+    path = Path(logs_dir) / "decision_outcomes.jsonl"
+    if not path.exists():
+        return [], path
+    return load_outcomes(path), path
+
+
+@router.get("/dashboard/decisions", response_model=DecisionStatsResponse)
+async def get_decision_stats(
+    request: Request, admin: User = Depends(require_admin)
+) -> DecisionStatsResponse:
+    settings = request.app.state.settings
+    decision_settings = getattr(settings, "decision", None)
+    outcomes, path = _decision_outcomes(settings)
+
+    by_kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in outcomes:
+        by_kind[str(entry.get("kind", "unknown"))].append(entry)
+
+    fallbacks = sum(1 for e in outcomes if str(e.get("provider", "")).lower() == "fallback")
+
+    kind_stats: dict[str, DecisionKindStats] = {}
+    for kind, items in by_kind.items():
+        predicted_true = sum(1 for e in items if bool(e.get("predicted")))
+        mean_value = 0.0
+        if items:
+            values = []
+            for e in items:
+                try:
+                    values.append(float(e.get("value", 0.0)))
+                except (TypeError, ValueError):
+                    values.append(0.0)
+            mean_value = round(sum(values) / len(values), 4)
+        kind_stats[kind] = DecisionKindStats(
+            n=len(items),
+            predicted_true=predicted_true,
+            rate=round(predicted_true / len(items), 4) if items else 0.0,
+            mean_value=mean_value,
+        )
+
+    return DecisionStatsResponse(
+        enabled=bool(getattr(decision_settings, "enabled", False)),
+        outcomes_file=str(path),
+        total_outcomes=len(outcomes),
+        total_provider_fallbacks=fallbacks,
+        fallback_rate=round(fallbacks / len(outcomes), 4) if outcomes else 0.0,
+        by_kind=kind_stats,
+        requests_total=_decision_requests_totals(),
+        latency_ms=_decision_latency_ms(),
     )

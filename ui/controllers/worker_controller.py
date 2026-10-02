@@ -15,9 +15,11 @@ class WorkerController(QObject):
     ai_response_started = Signal()
     ai_response_token = Signal(str)
     ai_response_finished = Signal(str)
+    ai_response_cancelled = Signal(str)
     ai_response_error = Signal(str)
     ai_status_update = Signal(str)
     ai_suggestion = Signal(str)
+    ai_notice = Signal(str)
     model_loaded = Signal(str)
     model_load_error = Signal(str)
     model_list_loaded = Signal(list)
@@ -35,6 +37,16 @@ class WorkerController(QObject):
         self._mic_worker = None
         self._voz_worker = None
         self._ai_busy = False
+        self._task_turn = False
+
+    @property
+    def last_turn_was_task(self) -> bool:
+        """Whether the turn that just finished was driven by a task session.
+
+        A task streams many ReAct turns into a single chat bubble, so its final
+        string is not a replacement for what was streamed.
+        """
+        return self._task_turn
 
     def send_message(
         self,
@@ -44,6 +56,9 @@ class WorkerController(QObject):
         memories: list = None,
         model_name: str = None,
         attachments: list = None,
+        conversation_id: str = "",
+        agent_mode: str = "",
+        work_agents: list = None,
     ):
         """Envia mensagem para IA."""
         if self._ai_busy:
@@ -54,6 +69,10 @@ class WorkerController(QObject):
         self.ai_response_started.emit()
         self.ai_status_update.emit("Pensando...")
 
+        from ai.task_runtime import is_task_command
+
+        self._task_turn = is_task_command(message)
+
         history = conversation_history or []
         if history:
             self.ai_status_update.emit("Carregando contexto da conversa...")
@@ -62,6 +81,8 @@ class WorkerController(QObject):
 
         if attachments:
             self.ai_status_update.emit("Preparando anexos...")
+
+        from core.agent_modes import get_mode
 
         prompt_dict = {
             "pergunta": message,
@@ -72,6 +93,9 @@ class WorkerController(QObject):
             "modelo_solicitado": model_name or "",
             "system_prompt": system_prompt,
             "historico": history,
+            "approval_scope": conversation_id,
+            "agent_mode": get_mode(agent_mode).id,
+            "work_agents": work_agents or [],
         }
 
         try:
@@ -81,7 +105,9 @@ class WorkerController(QObject):
                 on_status=self.ai_status_update.emit,
                 on_chunk=self._on_token,
                 on_suggestion=self.ai_suggestion.emit,
+                on_notice=self.ai_notice.emit,
                 on_error=self._on_error,
+                on_cancelled=self._on_cancelled,
             )
         except Exception as exc:
             self._ai_busy = False
@@ -96,9 +122,20 @@ class WorkerController(QObject):
         self._ai_busy = False
         self.ai_response_finished.emit(full_text)
 
+    def _on_cancelled(self, partial_text: str):
+        self._ai_busy = False
+        self.ai_response_cancelled.emit(partial_text)
+
     def _on_error(self, error: str):
         self._ai_busy = False
         self.ai_response_error.emit(error)
+
+    def stop_response(self) -> bool:
+        """Interrompe a resposta em andamento, mantendo o trecho ja gerado."""
+        if not self._ai_busy:
+            return False
+        self.ai_status_update.emit("Interrompendo resposta...")
+        return self.worker_manager.cancel_current()
 
     def load_models(self):
         """Carrega lista de modelos (placeholder)."""

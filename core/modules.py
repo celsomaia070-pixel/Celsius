@@ -311,6 +311,16 @@ def sidebar_modules(module_ids) -> list[ModuleDefinition]:
     ]
 
 
+def effective_module_preferences(settings, user=None) -> tuple[list[str], dict[str, bool]]:
+    """Personal module selection inherits the installation defaults until customized."""
+    preferences = getattr(user, "sidebar_preferences", {}) or {}
+    enabled = normalize_module_ids(preferences.get("enabled", settings.modules.enabled))
+    visibility = {**settings.modules.sidebar_visible, **preferences.get("sidebar_visible", {})}
+    for module_id in MANDATORY_MODULE_IDS:
+        visibility[module_id] = True
+    return enabled, visibility
+
+
 def suggest_modules_for_company(
     segment: str = "", needs: list[str] | str | None = None
 ) -> list[str]:

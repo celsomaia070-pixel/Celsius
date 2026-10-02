@@ -12,6 +12,9 @@ const state = {
   reconnectDelay: 800,
   pollTimer: null,
   modelId: "",
+  agentMode: "",
+  agentModes: [],
+  agentHealth: null,
   voiceEnabled: false,
   voiceRequiresInternet: false,
   speechBuffer: "",
@@ -31,6 +34,10 @@ const state = {
   jarvisDrag: null,
   activeView: "chat",
   chatTitle: "Nova conversa",
+  sidebarCollapsed: false,
+  sidebarPreferences: {},
+  sidebarModuleDraft: [],
+  whatsappPollTimer: null,
   agendaItems: [],
   agendaVisible: false,
   agendaRefreshTimer: null,
@@ -66,9 +73,20 @@ const state = {
   voiceInputTimer: null,
   voiceInputSpeechDetected: false,
   voiceInputSilenceStartedAt: 0,
+  // Work Mode
+  workMode: localStorage.getItem("celsius-work-mode") === "true",
+  workAgents: [],
+  workActivity: [],
+  // Agent activity stays compact until the user explicitly opens it.
+  workActivityExpanded: false,
+  workStartedAt: 0,
+  workTaskId: "",
+  workTask: null,
   // Auth & Admin
-  authToken: localStorage.getItem("celsius_auth_token") || "",
-  refreshToken: localStorage.getItem("celsius_refresh_token") || "",
+  // Access credentials persist only in HttpOnly cookies. Keep the optional
+  // bearer token in memory for API clients that return one after login.
+  authToken: "",
+  refreshPromise: null,
   currentUser: null,
   adminVisible: false,
   adminStats: null,
@@ -84,6 +102,7 @@ const elements = {
   backdrop: document.querySelector("#sidebar-backdrop"),
   menuButton: document.querySelector("#menu-button"),
   sidebarClose: document.querySelector("#sidebar-close"),
+  sidebarCollapse: document.querySelector("#sidebar-collapse"),
   newChat: document.querySelector("#new-chat"),
   chatButton: document.querySelector("#chat-button"),
   agendaButton: document.querySelector("#agenda-button"),
@@ -133,6 +152,25 @@ const elements = {
   fileInput: document.querySelector("#file-input"),
   attachmentList: document.querySelector("#attachment-list"),
   modelSelect: document.querySelector("#model-select"),
+  modeSelect: document.querySelector("#mode-select"),
+  modeHealth: document.querySelector("#mode-health"),
+  workModeToggle: document.querySelector("#work-mode-toggle"),
+  workIndicator: document.querySelector("#work-indicator"),
+  workActivity: document.querySelector("#work-activity"),
+  workActivityLabel: document.querySelector("#work-activity-label"),
+  workActivitySummary: document.querySelector("#work-activity-summary"),
+  workActivityToggle: document.querySelector("#work-activity-toggle"),
+  workAgentList: document.querySelector("#work-agent-list"),
+  workTimeline: document.querySelector("#work-timeline"),
+  workStop: document.querySelector("#work-stop"),
+  workDetailsButton: document.querySelector("#work-details-button"),
+  workDetails: document.querySelector("#work-details"),
+  workDetailsStatus: document.querySelector("#work-details-status"),
+  workDetailsObjective: document.querySelector("#work-details-objective"),
+  workDetailsPlan: document.querySelector("#work-details-plan"),
+  workDetailsSteps: document.querySelector("#work-details-steps"),
+  workDetailsArtifacts: document.querySelector("#work-details-artifacts"),
+  workDetailsResult: document.querySelector("#work-details-result"),
   voiceToggle: document.querySelector("#voice-toggle"),
   jarvisToggle: document.querySelector("#jarvis-toggle"),
   jarvisVisual: document.querySelector("#jarvis-visual"),
@@ -416,6 +454,12 @@ const elements = {
   adminUserList: document.querySelector("#admin-user-list"),
   adminActivityList: document.querySelector("#admin-activity-list"),
   adminHealth: document.querySelector("#admin-health"),
+  adminDecisionEnabled: document.querySelector("#decision-enabled"),
+  adminDecisionOutcomes: document.querySelector("#decision-outcomes"),
+  adminDecisionFallbacks: document.querySelector("#decision-fallbacks"),
+  adminDecisionRequests: document.querySelector("#decision-requests"),
+  adminDecisionLatency: document.querySelector("#decision-latency"),
+  adminDecisionKinds: document.querySelector("#admin-decision-kinds"),
   adminAddUser: document.querySelector("#admin-add-user"),
   adminUsersList: document.querySelector("#admin-users-list"),
   notificationBell: document.querySelector("#notification-bell"),
@@ -432,6 +476,73 @@ const elements = {
   userDropdown: document.querySelector("#user-dropdown"),
   userProfileBtn: document.querySelector("#user-profile-btn"),
   userLogoutBtn: document.querySelector("#user-logout-btn"),
+  profileDialog: document.querySelector("#profile-dialog"),
+  profileClose: document.querySelector("#profile-close"),
+  profileForm: document.querySelector("#profile-form"),
+  profileDisplayName: document.querySelector("#profile-display-name"),
+  profileDisplayLabel: document.querySelector("#profile-display-label"),
+  profileEmail: document.querySelector("#profile-email"),
+  profileRole: document.querySelector("#profile-role"),
+  profileError: document.querySelector("#profile-error"),
+  profileSave: document.querySelector("#profile-save"),
+  profilePasswordForm: document.querySelector("#profile-password-form"),
+  profileOldPassword: document.querySelector("#profile-old-password"),
+  profileNewPassword: document.querySelector("#profile-new-password"),
+  profilePasswordConfirm: document.querySelector("#profile-password-confirm"),
+  profilePasswordError: document.querySelector("#profile-password-error"),
+  profilePasswordSave: document.querySelector("#profile-password-save"),
+  profileDialog: document.querySelector("#profile-dialog"),
+  profileClose: document.querySelector("#profile-close"),
+  settingsBtn: document.querySelector("#settings-btn"),
+  settingsDialog: document.querySelector("#settings-dialog"),
+  settingsClose: document.querySelector("#settings-close"),
+  settingsForm: document.querySelector("#settings-form"),
+  settingsUserName: document.querySelector("#settings-user-name"),
+  settingsCompanyName: document.querySelector("#settings-company-name"),
+  settingsCompanySector: document.querySelector("#settings-company-sector"),
+  settingsCompanySize: document.querySelector("#settings-company-size"),
+  settingsCompanyDescription: document.querySelector("#settings-company-description"),
+  settingsUserRole: document.querySelector("#settings-user-role"),
+  settingsPreferredTone: document.querySelector("#settings-preferred-tone"),
+  settingsTimezone: document.querySelector("#settings-timezone"),
+  settingsBusinessContext: document.querySelector("#settings-business-context"),
+  settingsMainNeeds: document.querySelector("#settings-main-needs"),
+  settingsVoiceEnabled: document.querySelector("#settings-voice-enabled"),
+  settingsVoiceProfile: document.querySelector("#settings-voice-profile"),
+  settingsVoice: document.querySelector("#settings-voice"),
+  settingsVoiceRate: document.querySelector("#settings-voice-rate"),
+  settingsVoicePitch: document.querySelector("#settings-voice-pitch"),
+  settingsVoiceVolume: document.querySelector("#settings-voice-volume"),
+  "settingsMobileEnabled": document.querySelector("#settings-mobile-enabled"),
+  "settingsMobileLAN": document.querySelector("#settings-mobile-lan"),
+  "settingsMobileVoice": document.querySelector("#settings-mobile-voice"),
+  "settingsMobileHTTPS": document.querySelector("#settings-mobile-https"),
+  "settingsMobilePort": document.querySelector("#settings-mobile-port"),
+  "settingsMobileToken": document.querySelector("#settings-mobile-token"),
+  "settingsNotificationsEnabled": document.querySelector("#settings-notifications-enabled"),
+  "settingsNotificationsExternal": document.querySelector("#settings-notifications-external"),
+  "settingsNotificationsConfirmation": document.querySelector("#settings-notifications-confirmation"),
+  "settingsNotificationChannel": document.querySelector("#settings-notification-channel"),
+  "settingsWhatsAppProvider": document.querySelector("#settings-whatsapp-provider"),
+  "settingsWhatsAppPhoneId": document.querySelector("#settings-whatsapp-phone-id"),
+  "settingsWhatsAppTokenEnv": document.querySelector("#settings-whatsapp-token-env"),
+  "settingsEmailProvider": document.querySelector("#settings-email-provider"),
+  "settingsEmailFrom": document.querySelector("#settings-email-from"),
+  "settingsSmsProvider": document.querySelector("#settings-sms-provider"),
+  "settingsSmsSender": document.querySelector("#settings-sms-sender"),
+  "settingsAllowedRoots": document.querySelector("#settings-allowed-roots"),
+  "settingsModulesGrid": document.querySelector("#settings-modules-grid"),
+  "settingsSave": document.querySelector("#settings-save"),
+  "settingsCancel": document.querySelector("#settings-cancel"),
+  "settingsSuggestModules": document.querySelector("#settings-suggest-modules"),
+  "settingsStorageInfo": document.querySelector("#settings-storage-info"),
+  profileSave: document.querySelector("#profile-save"),
+  profilePasswordForm: document.querySelector("#profile-password-form"),
+  profileOldPassword: document.querySelector("#profile-old-password"),
+  profileNewPassword: document.querySelector("#profile-new-password"),
+  profilePasswordConfirm: document.querySelector("#profile-password-confirm"),
+  profilePasswordError: document.querySelector("#profile-password-error"),
+  profilePasswordSave: document.querySelector("#profile-password-save"),
 };
 
 const svg = {
@@ -446,44 +557,71 @@ const svg = {
   minus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>',
 };
 
-function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
+async function refreshAccessSession() {
+  if (state.refreshPromise) return state.refreshPromise;
+  state.refreshPromise = fetch("/api/v1/auth/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  }).then(async (response) => {
+    if (!response.ok) return false;
+    const data = await response.json();
+    state.authToken = data.access_token || "";
+    return true;
+  }).catch(() => false).finally(() => {
+    state.refreshPromise = null;
+  });
+  return state.refreshPromise;
+}
+
+async function api(path, options = {}) {
+  const { json, retryAuth = true, ...fetchOptions } = options;
+  const headers = new Headers(fetchOptions.headers || {});
   if (state.authToken) {
     headers.set("Authorization", `Bearer ${state.authToken}`);
   }
-  if (options.json !== undefined) {
+  if (json !== undefined) {
     headers.set("Content-Type", "application/json");
-    options.body = JSON.stringify(options.json);
-    delete options.json;
+    fetchOptions.body = JSON.stringify(json);
   }
-  return fetch(`/api/v1${path}`, { ...options, headers }).then(async (response) => {
-    let data = {};
-    try {
-      data = await response.json();
-    } catch (_error) {
-      data = {};
+  const response = await fetch(`/api/v1${path}`, { ...fetchOptions, headers });
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (_error) {
+    data = {};
+  }
+  if (!response.ok) {
+    const mayRefresh = !["/auth/login", "/auth/register", "/auth/refresh", "/auth/logout"].includes(path);
+    if (response.status === 401 && retryAuth && mayRefresh && await refreshAccessSession()) {
+      return api(path, { ...options, retryAuth: false });
     }
-    if (!response.ok) {
-      if (response.status === 401) {
-        showLoginScreen();
-      }
-      throw new Error(data.error || data.detail || `Erro HTTP ${response.status}`);
-    }
-    return data;
-  });
+    if (response.status === 401) showLoginScreen();
+    throw new Error(data.error || data.detail || `Erro HTTP ${response.status}`);
+  }
+  return data;
+}
+
+function authHeaders(extra = {}) {
+  const headers = new Headers(extra);
+  if (state.authToken) headers.set("Authorization", `Bearer ${state.authToken}`);
+  return headers;
 }
 
 async function apiBinary(path, options = {}) {
-  const headers = new Headers(options.headers || {});
+  const { json, retryAuth = true, ...fetchOptions } = options;
+  const headers = new Headers(fetchOptions.headers || {});
   if (state.authToken) {
     headers.set("Authorization", `Bearer ${state.authToken}`);
   }
-  if (options.json !== undefined) {
+  if (json !== undefined) {
     headers.set("Content-Type", "application/json");
-    options.body = JSON.stringify(options.json);
-    delete options.json;
+    fetchOptions.body = JSON.stringify(json);
   }
-  const response = await fetch(`/api/v1${path}`, { ...options, headers });
+  const response = await fetch(`/api/v1${path}`, { ...fetchOptions, headers });
+  if (response.status === 401 && retryAuth && await refreshAccessSession()) {
+    return apiBinary(path, { ...options, retryAuth: false });
+  }
   if (!response.ok) {
     let message = `Erro HTTP ${response.status}`;
     try {
@@ -510,7 +648,7 @@ function setTheme(theme) {
 
 async function openMobilePairing() {
   elements.mobilePairDialog.showModal();
-  elements.mobilePairStatus.textContent = "Preparando acesso local...";
+  elements.mobilePairStatus.textContent = "Preparando QR Code...";
   elements.mobilePairNote.textContent = "";
   elements.mobilePairLink.textContent = "";
   elements.mobilePairQr.hidden = true;
@@ -521,7 +659,7 @@ async function openMobilePairing() {
     elements.mobilePairQr.src = data.qr_code || "";
     elements.mobilePairQr.hidden = !data.qr_code;
     elements.mobilePairStatus.textContent = data.lan_access_enabled
-      ? "Pronto para conectar"
+      ? "QR Code pronto para o modo de voz"
       : "Acesso pela rede ainda nao esta ativo";
     const fingerprint = data.certificate_fingerprint
       ? ` Certificado SHA-256: ${data.certificate_fingerprint}`
@@ -554,6 +692,34 @@ function openSidebar() {
 function closeSidebar() {
   elements.body.classList.remove("sidebar-open");
   elements.backdrop.hidden = true;
+}
+
+function isDesktopViewport() {
+  return window.matchMedia("(min-width: 821px)").matches;
+}
+
+function setSidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = collapsed;
+  localStorage.setItem("celsius-sidebar-collapsed", collapsed ? "1" : "0");
+  if (isDesktopViewport()) {
+    elements.body.classList.toggle("sidebar-collapsed", collapsed);
+    if (collapsed) {
+      elements.body.classList.remove("sidebar-open");
+      elements.backdrop.hidden = true;
+    }
+  }
+}
+
+function toggleSidebarCollapsed() {
+  setSidebarCollapsed(!state.sidebarCollapsed);
+}
+
+function handleMenuButton() {
+  if (isDesktopViewport()) {
+    setSidebarCollapsed(false);
+  } else {
+    openSidebar();
+  }
 }
 
 function showToast(message, type = "info") {
@@ -721,25 +887,30 @@ function showView(view) {
 
 async function loadNavigation() {
   try {
-    const data = await api("/navigation");
-    state.agendaVisible = (data.items || []).some((item) => item.id === "agenda");
-    state.documentsVisible = (data.items || []).some((item) => item.id === "knowledge");
-    state.customersVisible = (data.items || []).some((item) => item.id === "customers");
-    state.suppliersVisible = (data.items || []).some((item) => item.id === "suppliers");
-    state.inventoryVisible = (data.items || []).some((item) => item.id === "inventory");
-    state.productsVisible = (data.items || []).some((item) => item.id === "products_services");
-    state.quotesVisible = (data.items || []).some((item) => item.id === "quotes");
-    state.reportsVisible = (data.items || []).some((item) => item.id === "reports");
-    state.casesVisible = (data.items || []).some((item) => item.id === "cases_deadlines");
-    elements.agendaButton.hidden = !state.agendaVisible;
-    elements.documentsButton.hidden = !state.documentsVisible;
-    elements.customersButton.hidden = !state.customersVisible;
-    elements.suppliersButton.hidden = !state.suppliersVisible;
-    elements.inventoryButton.hidden = !state.inventoryVisible;
-    elements.productsButton.hidden = !state.productsVisible;
-    elements.quotesButton.hidden = !state.quotesVisible;
-    elements.reportsButton.hidden = !state.reportsVisible;
-    elements.casesButton.hidden = !state.casesVisible;
+    const [data, catalog] = await Promise.all([api("/navigation"), api("/modules")]);
+    state.sidebarPreferences = data.preferences || {};
+    elements.memoryButton.hidden = state.sidebarPreferences.show_memories === false;
+    document.querySelector(".conversation-section").hidden = state.sidebarPreferences.show_conversations === false;
+    const available = (catalog.items || []).filter(item => item.enabled && item.status === "ready");
+    const visible = new Set((data.items || []).map(item => item.id));
+    state.agendaVisible = available.some((item) => item.id === "agenda");
+    state.documentsVisible = available.some((item) => item.id === "knowledge");
+    state.customersVisible = available.some((item) => item.id === "customers");
+    state.suppliersVisible = available.some((item) => item.id === "suppliers");
+    state.inventoryVisible = available.some((item) => item.id === "inventory");
+    state.productsVisible = available.some((item) => item.id === "products_services");
+    state.quotesVisible = available.some((item) => item.id === "quotes");
+    state.reportsVisible = available.some((item) => item.id === "reports");
+    state.casesVisible = available.some((item) => item.id === "cases_deadlines");
+    elements.agendaButton.hidden = !visible.has("agenda");
+    elements.documentsButton.hidden = !visible.has("knowledge");
+    elements.customersButton.hidden = !visible.has("customers");
+    elements.suppliersButton.hidden = !visible.has("suppliers");
+    elements.inventoryButton.hidden = !visible.has("inventory");
+    elements.productsButton.hidden = !visible.has("products_services");
+    elements.quotesButton.hidden = !visible.has("quotes");
+    elements.reportsButton.hidden = !visible.has("reports");
+    elements.casesButton.hidden = !visible.has("cases_deadlines");
     if (!state.agendaVisible && state.activeView === "agenda") showView("chat");
     if (!state.documentsVisible && state.activeView === "documents") showView("chat");
     if (!state.customersVisible && state.activeView === "customers") showView("chat");
@@ -751,6 +922,176 @@ async function loadNavigation() {
     if (!state.casesVisible && state.activeView === "cases_deadlines") showView("chat");
   } catch (error) {
     showToast(`Modulos: ${error.message}`, "error");
+  }
+}
+
+const sidebarModuleIds = ["knowledge", "agenda", "reports", "customers", "suppliers", "inventory", "products_services", "quotes", "cases_deadlines"];
+const sidebarModuleDescriptions = {
+  knowledge: "Arquivos, materiais de aula e documentos",
+  agenda: "Compromissos, aulas e lembretes",
+  reports: "Relatórios e resumos",
+  customers: "Cadastros de clientes e contatos",
+  suppliers: "Cadastros de fornecedores",
+  inventory: "Itens, entradas e saídas de estoque",
+  products_services: "Catálogo de produtos e serviços",
+  quotes: "Orçamentos e propostas",
+  cases_deadlines: "Processos e acompanhamento de prazos",
+};
+const sidebarModuleNames = { products_services: "Produtos e serviços", quotes: "Orçamentos", reports: "Relatórios" };
+
+async function openSidebarPreferences() {
+  const dialog = document.querySelector("#sidebar-preferences-dialog");
+  const list = document.querySelector("#sidebar-module-list");
+  const status = document.querySelector("#sidebar-preferences-status");
+  list.replaceChildren();
+  status.textContent = "Carregando seu menu…";
+  document.querySelector("#sidebar-preferences-save").disabled = true;
+  dialog.showModal();
+  try {
+    const [catalog, navigation] = await Promise.all([api("/modules"), api("/navigation")]);
+    if (!dialog.open) return;
+    state.sidebarModuleDraft = (catalog.items || []).map(item => ({ ...item }));
+    const preferences = navigation.preferences || {};
+    document.querySelector("#sidebar-show-memories").checked = preferences.show_memories !== false;
+    document.querySelector("#sidebar-show-conversations").checked = preferences.show_conversations !== false;
+    renderSidebarModuleChoices();
+    document.querySelector("#sidebar-preferences-save").disabled = false;
+  } catch (error) {
+    status.textContent = `Não foi possível carregar: ${error.message}`;
+  }
+}
+
+function renderSidebarModuleChoices() {
+  const list = document.querySelector("#sidebar-module-list");
+  const focusedKey = list.contains(document.activeElement) ? document.activeElement.dataset.choiceKey : null;
+  list.replaceChildren();
+  for (const id of sidebarModuleIds) {
+    const module = state.sidebarModuleDraft.find(item => item.id === id);
+    if (!module) continue;
+    const row = document.createElement("div");
+    row.className = "sidebar-module-row";
+    row.classList.toggle("module-disabled", !module.enabled);
+    const description = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = sidebarModuleNames[id] || module.name;
+    const detail = document.createElement("small");
+    detail.textContent = sidebarModuleDescriptions[id];
+    description.append(title, detail);
+    row.append(description);
+    for (const field of ["enabled", "sidebar_visible"]) {
+      const label = document.createElement("label");
+      label.className = "sidebar-module-toggle";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.choiceKey = `${id}-${field}`;
+      input.checked = field === "enabled" ? module.enabled : module.enabled && module.sidebar_visible !== false;
+      input.disabled = module.status !== "ready" || (field === "sidebar_visible" && !module.enabled);
+      input.setAttribute("aria-label", `${field === "enabled" ? "Ativar" : "Mostrar no menu"} ${title.textContent}`);
+      input.addEventListener("change", () => {
+        module[field] = input.checked;
+        if (field === "enabled" && input.checked) module.sidebar_visible = true;
+        renderSidebarModuleChoices();
+      });
+      label.append(input);
+      row.append(label);
+    }
+    list.append(row);
+  }
+  const selected = state.sidebarModuleDraft.filter(item => sidebarModuleIds.includes(item.id) && item.enabled);
+  const visible = selected.filter(item => item.sidebar_visible !== false);
+  document.querySelectorAll("[data-sidebar-preset]").forEach(button => {
+    const ids = button.dataset.sidebarPreset === "education" ? ["knowledge", "agenda", "reports"]
+      : button.dataset.sidebarPreset === "business" ? sidebarModuleIds : [];
+    button.setAttribute("aria-pressed", String(selected.length === ids.length && selected.every(item => ids.includes(item.id))));
+  });
+  document.querySelector("#sidebar-preferences-status").textContent = `${selected.length} módulos ativos · ${visible.length} atalhos visíveis`;
+  if (focusedKey) list.querySelector(`[data-choice-key="${focusedKey}"]`)?.focus({ preventScroll: true });
+}
+
+function applySidebarPreset(preset) {
+  const selected = preset === "education" ? ["knowledge", "agenda", "reports"]
+    : preset === "business" ? sidebarModuleIds : [];
+  for (const module of state.sidebarModuleDraft) {
+    if (!sidebarModuleIds.includes(module.id)) continue;
+    module.enabled = selected.includes(module.id) && module.status === "ready";
+    module.sidebar_visible = module.enabled;
+  }
+  renderSidebarModuleChoices();
+}
+
+async function saveSidebarPreferences(event) {
+  event.preventDefault();
+  const save = document.querySelector("#sidebar-preferences-save");
+  save.disabled = true;
+  const json = {
+    enabled: state.sidebarModuleDraft.filter(item => item.enabled || item.mandatory).map(item => item.id),
+    sidebar_visible: Object.fromEntries(state.sidebarModuleDraft.map(item => [item.id, item.sidebar_visible !== false])),
+    show_memories: document.querySelector("#sidebar-show-memories").checked,
+    show_conversations: document.querySelector("#sidebar-show-conversations").checked,
+  };
+  try {
+    await api("/settings/sidebar", { method: "PATCH", json });
+    await loadNavigation();
+    document.querySelector("#sidebar-preferences-dialog").close();
+    showToast("Seu menu foi salvo. Você pode ajustá-lo quando quiser.", "success");
+  } catch (error) {
+    document.querySelector("#sidebar-preferences-status").textContent = `Não foi possível salvar: ${error.message}`;
+  } finally {
+    save.disabled = false;
+  }
+}
+
+async function openWhatsAppDialog() {
+  document.querySelector("#whatsapp-dialog").showModal();
+  await refreshWhatsAppConnection();
+  if (state.whatsappPollTimer) window.clearInterval(state.whatsappPollTimer);
+  state.whatsappPollTimer = window.setInterval(refreshWhatsAppConnection, 4000);
+}
+
+async function refreshWhatsAppConnection() {
+  const status = document.querySelector("#whatsapp-status");
+  const qr = document.querySelector("#whatsapp-qr");
+  const frame = document.querySelector("#whatsapp-qr-frame");
+  try {
+    const data = await api("/whatsapp/status");
+    if (!document.querySelector("#whatsapp-dialog").open) return;
+    const labels = {disconnected:"Conexão pausada. Clique em Conectar para começar.",
+      connecting:"Preparando a conexão…", pairing:"Escaneie o QR Code com seu WhatsApp.",
+      connected:data.welcome_sent ? "Conectado. A mensagem inicial foi enviada à conversa com seu próprio número (Você)." : "Conectado. Preparando sua conversa com o Celsius…",
+      reconnecting:"Reconectando ao WhatsApp…", error:"Não foi possível conectar. Tente novamente."};
+    status.textContent = data.error || data.welcome_error || labels[data.state] || "Verificando conexão…";
+    const selfChat = document.querySelector("#whatsapp-self-chat");
+    const openChat = document.querySelector("#whatsapp-open-chat");
+    // Only accept the canonical link built from this account's connected identity.
+    const chatUrl = /^https:\/\/wa\.me\/\d{10,15}$/.test(data.self_chat_url || "") ? data.self_chat_url : "";
+    selfChat.hidden = !data.connected || !chatUrl;
+    if (chatUrl && data.connected) openChat.href = chatUrl;
+    else openChat.removeAttribute("href");
+    frame.hidden = !data.qr_image;
+    if (data.qr_image && qr.getAttribute("src") !== data.qr_image) qr.src = data.qr_image;
+    if (!data.qr_image) qr.removeAttribute("src");
+    document.querySelector("#whatsapp-connect").disabled = ["connecting", "pairing", "connected", "reconnecting"].includes(data.state);
+    document.querySelector("#whatsapp-pause").disabled = data.state === "disconnected";
+    document.querySelector("#whatsapp-button span").textContent = data.connected ? "WhatsApp conectado" : "Conectar WhatsApp";
+  } catch (error) {
+    frame.hidden = true;
+    qr.removeAttribute("src");
+    document.querySelector("#whatsapp-self-chat").hidden = true;
+    document.querySelector("#whatsapp-open-chat").removeAttribute("href");
+    status.textContent = error.message;
+  }
+}
+
+async function updateWhatsAppConnection(action) {
+  const button = document.querySelector(`#whatsapp-${action}`);
+  button.disabled = true;
+  document.querySelector("#whatsapp-status").textContent = action === "connect" ? "Preparando a conexão…" : "Pausando conexão…";
+  try {
+    await api(`/whatsapp/${action}`, {method:"POST"});
+    await refreshWhatsAppConnection();
+  } catch (error) {
+    document.querySelector("#whatsapp-status").textContent = error.message;
+    button.disabled = false;
   }
 }
 
@@ -2262,6 +2603,380 @@ async function loadModels() {
   }
 }
 
+async function loadAgentModes() {
+  if (!elements.modeSelect) return;
+  try {
+    const data = await api("/agents/modes");
+    state.agentModes = data.items || [];
+    const saved = localStorage.getItem("celsius-agent-mode") || data.default || "";
+    elements.modeSelect.replaceChildren();
+    for (const mode of state.agentModes) {
+      const option = document.createElement("option");
+      option.value = mode.id;
+      option.textContent = mode.label;
+      option.title = mode.summary;
+      elements.modeSelect.append(option);
+    }
+    const known = state.agentModes.some((mode) => mode.id === saved);
+    state.agentMode = known ? saved : data.default || "";
+    elements.modeSelect.value = state.agentMode;
+  } catch (error) {
+    elements.modeSelect.disabled = true;
+    showToast(`Modos: ${error.message}`, "error");
+  }
+  loadAgentHealth();
+}
+
+async function loadAgentHealth() {
+  if (!elements.modeHealth) return;
+  try {
+    const data = await api("/agents/health");
+    const decision = data.decision || {};
+    state.agentHealth = decision;
+    if (decision.state === "off") {
+      elements.modeHealth.textContent = "";
+      elements.modeHealth.title = "Camada de decisao desativada";
+      elements.modeHealth.className = "";
+      return;
+    }
+    const available = decision.state === "available";
+    elements.modeHealth.textContent = available ? "Jev ok" : "Jev indisponivel";
+    elements.modeHealth.className = available ? "health-ok" : "health-warn";
+    elements.modeHealth.title = decision.detail || "";
+  } catch {
+    elements.modeHealth.textContent = "";
+    elements.modeHealth.className = "";
+  }
+}
+
+function toggleWorkMode() {
+  state.workMode = !state.workMode;
+  const toggle = elements.workModeToggle;
+  const indicator = elements.workIndicator;
+  localStorage.setItem("celsius-work-mode", String(state.workMode));
+
+  if (state.workMode) {
+    toggle.setAttribute("aria-pressed", "true");
+    toggle.setAttribute("aria-label", "Desativar modo Work");
+    toggle.classList.add("active");
+    if (indicator) indicator.hidden = state.workAgents.length === 0;
+    showToast("Work ativado. O Celsius mostrara o andamento da tarefa.");
+  } else {
+    toggle.setAttribute("aria-pressed", "false");
+    toggle.setAttribute("aria-label", "Ativar modo Work");
+    toggle.classList.remove("active");
+    if (indicator) indicator.hidden = true;
+    state.workAgents = [];
+    updateWorkIndicator();
+    if (!state.busy) elements.workActivity.hidden = true;
+    showToast("Work desativado.");
+  }
+}
+
+function syncWorkModeUI() {
+  if (!elements.workModeToggle) return;
+  elements.workModeToggle.classList.toggle("active", state.workMode);
+  elements.workModeToggle.setAttribute("aria-pressed", String(state.workMode));
+  elements.workModeToggle.setAttribute("aria-label", state.workMode ? "Desativar modo Work" : "Ativar modo Work");
+  elements.workIndicator.hidden = !state.workMode || state.workAgents.length === 0;
+  if (!state.workMode && !state.busy) elements.workActivity.hidden = true;
+}
+
+function selectAgentsForRequest(message) {
+  const agents = [];
+  const lower = message.toLowerCase();
+
+  // Map keywords to agent modes
+  const agentKeywords = {
+    executor: ["fazer", "criar", "executar", "gerar", "construir", "implementar", "automatizar", "script", "código", "programa", "tarefa", "workflow", "processo"],
+    documentos: ["documento", "arquivo", "pdf", "texto", "ler", "analisar", "extrair", "resumir", "buscar no documento", "base de conhecimento", "conhecimento"],
+    estoque: ["estoque", "produto", "item", "quantidade", "entrada", "saída", "movimentação", "repor", "repor estoque", "baixa", "inventário"],
+    pesquisador: ["pesquisar", "buscar", "web", "internet", "notícia", "atual", "recente", "última", "tendência", "mercado", "concorrente"],
+    desenvolvedor: ["código", "programar", "debug", "erro", "bug", "função", "classe", "api", "banco de dados", "sql", "git", "deploy", "teste", "refatorar"],
+    assistente: ["olá", "oi", "como", "o que", "qual", "quando", "onde", "quem", "explique", "defina", "resumo", "dica", "ajuda"]
+  };
+
+  // Score each agent based on keyword matches
+  const scores = {};
+  for (const [agent, keywords] of Object.entries(agentKeywords)) {
+    let score = 0;
+    for (const keyword of keywords) {
+      if (lower.includes(keyword)) {
+        score += 1;
+      }
+    }
+    scores[agent] = score;
+  }
+
+  // Find the agent with highest score
+  let bestAgent = "assistente";
+  let bestScore = 0;
+  for (const [agent, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      bestScore = score;
+      bestAgent = agent;
+    }
+  }
+
+  // If no clear winner, default to assistente
+  if (bestScore === 0) {
+    return ["assistente"];
+  }
+
+  // Return the best agent (and possibly related agents)
+  const selected = [bestAgent];
+
+  // Add related agents based on context
+  if (bestAgent === "executor" && (lower.includes("estoque") || lower.includes("produto"))) {
+    selected.push("estoque");
+  }
+  if (bestAgent === "executor" && (lower.includes("documento") || lower.includes("arquivo"))) {
+    selected.push("documentos");
+  }
+  if (bestAgent === "pesquisador" && lower.includes("mercado")) {
+    selected.push("executor");
+  }
+
+  return [...new Set(selected)]; // Remove duplicates
+}
+
+function workModeForRequest() {
+  const preferred = ["pesquisador", "documentos", "estoque", "desenvolvedor", "executor"];
+  return preferred.find((mode) => state.workAgents.includes(mode)) || "executor";
+}
+
+function updateWorkIndicator() {
+  const indicator = elements.workIndicator;
+  if (!indicator) return;
+
+  if (state.workAgents.length > 0) {
+    indicator.textContent = String(state.workAgents.length);
+    indicator.hidden = false;
+  } else {
+    indicator.textContent = "";
+    indicator.hidden = true;
+  }
+  renderWorkAgents();
+}
+
+const WORK_AGENT_LABELS = {
+  executor: "Executor",
+  documentos: "Documentos",
+  estoque: "Estoque",
+  pesquisador: "Pesquisa",
+  desenvolvedor: "Desenvolvimento",
+  assistente: "Coordenação",
+};
+
+const WORK_TOOL_LABELS = {
+  pesquisar_web: "Pesquisando na web",
+  pesquisar_google: "Consultando fontes",
+  pesquisar_noticias: "Verificando noticias",
+  navegar_web: "Lendo uma pagina",
+  ler_arquivo: "Lendo arquivo",
+  listar_arquivos: "Conferindo arquivos",
+  processar_arquivo: "Analisando documento",
+  criar_editar_arquivo: "Preparando arquivo",
+  executar_codigo: "Executando verificacao local",
+  gerar_relatorio_local: "Gerando relatorio",
+  gerar_grafico: "Gerando visualizacao",
+  listar_estoque: "Consultando estoque",
+  buscar_item_estoque: "Buscando item no estoque",
+};
+
+function renderWorkAgents() {
+  if (!elements.workAgentList) return;
+  elements.workAgentList.replaceChildren();
+  state.workAgents.forEach((agent, index) => {
+      const chip = document.createElement("span");
+      chip.className = "work-agent-chip";
+      if (index === 0) chip.classList.add("lead");
+      // The label comes from the server, so it is data, not markup.
+      const mark = document.createElement("span");
+      mark.setAttribute("aria-hidden", "true");
+      mark.textContent = index === 0 ? "C" : "A";
+      chip.append(mark, document.createTextNode(WORK_AGENT_LABELS[agent] || agent));
+      elements.workAgentList.append(chip);
+  });
+}
+
+function resetWorkActivity() {
+  state.workActivity = [];
+  state.workTaskId = "";
+  state.workTask = null;
+  state.workStartedAt = Date.now();
+  state.workActivityExpanded = false;
+  elements.workActivity.classList.remove("done", "failed");
+  elements.workActivity.classList.add("collapsed");
+  elements.workActivityToggle.setAttribute("aria-expanded", "false");
+  elements.workActivityToggle.setAttribute("aria-label", "Expandir atividade");
+  elements.workActivityToggle.title = "Expandir atividade";
+  elements.workActivityLabel.textContent = "Agentes trabalhando";
+  elements.workActivitySummary.textContent = "Preparando a tarefa";
+  elements.workStop.hidden = false;
+  elements.workDetailsButton.hidden = true;
+  elements.workDetails.hidden = true;
+  elements.workDetailsResult.textContent = "";
+  elements.workActivity.hidden = false;
+  elements.workTimeline.replaceChildren();
+}
+
+function renderWorkTask(task, verification = null) {
+  if (!task || !elements.workDetails) return;
+  state.workTask = task;
+  state.workTaskId = task.id || state.workTaskId;
+  elements.workDetailsStatus.textContent = friendlyTaskState(task.status);
+  elements.workDetailsObjective.textContent = task.objective || "Objetivo da tarefa não informado.";
+  elements.workDetailsPlan.textContent = `${Array.isArray(task.plan) ? task.plan.length : 0} etapas planejadas`;
+  elements.workDetailsSteps.textContent = `${Array.isArray(task.steps) ? task.steps.length : 0} registradas`;
+  const evidence = verification || task.verification || {};
+  elements.workDetailsArtifacts.textContent = `${Number(evidence.artifact_count || 0)} arquivo(s) verificado(s)`;
+  elements.workDetailsResult.textContent = task.result || task.error || "A tarefa ainda não produziu um resumo.";
+  elements.workDetailsButton.hidden = false;
+}
+
+function renderWorkRun(run) {
+  const agents = Array.isArray(run?.agents) ? run.agents : [];
+  const requested = Array.isArray(run?.requested_agents) ? run.requested_agents : [];
+  if (requested.length) {
+    state.workAgents = requested;
+    updateWorkIndicator();
+  }
+  renderWorkTask({
+    id: run.id,
+    status: run.status,
+    objective: run.objective,
+    plan: requested.map((id) => ({ agent: id })),
+    steps: agents.map((agent) => ({
+      tool: agent.label || agent.id,
+      status: agent.status,
+      result: agent.response || "",
+    })),
+    result: run.result || "",
+    error: run.error || "",
+    verification: {},
+  });
+}
+
+function friendlyTaskState(status) {
+  return ({
+    completed: "Concluída",
+    running: "Em andamento",
+    waiting_confirmation: "Aguardando aprovação",
+    awaiting_approval: "Aguardando aprovação",
+    paused: "Pausada",
+    cancelled: "Interrompida",
+    failed: "Com erro",
+  })[status] || "Registrada";
+}
+
+async function loadLatestWorkTask(attempt = 0) {
+  if (!state.workMode || !state.conversationId) return;
+  try {
+    const scope = encodeURIComponent(state.conversationId);
+    const [taskList, runList] = await Promise.all([
+      api(`/agents/tasks?scope=${scope}&limit=5`),
+      api(`/agents/runs?scope=${scope}&limit=5`).catch(() => ({ items: [] })),
+    ]);
+    const item = (taskList.items || [])[0];
+    const run = (runList.items || [])[0];
+    if (run && (!item || Number(run.updated || 0) >= Number(item.updated || 0))) {
+      renderWorkRun(run);
+      return;
+    }
+    if (!item) {
+      if (attempt < 3) setTimeout(() => loadLatestWorkTask(attempt + 1), 450);
+      return;
+    }
+    const detail = await api(`/agents/tasks/${encodeURIComponent(item.id)}?scope=${scope}`);
+    let verification = null;
+    if (["completed", "failed", "cancelled"].includes(detail.task?.status)) {
+      const evidence = await api(`/agents/tasks/${encodeURIComponent(item.id)}/artifacts?scope=${scope}`);
+      verification = evidence;
+    }
+    renderWorkTask(detail.task || item, verification);
+  } catch (_error) {
+    // A chat can finish before its durable task checkpoint is visible; the retry handles that race quietly.
+    if (attempt < 3) setTimeout(() => loadLatestWorkTask(attempt + 1), 650);
+  }
+}
+
+function toggleWorkTaskDetails() {
+  const visible = elements.workDetails.hidden;
+  elements.workDetails.hidden = !visible;
+  elements.workDetailsButton.textContent = visible ? "Ocultar detalhes" : "Ver detalhes";
+}
+
+function friendlyWorkStatus(text) {
+  const clean = String(text || "").trim();
+  const toolMatch = clean.match(/executando\s+([\w-]+)/i);
+  if (toolMatch) {
+    const tool = toolMatch[1].replace(/[.]+$/, "");
+    return WORK_TOOL_LABELS[tool] || "Usando ferramenta local";
+  }
+  if (/ativando agentes/i.test(clean)) return "Organizando os agentes";
+  if (/anexo/i.test(clean)) return "Preparando os arquivos enviados";
+  if (/consultando|pensando|modelo/i.test(clean)) return "Analisando o proximo passo";
+  if (/interromp/i.test(clean)) return "Interrompendo com seguranca";
+  return clean || "Trabalhando na tarefa";
+}
+
+function addWorkActivity(text, status = "running", detail = "") {
+  if (!state.workMode || !elements.workActivity) return;
+  const label = friendlyWorkStatus(text);
+  const previous = state.workActivity.at(-1);
+  if (previous?.label === label && previous.status === status) return;
+  if (previous?.status === "running") previous.status = "completed";
+  state.workActivity.push({ label, status, detail, at: Date.now() });
+  if (state.workActivity.length > 8) state.workActivity.shift();
+  renderWorkActivity();
+}
+
+function renderWorkActivity() {
+  if (!elements.workActivity) return;
+  elements.workActivity.hidden = false;
+  elements.workTimeline.replaceChildren();
+  state.workActivity.forEach((item) => {
+    const row = document.createElement("li");
+    row.className = `work-step ${item.status}`;
+    const copy = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = item.label;
+    const meta = document.createElement("span");
+    meta.textContent = item.detail || (item.status === "running" ? "Em andamento" : "Concluido");
+    copy.append(title, meta);
+    row.append(copy);
+    elements.workTimeline.append(row);
+  });
+  const current = state.workActivity.at(-1);
+  if (current) elements.workActivitySummary.textContent = current.label;
+}
+
+function finishWorkActivity(status) {
+  if (!state.workMode || !elements.workActivity || elements.workActivity.hidden) return;
+  const failed = status === "failed";
+  const cancelled = status === "cancelled";
+  const label = failed ? "A tarefa encontrou um problema" : cancelled ? "Tarefa interrompida" : "Pronto para revisar";
+  if (state.workActivity.at(-1)?.status === "running") state.workActivity.at(-1).status = failed ? "failed" : "completed";
+  state.workActivity.push({ label, status: failed ? "failed" : "completed", detail: "", at: Date.now() });
+  elements.workActivity.classList.toggle("failed", failed);
+  elements.workActivity.classList.toggle("done", !failed);
+  elements.workActivityLabel.textContent = label;
+  const seconds = Math.max(1, Math.round((Date.now() - state.workStartedAt) / 1000));
+  elements.workStop.hidden = true;
+  renderWorkActivity();
+  elements.workActivitySummary.textContent = cancelled ? "O progresso foi preservado" : `Finalizado em ${seconds}s`;
+  void loadLatestWorkTask();
+}
+
+function toggleWorkActivity() {
+  state.workActivityExpanded = !state.workActivityExpanded;
+  elements.workActivity.classList.toggle("collapsed", !state.workActivityExpanded);
+  elements.workActivityToggle.setAttribute("aria-expanded", String(state.workActivityExpanded));
+  elements.workActivityToggle.setAttribute("aria-label", state.workActivityExpanded ? "Recolher atividade" : "Expandir atividade");
+  elements.workActivityToggle.title = state.workActivityExpanded ? "Recolher atividade" : "Expandir atividade";
+}
+
 function setJarvisMode(mode) {
   state.jarvisMode = mode;
   elements.jarvisVisual.dataset.state = mode;
@@ -2772,17 +3487,48 @@ function attachmentName(item) {
   return item.name || item.filename || "Arquivo";
 }
 
-function renderMessageAttachments(container, attachments = []) {
+async function downloadChatAttachment(item) {
+  try {
+    const blob = await apiBinary(`/chat/attachments/${encodeURIComponent(item.id)}`);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = attachmentName(item);
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    showToast(error.message || "Nao foi possivel baixar o arquivo.", "error");
+  }
+}
+
+function renderMessageAttachments(container, attachments = [], downloadable = false) {
   if (!attachments.length) return;
   const list = document.createElement("div");
   list.className = "message-attachments";
   for (const attachment of attachments) {
-    const item = document.createElement("span");
+    // Only files the assistant produced survive the turn; the user's own uploads
+    // are deleted once the answer is stored, so those stay as plain labels.
+    const canDownload = downloadable && Boolean(attachment.id);
+    const item = document.createElement(canDownload ? "a" : "span");
     item.className = "message-file";
+    if (canDownload) {
+      item.href = "#";
+      item.title = "Baixar arquivo";
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        downloadChatAttachment(attachment);
+      });
+    }
     item.innerHTML = svg.file;
     const name = document.createElement("span");
     name.textContent = attachmentName(attachment);
     item.append(name);
+    if (canDownload && Number(attachment.size) > 0) {
+      const size = document.createElement("small");
+      size.className = "message-file-size";
+      size.textContent = formatFileSize(attachment.size);
+      item.append(size);
+    }
     list.append(item);
   }
   container.append(list);
@@ -2805,12 +3551,60 @@ function createMessage(role, content = "", attachments = []) {
   const body = document.createElement("div");
   body.className = "message-content";
   renderMarkdown(body, content);
-  renderMessageAttachments(column, attachments);
   column.prepend(name, status, body);
   article.append(avatar, column);
   elements.messages.append(article);
+  // Only the assistant's files are still on disk at this point, so only its
+  // attachments are offered for download.
+  const view = { article, column, status, body, role };
+  view.setAttachments = (items = []) => appendMessageAttachments(view, items);
+  if (attachments && attachments.length) view.setAttachments(attachments);
   scrollToLatest(true);
-  return { article, status, body };
+  return view;
+}
+
+function appendMessageAttachments(view, attachments = []) {
+  if (!view?.column || !attachments?.length) return;
+  view.column.querySelector(".message-attachments")?.remove();
+  renderMessageAttachments(view.column, attachments, view.role === "assistant");
+}
+
+function submitWorkCommand(command) {
+  if (!command || state.busy) return;
+  elements.input.value = command;
+  autoResizeInput();
+  sendMessage();
+}
+
+function renderWorkApproval(container, text) {
+  if (!state.workMode || !container || container.querySelector(".work-approval")) return;
+  const match = String(text || "").match(/AUTORIZAR\s+([A-Z0-9]{6,12})/i);
+  if (!match) return;
+  const code = match[1].toUpperCase();
+  const card = document.createElement("section");
+  card.className = "work-approval";
+  card.setAttribute("aria-label", "Confirmacao necessaria");
+  const icon = document.createElement("span");
+  icon.className = "work-approval-icon";
+  icon.textContent = "!";
+  const copy = document.createElement("div");
+  copy.className = "work-approval-copy";
+  copy.innerHTML = "<strong>Sua confirmacao e necessaria</strong><span>Revise a acao descrita acima antes de continuar.</span>";
+  const actions = document.createElement("div");
+  actions.className = "work-approval-actions";
+  const reject = document.createElement("button");
+  reject.type = "button";
+  reject.className = "work-secondary-button";
+  reject.textContent = "Recusar";
+  reject.addEventListener("click", () => submitWorkCommand(`CANCELAR ${code}`));
+  const approve = document.createElement("button");
+  approve.type = "button";
+  approve.className = "work-primary-button";
+  approve.textContent = "Autorizar e continuar";
+  approve.addEventListener("click", () => submitWorkCommand(`AUTORIZAR ${code}`));
+  actions.append(reject, approve);
+  card.append(icon, copy, actions);
+  container.append(card);
 }
 
 function setStreamStatus(text) {
@@ -2819,6 +3613,7 @@ function setStreamStatus(text) {
   }
   state.streamMessage.status.textContent = text || "";
   state.streamMessage.status.classList.toggle("active", Boolean(text));
+  if (text) addWorkActivity(text);
   if (text && state.jarvisEnabled && state.jarvisMode !== "speaking") {
     setJarvisMode("thinking");
   }
@@ -2836,7 +3631,7 @@ function appendStream(text) {
   scrollToLatest();
 }
 
-function finishStream(text, status = "completed") {
+function finishStream(text, status = "completed", attachments = []) {
   if (!state.streamMessage) {
     state.streamMessage = createMessage("assistant");
   }
@@ -2848,6 +3643,10 @@ function finishStream(text, status = "completed") {
     stopSpeech();
   }
   renderMarkdown(state.streamMessage.body, state.streamingText);
+  renderWorkApproval(state.streamMessage.column || state.streamMessage.body.parentElement, state.streamingText);
+  if (attachments && attachments.length) {
+    state.streamMessage.setAttachments?.(attachments);
+  }
   state.streamMessage.body.classList.remove("stream-caret");
   state.streamMessage.status.textContent = "";
   state.streamMessage.status.classList.remove("active");
@@ -2859,6 +3658,7 @@ function finishStream(text, status = "completed") {
   state.activeJobId = "";
   window.clearInterval(state.pollTimer);
   state.pollTimer = null;
+  finishWorkActivity(status);
   updateSendState();
   if (!state.voiceEnabled || !state.speechBuffer) setJarvisMode("idle");
   scrollToLatest(true);
@@ -2870,6 +3670,14 @@ function resetConversation() {
   state.conversationId = "";
   state.streamingText = "";
   state.streamMessage = null;
+  state.workActivity = [];
+  state.workAgents = [];
+  state.workTaskId = "";
+  state.workTask = null;
+  elements.workDetailsButton.hidden = true;
+  elements.workDetails.hidden = true;
+  elements.workActivity.hidden = true;
+  updateWorkIndicator();
   elements.messages.replaceChildren(elements.emptyState);
   elements.emptyState.hidden = false;
   state.chatTitle = "Nova conversa";
@@ -3037,11 +3845,13 @@ function startPolling(jobId) {
     try {
       const data = await api(`/chat/jobs/${jobId}`);
       const job = data.job;
-      if (job.status === "completed") finishStream(job.response, "completed");
+      if (job.status === "completed") finishStream(job.response, "completed", job.attachments);
       if (job.status === "failed") {
         finishStream(`Erro: ${job.error}`, "failed");
       }
-      if (job.status === "cancelled") finishStream("", "cancelled");
+      if (job.status === "cancelled") {
+        finishStream(job.response || "", "cancelled", job.attachments);
+      }
     } catch (_error) {
       // WebSocket reconnect and the next poll will recover transient failures.
     }
@@ -3252,6 +4062,8 @@ async function sendMessage() {
   const typedMessage = elements.input.value.trim();
   if (!typedMessage && !state.files.length) return;
   const message = typedMessage || "Analise o arquivo anexado.";
+  const workCommand = /^(?:TAREFA\s*:|TAREFAS\s*$|AUTORIZAR\s+|CANCELAR\s+|RETOMAR\s+)/i.test(message);
+  const submittedMessage = state.workMode && !workCommand ? `TAREFA: ${message}` : message;
   stopSpeech();
   const selectedFiles = [...state.files];
   createMessage(
@@ -3265,6 +4077,7 @@ async function sendMessage() {
     state.speechBuffer = "";
     state.speechReceivedChunks = false;
   state.streamMessage = createMessage("assistant");
+  if (state.workMode) resetWorkActivity();
   setStreamStatus(selectedFiles.length ? "Preparando anexos" : "Enviando mensagem");
   elements.input.value = "";
   elements.input.style.height = "auto";
@@ -3272,15 +4085,36 @@ async function sendMessage() {
   renderSelectedFiles();
   updateSendState();
 
+  // Auto-select agents in Work mode
+  if (state.workMode) {
+    state.workAgents = selectAgentsForRequest(message);
+    updateWorkIndicator();
+    // Show which agents are being activated
+    if (state.workAgents.length > 0) {
+      const labels = {
+        executor: "Executor",
+        documentos: "Documentos",
+        estoque: "Estoque",
+        pesquisador: "Pesquisador",
+        desenvolvedor: "Desenvolvedor",
+        assistente: "Assistente"
+      };
+      const agentNames = state.workAgents.map(a => labels[a] || a).join(", ");
+      setStreamStatus(`Ativando agentes: ${agentNames}`);
+    }
+  }
+
   try {
     const attachmentIds = await uploadFiles(selectedFiles);
     const data = await api("/chat/messages", {
       method: "POST",
       json: {
-        message,
+        message: submittedMessage,
         conversation_id: state.conversationId,
         attachment_ids: attachmentIds,
         model_id: state.modelId,
+        agent_mode: state.workMode ? workModeForRequest() : state.agentMode,
+        work_agents: state.workMode ? state.workAgents : undefined,
       },
     });
     state.activeJobId = data.job.id;
@@ -3310,7 +4144,32 @@ async function cancelResponse() {
 
 function handleChatEvent(event) {
   const payload = event.payload || {};
+  if (event.type === "sidebar.updated" && payload.user_id === state.currentUser?.id) {
+    loadNavigation();
+    return;
+  }
   const jobId = payload.job_id || "";
+  const messageSource = payload.message?.metadata?.source || "";
+  if (event.type === "chat.accepted" && ["mobile", "whatsapp"].includes(messageSource) && !state.sendPending) {
+    const origin = messageSource === "whatsapp" ? "WhatsApp" : "celular";
+    stopSpeech();
+    state.conversationId = payload.conversation_id || "";
+    state.activeJobId = jobId;
+    state.busy = true;
+    state.sendPending = false;
+    state.streamingText = "";
+    state.speechBuffer = "";
+    state.speechReceivedChunks = false;
+    elements.messages.replaceChildren();
+    createMessage("user", payload.message?.content || `Mensagem recebida do ${origin}`);
+    state.streamMessage = createMessage("assistant");
+    setStreamStatus(`Recebido do ${origin} — preparando resposta`);
+    showView("chat");
+    updateSendState();
+    loadConversations();
+    showToast(`Pedido recebido do ${origin}.`);
+    return;
+  }
   if (event.type === "chat.accepted" && state.sendPending) {
     state.activeJobId = jobId;
     state.conversationId = payload.conversation_id || state.conversationId;
@@ -3320,12 +4179,16 @@ function handleChatEvent(event) {
   }
   if (jobId && state.activeJobId && jobId !== state.activeJobId) return;
 
-  if (event.type === "chat.started") setStreamStatus("Pensando");
+  if (event.type === "chat.started") setStreamStatus(state.workMode ? "Planejando a tarefa" : "Pensando");
   if (event.type === "chat.status") setStreamStatus(payload.text || "Pensando");
   if (event.type === "chat.chunk") appendStream(payload.text || "");
-  if (event.type === "chat.completed") finishStream(payload.text || "", "completed");
+  if (event.type === "chat.completed") {
+    finishStream(payload.text || "", "completed", payload.attachments);
+  }
   if (event.type === "chat.failed") finishStream(`Erro: ${payload.error || "Falha local"}`, "failed");
-  if (event.type === "chat.cancelled") finishStream("", "cancelled");
+  if (event.type === "chat.cancelled") {
+    finishStream(payload.text || "", "cancelled", payload.attachments);
+  }
   if (event.type === "chat.cancelling") setStreamStatus("Interrompendo resposta");
 }
 
@@ -3400,7 +4263,7 @@ function connectEvents() {
   });
   socket.addEventListener("close", () => {
     setConnected(false);
-    if (!state.authToken) return;
+    if (!state.currentUser) return;
     window.setTimeout(connectEvents, state.reconnectDelay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 1.7, 8000);
   });
@@ -3421,6 +4284,41 @@ async function loadSession() {
 }
 
 function bindEvents() {
+  document.querySelector("#whatsapp-button").addEventListener("click", openWhatsAppDialog);
+  document.querySelector("#whatsapp-close").addEventListener("click", () => document.querySelector("#whatsapp-dialog").close());
+  document.querySelector("#whatsapp-dialog").addEventListener("close", () => {
+    window.clearInterval(state.whatsappPollTimer);
+    state.whatsappPollTimer = null;
+    document.querySelector("#whatsapp-qr").removeAttribute("src");
+  });
+  document.querySelector("#whatsapp-connect").addEventListener("click", () => updateWhatsAppConnection("connect"));
+  document.querySelector("#whatsapp-pause").addEventListener("click", () => updateWhatsAppConnection("pause"));
+  document.querySelector("#whatsapp-self-chat-send").addEventListener("click", async () => {
+    const button = document.querySelector("#whatsapp-self-chat-send");
+    button.disabled = true;
+    try {
+      await api("/whatsapp/self-chat", {method: "POST"});
+      await refreshWhatsAppConnection();
+    } catch (error) {
+      document.querySelector("#whatsapp-status").textContent = error.message;
+    } finally { button.disabled = false; }
+  });
+  document.querySelector("#sidebar-customize").addEventListener("click", openSidebarPreferences);
+  const sidebarPreferencesDialog = document.querySelector("#sidebar-preferences-dialog");
+  for (const id of ["sidebar-preferences-close", "sidebar-preferences-cancel"]) {
+    document.getElementById(id).addEventListener("click", () => sidebarPreferencesDialog.close());
+  }
+  document.querySelector("#sidebar-preferences-form").addEventListener("submit", saveSidebarPreferences);
+  document.querySelectorAll("[data-sidebar-preset]").forEach(button => {
+    button.addEventListener("click", () => applySidebarPreset(button.dataset.sidebarPreset));
+  });
+  for (const [id, visible] of [["sidebar-hide-modules", false], ["sidebar-show-modules", true]]) {
+    document.getElementById(id).addEventListener("click", () => {
+      state.sidebarModuleDraft.filter(item => sidebarModuleIds.includes(item.id) && item.enabled)
+        .forEach(item => { item.sidebar_visible = visible; });
+      renderSidebarModuleChoices();
+    });
+  }
   elements.themeButtons.forEach((button) => {
     button.addEventListener("click", () => setTheme(button.dataset.themeOption));
   });
@@ -3437,7 +4335,9 @@ function bindEvents() {
   elements.jarvisStatus.addEventListener("pointercancel", stopJarvisDrag);
   elements.jarvisStatus.addEventListener("dblclick", resetJarvisPosition);
   window.addEventListener("resize", restoreJarvisPosition);
-  elements.menuButton.addEventListener("click", openSidebar);
+  elements.menuButton.addEventListener("click", handleMenuButton);
+  elements.settingsBtn.addEventListener("click", openSettingsDialog);
+  elements.sidebarCollapse.addEventListener("click", toggleSidebarCollapsed);
   elements.sidebarClose.addEventListener("click", closeSidebar);
   elements.backdrop.addEventListener("click", closeSidebar);
   elements.newChat.addEventListener("click", resetConversation);
@@ -3575,6 +4475,24 @@ function bindEvents() {
     state.modelId = elements.modelSelect.value;
     localStorage.setItem("celsius-model-id", state.modelId);
   });
+  if (elements.modeSelect) {
+    elements.modeSelect.addEventListener("change", () => {
+      state.agentMode = elements.modeSelect.value;
+      localStorage.setItem("celsius-agent-mode", state.agentMode);
+    });
+  }
+  if (elements.workModeToggle) {
+    elements.workModeToggle.addEventListener("click", toggleWorkMode);
+  }
+  if (elements.workActivityToggle) {
+    elements.workActivityToggle.addEventListener("click", toggleWorkActivity);
+  }
+  if (elements.workDetailsButton) {
+    elements.workDetailsButton.addEventListener("click", toggleWorkTaskDetails);
+  }
+  if (elements.workStop) {
+    elements.workStop.addEventListener("click", cancelResponse);
+  }
   elements.voiceToggle.addEventListener("change", () => setVoiceEnabled(elements.voiceToggle.checked));
   elements.jarvisToggle.addEventListener("change", () => setJarvisEnabled(elements.jarvisToggle.checked));
   elements.sendButton.addEventListener("click", sendMessage);
@@ -3615,7 +4533,7 @@ function bindEvents() {
   });
   elements.userProfileBtn.addEventListener("click", () => {
     elements.userDropdown.hidden = true;
-    showToast("Perfil: alteracao de dados disponivel na versao final.", "info");
+    openProfileDialog();
   });
   elements.userLogoutBtn.addEventListener("click", handleLogout);
   document.addEventListener("click", (event) => {
@@ -3632,6 +4550,357 @@ function bindEvents() {
     loadNotifications().then(() => renderNotificationsList());
   });
   elements.notificationsMarkAll.addEventListener("click", markAllNotificationsRead);
+  elements.profileClose.addEventListener("click", () => elements.profileDialog.close());
+  elements.profileDialog.addEventListener("click", (event) => {
+    if (event.target === elements.profileDialog) elements.profileDialog.close();
+  });
+  elements.profileForm.addEventListener("submit", saveProfile);
+  elements.profilePasswordForm.addEventListener("submit", saveProfilePassword);
+  window.addEventListener("resize", () => {
+    if (state.sidebarCollapsed) setSidebarCollapsed(true);
+  });
+}
+
+/* ============================================
+   SETTINGS DIALOG
+   ============================================ */
+
+function openSettingsDialog() {
+  const user = state.currentUser || {};
+  // Load current settings from backend
+  loadSettingsFromBackend().then(settings => {
+    // Perfil do cliente/empresa
+    elements.settingsUserName.value = settings.customer.user_name || "";
+    elements.settingsCompanyName.value = settings.customer.company_name || "";
+    elements.settingsCompanySector.value = settings.customer.company_sector || "";
+    elements.settingsCompanySize.value = settings.customer.company_size || "";
+    elements.settingsCompanyDescription.value = settings.customer.company_description || "";
+    elements.settingsUserRole.value = settings.customer.user_role || "";
+    elements.settingsPreferredTone.value = settings.customer.preferred_tone || "";
+    elements.settingsTimezone.value = settings.customer.timezone || "America/Sao_Paulo";
+    elements.settingsBusinessContext.value = settings.customer.business_context || "";
+    elements.settingsMainNeeds.value = settings.customer.main_needs || "";
+    elements.settingsOffline.checked = settings.customer.local_offline_required;
+
+    // Modo resposta
+    elements.settingsResponseMode.value = settings.response.mode || "natural";
+    elements.settingsResponseDetail.value = settings.response.detail_level || "detalhado";
+    elements.settingsResponseTemperature.value = settings.response.temperature || 0.45;
+    elements.settingsResponseTopP.value = settings.response.top_p || 0.9;
+
+    // Voz
+    elements.settingsVoiceEnabled.checked = settings.voice.enabled !== false;
+    // Populate voice profiles
+    loadVoiceProfiles().then(profiles => {
+      const profileMap = profiles.reduce((acc, p) => {
+        acc[p.id] = p;
+        return acc;
+      }, {});
+      // Set default based on current voice
+      const currentVoice = settings.voice.voice || "pt-BR-AntonioNeural";
+      const defaultOption = Array.from(elements.settingsVoiceProfile.options).find(o => o.value === currentVoice);
+      if (defaultOption) defaultOption.selected = true;
+      // Also set the voice select
+      elements.settingsVoice.value = currentVoice || "pt-BR-AntonioNeural";
+      elements.settingsVoiceRate.value = settings.voice.rate || "+5%";
+      elements.settingsVoicePitch.value = settings.voice.pitch || "-2Hz";
+      elements.settingsVoiceVolume.value = settings.voice.volume || "+0%";
+    });
+
+    // Acesso pelo celular
+    elements.settingsMobileEnabled.checked = settings.mobile.enabled !== false;
+    elements.settingsMobileLAN.checked = settings.mobile.allow_lan !== false;
+    elements.settingsMobileVoice.checked = settings.mobile.voice_commands_enabled !== false;
+    elements.settingsMobileHTTPS.checked = settings.mobile.use_https !== false;
+    elements.settingsMobilePort.value = settings.mobile.port || 8787;
+    elements.settingsMobileToken.value = settings.mobile.pairing_token || "";
+
+    // Notificacoes
+    elements.settingsNotificationsEnabled.checked = settings.notifications.enabled !== false;
+    elements.settingsNotificationsExternal.checked = settings.notifications.external_services_allowed !== false;
+    elements.settingsNotificationsConfirmation.checked = settings.notifications.require_confirmation !== false;
+    elements.settingsNotificationChannel.value = settings.notifications.default_channel || "whatsapp";
+    elements.settingsWhatsAppProvider.value = settings.notifications.whatsapp_provider || "meta_cloud_api";
+    elements.settingsWhatsAppPhoneId.value = settings.notifications.whatsapp_phone_number_id || "";
+    elements.settingsWhatsAppTokenEnv.value = settings.notifications.whatsapp_token_env_var || "";
+    settingsEmailProvider.value = settings.notifications.email_provider || "";
+    settingsEmailFrom.value = settings.notifications.email_from || "";
+    elements.settingsSmsProvider.value = settings.notifications.sms_provider || "";
+    settingsSmsSender.value = settings.notifications.sms_sender_id || "";
+
+    // Pastas autorizadas
+    elements.settingsAllowedRoots.value = settings.security.allowed_file_roots.join("\n") || "";
+
+    // Módulos da empresa
+    renderModulesGrid(settings.modules || []);
+
+    // Informacao de armazenamento
+    elements.settingsStorageInfo.textContent = "Dados salvos em: data/customer_profile.json e data/celsius_settings.json";
+
+    elements.settingsDialog.showModal();
+  });
+}
+
+function loadSettingsFromBackend() {
+  return fetch("/api/v1/settings", {
+    method: "GET",
+    headers: authHeaders()
+  }).then(async res => {
+    if (!res.ok) throw new Error("Nao foi possivel carregar configuracoes");
+    return res.json();
+  });
+}
+
+function loadVoiceProfiles() {
+  return fetch("/api/v1/voice/profiles", {
+    method: "GET",
+    headers: authHeaders()
+  }).then(async res => {
+    if (!res.ok) return [];
+    return res.json();
+  });
+}
+
+function renderModulesGrid(modules) {
+  const grid = elements.settingsModulesGrid;
+  grid.innerHTML = "";
+  const catalog = Object.values(modules || {});
+  // Build a map id -> definition from server payload if available
+  const serverModules = modules || {};
+  catalog.forEach(module => {
+    const enabled = serverModules[module.id] ? serverModules[module.id].enabled !== false : module.show_in_sidebar;
+    const div = document.createElement("div");
+    div.className = "settings-grid";
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = enabled;
+    input.disabled = !!module.mandatory;
+    input.dataset.moduleId = module.id;
+    input.dataset.moduleName = module.name;
+    const name = document.createElement("span");
+    name.textContent = module.name;
+    label.append(input, name);
+    div.append(label);
+    grid.appendChild(div);
+  });
+}
+
+function saveSettings(event) {
+  event.preventDefault();
+
+  const settingsPayload = {
+    customer: {
+      user_name: elements.settingsUserName.value.trim(),
+      company_name: elements.settingsCompanyName.value.trim(),
+      company_sector: elements.settingsCompanySector.value.trim(),
+      company_size: elements.settingsCompanySize.value.trim(),
+      company_description: elements.settingsCompanyDescription.value.trim(),
+      user_role: elements.settingsUserRole.value.trim(),
+      preferred_tone: elements.settingsPreferredTone.value.trim(),
+      business_context: elements.settingsBusinessContext.value.trim(),
+      main_needs: elements.settingsMainNeeds.value.trim(),
+      local_offline_required: elements.settingsOffline.checked,
+    },
+    response: {
+      mode: elements.settingsResponseMode.value,
+      detail_level: elements.settingsResponseDetail.value,
+      temperature: parseFloat(elements.settingsResponseTemperature.value) || 0.45,
+      top_p: parseFloat(elements.settingsResponseTopP.value) || 0.9,
+    },
+    voice: {
+      enabled: elements.settingsVoiceEnabled.checked,
+      provider: "edge-tts",
+      profile: elements.settingsVoiceProfile.value || "natural_male_br",
+      voice: elements.settingsVoice.value || "pt-BR-AntonioNeural",
+      rate: elements.settingsVoiceRate.value || "+5%",
+      pitch: elements.settingsVoicePitch.value || "-2Hz",
+      volume: elements.settingsVoiceVolume.value || "+0%",
+    },
+    mobile: {
+      enabled: elements.settingsMobileEnabled.checked,
+      host: "0.0.0.0",
+      port: parseInt(elements.settingsMobilePort.value) || 8787,
+      pairing_token: elements.settingsMobileToken.value.trim(),
+      allow_lan: elements.settingsMobileLAN.checked,
+      voice_commands_enabled: elements.settingsMobileVoice.checked,
+      use_https: elements.settingsMobileHTTPS.checked,
+    },
+    notifications: {
+      enabled: elements.settingsNotificationsEnabled.checked,
+      external_services_allowed: elements.settingsNotificationsExternal.checked,
+      require_confirmation: elements.settingsNotificationsConfirmation.checked,
+      default_channel: elements.settingsNotificationChannel.value,
+      whatsapp_provider: elements.settingsWhatsAppProvider.value.trim(),
+      whatsapp_phone_number_id: elements.settingsWhatsAppPhoneId.value.trim(),
+      whatsapp_token_env_var: elements.settingsWhatsAppTokenEnv.value.trim(),
+      email_provider: elements.settingsEmailProvider.value.trim(),
+      email_from: elements.settingsEmailFrom.value.trim(),
+      sms_provider: elements.settingsSmsProvider.value.trim(),
+      sms_sender_id: elements.settingsSmsSender.value.trim(),
+    },
+    security: {
+      allowed_file_roots: elements.settingsAllowedRoots.value.split("\n")
+        .filter(s => s.trim())
+        .map(s => s.trim()),
+    },
+    modules: {}
+  };
+
+  // Collect module enabled states from checkboxes
+  const moduleCheckboxes = document.querySelectorAll("#settings-modules-grid input[type=checkbox]");
+  moduleCheckboxes.forEach(cb => {
+    const id = cb.getAttribute("data-module-id");
+    if (settingsPayload.modules[id] === undefined) settingsPayload.modules[id] = {};
+    settingsPayload.modules[id].id = id;
+    settingsPayload.modules[id].name = cb.dataset.moduleName;
+    settingsPayload.modules[id].enabled = cb.checked;
+  });
+
+  fetch("/api/v1/settings", {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(settingsPayload)
+  }).then(async res => {
+    if (!res.ok) {
+      const err = await res.json();
+      showToast("Erro ao salvar configuracoes: " + (err.error || res.statusText), "error");
+      return;
+    }
+    showToast("Configuracoes salvas com sucesso.", "success");
+    elements.settingsDialog.close();
+    // Refresh the page to reflect changes (or just reload navigation)
+    // For now, just reload the app shell
+    window.location.reload();
+  }).catch(err => {
+    showToast("Erro ao salvar configuracoes: " + err.message, "error");
+  });
+}
+
+function suggestModulesBySegment() {
+  const segment = prompt("Digite o segmento da empresa (ex: comercio, industria, servicos):");
+  const needs = prompt("Digite as necessidades (separadas por virgula, opcional):");
+  if (segment === null) return;
+  fetch("/api/v1/modules/suggest", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ segment: segment, needs: needs ? needs.split(",").map(s => s.trim()) : [] })
+  }).then(async res => {
+    if (!res.ok) {
+      const err = await res.json();
+      showToast("Erro ao sugerir modulos: " + (err.error || res.statusText), "error");
+      return;
+    }
+    const data = await res.json();
+    // Check checkboxes based on suggested list
+    const suggested = data.suggested || [];
+    const checkboxes = document.querySelectorAll("#settings-modules-grid input[type=checkbox]");
+    checkboxes.forEach(cb => {
+      cb.checked = cb.disabled || suggested.includes(cb.getAttribute("data-module-id"));
+    });
+    showToast("Sugestao de modulos aplicada.", "info");
+  }).catch(err => {
+    showToast("Erro ao sugerir modulos: " + err.message, "error");
+  });
+}
+
+/* ============================================
+   USER PROFILE
+   ============================================ */
+
+function openProfileDialog() {
+  const user = state.currentUser || {};
+  elements.profileDisplayLabel.textContent = user.display_name || user.email?.split("@")[0] || "Usuario";
+  elements.profileEmail.textContent = user.email || "";
+  elements.profileRole.textContent = user.role ? `Acesso: ${profileRoleLabel(user.role)}` : "";
+  elements.profileDisplayName.value = user.display_name || "";
+  elements.profileError.hidden = true;
+  elements.profilePasswordError.hidden = true;
+  elements.profilePasswordForm.reset();
+  elements.profileDialog.showModal();
+  elements.profileDisplayName.focus();
+}
+
+function profileRoleLabel(role) {
+  switch (role) {
+    case "admin":
+      return "administrador";
+    case "manager":
+      return "gerente";
+    case "viewer":
+      return "somente leitura";
+    default:
+      return "usuario";
+  }
+}
+
+function setProfileSaving(saving) {
+  elements.profileSave.disabled = saving;
+  elements.profileSave.textContent = saving ? "Salvando..." : "Salvar alteracoes";
+}
+
+async function saveProfile(event) {
+  event.preventDefault();
+  const displayName = elements.profileDisplayName.value.trim();
+  if (!displayName) {
+    elements.profileError.textContent = "Informe um nome de exibicao.";
+    elements.profileError.hidden = false;
+    return;
+  }
+  setProfileSaving(true);
+  elements.profileError.hidden = true;
+  try {
+    const user = await api("/auth/me", {
+      method: "PUT",
+      json: { display_name: displayName },
+    });
+    state.currentUser = user;
+    elements.userDisplayName.textContent = user.display_name || user.email.split("@")[0];
+    elements.profileDisplayLabel.textContent = user.display_name;
+    setProfileSaving(false);
+    showToast("Dados do perfil atualizados.");
+  } catch (error) {
+    elements.profileError.textContent = error.message;
+    elements.profileError.hidden = false;
+    setProfileSaving(false);
+  }
+}
+
+function setProfilePasswordSaving(saving) {
+  elements.profilePasswordSave.disabled = saving;
+  elements.profilePasswordSave.textContent = saving ? "Alterando..." : "Alterar senha";
+}
+
+async function saveProfilePassword(event) {
+  event.preventDefault();
+  const oldPassword = elements.profileOldPassword.value;
+  const newPassword = elements.profileNewPassword.value;
+  const confirmPassword = elements.profilePasswordConfirm.value;
+  if (!oldPassword || !newPassword || newPassword.length < 8) {
+    elements.profilePasswordError.textContent = "Informe a senha atual e uma nova senha com pelo menos 8 caracteres.";
+    elements.profilePasswordError.hidden = false;
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    elements.profilePasswordError.textContent = "A confirmacao nao confere com a nova senha.";
+    elements.profilePasswordError.hidden = false;
+    return;
+  }
+  setProfilePasswordSaving(true);
+  elements.profilePasswordError.hidden = true;
+  try {
+    await api("/auth/me/password", {
+      method: "PUT",
+      json: { old_password: oldPassword, new_password: newPassword },
+    });
+    elements.profilePasswordForm.reset();
+    setProfilePasswordSaving(false);
+    showToast("Senha alterada com sucesso.");
+  } catch (error) {
+    elements.profilePasswordError.textContent = error.message;
+    elements.profilePasswordError.hidden = false;
+    setProfilePasswordSaving(false);
+  }
 }
 
 /* ============================================
@@ -3640,14 +4909,12 @@ function bindEvents() {
 
 function showLoginScreen() {
   state.authToken = "";
-  state.refreshToken = "";
   state.currentUser = null;
   if (state.websocket) {
     state.websocket.close();
     state.websocket = null;
   }
   localStorage.removeItem("celsius_auth_token");
-  localStorage.removeItem("celsius_refresh_token");
   elements.loginScreen.hidden = false;
   elements.appShell.hidden = true;
   elements.loginForm.hidden = false;
@@ -3661,11 +4928,9 @@ function showAppScreen() {
   elements.appShell.hidden = false;
 }
 
-function storeTokens(accessToken, refreshToken) {
-  state.authToken = accessToken;
-  state.refreshToken = refreshToken || "";
-  localStorage.setItem("celsius_auth_token", accessToken);
-  if (refreshToken) localStorage.setItem("celsius_refresh_token", refreshToken);
+function storeTokens(accessToken) {
+  state.authToken = accessToken || "";
+  localStorage.removeItem("celsius_auth_token");
 }
 
 async function handleLogin(event) {
@@ -3682,7 +4947,7 @@ async function handleLogin(event) {
       method: "POST",
       json: { email, password },
     });
-    storeTokens(data.access_token, data.refresh_token);
+    storeTokens(data.access_token);
     elements.loginForm.reset();
     await enterApp();
   } catch (error) {
@@ -3718,7 +4983,7 @@ async function handleRegister(event) {
       method: "POST",
       json: { email, password },
     });
-    storeTokens(data.access_token, data.refresh_token);
+    storeTokens(data.access_token);
     elements.registerForm.reset();
     await enterApp();
   } catch (error) {
@@ -3729,7 +4994,7 @@ async function handleRegister(event) {
 
 async function handleLogout() {
   try {
-    if (state.authToken) await api("/auth/logout", { method: "POST" });
+    await api("/auth/logout", { method: "POST" });
   } catch (_error) {
     // Ignore logout API errors; clear local state regardless.
   }
@@ -3760,6 +5025,7 @@ async function enterApp() {
     loadConversations(),
     loadModels(),
     loadVoiceCapabilities(),
+    loadAgentModes(),
   ]);
   await Promise.all([loadAgenda(), loadDueReminders(), loadDocuments(), loadInventory(), loadProducts()]);
   await loadNotifications();
@@ -3773,11 +5039,12 @@ async function enterApp() {
 
 async function loadAdminDashboard() {
   try {
-    const [stats, userActivity, activity, health] = await Promise.all([
+    const [stats, userActivity, activity, health, decisions] = await Promise.all([
       api("/admin/dashboard/stats"),
       api("/admin/dashboard/users"),
       api("/admin/dashboard/activity?limit=15"),
       api("/admin/dashboard/health"),
+      api("/admin/dashboard/decisions"),
     ]);
     elements.adminUsers.textContent = String(stats.total_users);
     elements.adminConversations.textContent = String(stats.total_conversations);
@@ -3787,6 +5054,7 @@ async function loadAdminDashboard() {
     renderAdminUserActivity(userActivity || []);
     renderAdminRecentActivity(activity || []);
     renderAdminHealth(health);
+    renderAdminDecisions(decisions || {});
     await loadAdminUsersTable();
   } catch (error) {
     showToast(`Admin: ${error.message}`, "error");
@@ -3845,6 +5113,52 @@ function renderAdminHealth(health) {
     row.querySelector(".health-label").textContent = label;
     row.querySelector(".health-status span:last-child").textContent = value;
     elements.adminHealth.appendChild(row);
+  });
+}
+
+function fmtPercent(value) {
+  const n = Number(value) || 0;
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+function renderAdminDecisions(decisions) {
+  const enabled = Boolean(decisions.enabled);
+  const dot = enabled ? "ok" : "warn";
+  elements.adminDecisionEnabled.textContent = enabled ? "ativada" : "desativada";
+  elements.adminDecisionEnabled.closest(".health-status").querySelector(".health-dot").className = `health-dot ${dot}`;
+
+  const fallbackRate = Number(decisions.fallback_rate) || 0;
+  const latency = decisions.latency_ms || {};
+  const requests = decisions.requests_total || {};
+  const ok = Number(requests.ok) || 0;
+  const error = Number(requests.error) || 0;
+
+  elements.adminDecisionOutcomes.textContent = `${Number(decisions.total_outcomes) || 0} (${fmtPercent(
+    1 - fallbackRate,
+  )} ok)` || "--";
+  elements.adminDecisionFallbacks.textContent = `${Number(decisions.total_provider_fallbacks) || 0} (${fmtPercent(
+    fallbackRate,
+  )})`;
+  elements.adminDecisionRequests.textContent = `${ok} / ${error}`;
+  elements.adminDecisionLatency.textContent = `${latency.p95_ms || 0} ms`;
+
+  elements.adminDecisionKinds.innerHTML = "";
+  const byKind = decisions.by_kind || {};
+  const records = Object.keys(byKind).sort();
+  if (!records.length) {
+    elements.adminDecisionKinds.innerHTML = '<p class="muted-note">Nenhum resultado registrado.</p>';
+    return;
+  }
+  records.forEach((kind) => {
+    const item = byKind[kind];
+    const row = document.createElement("div");
+    row.className = "admin-activity-item";
+    row.innerHTML =
+      '<span class="activity-path"></span><div class="activity-time"></div>';
+    row.querySelector(".activity-path").textContent =
+      `${kind}: ${Number(item.n) || 0} (aprovacao ${fmtPercent(item.rate)})`;
+    row.querySelector(".activity-time").textContent = `media ${Number(item.mean_value) || 0}`;
+    elements.adminDecisionKinds.appendChild(row);
   });
 }
 
@@ -3959,12 +5273,10 @@ async function initialize() {
   const savedTheme = localStorage.getItem("celsius-theme-v2");
   const legacyTheme = localStorage.getItem("celsius-theme");
   setTheme(savedTheme || (legacyTheme === "dark" ? "green" : legacyTheme) || "light");
+  if (localStorage.getItem("celsius-sidebar-collapsed") === "1") setSidebarCollapsed(true);
+  syncWorkModeUI();
   bindEvents();
   updateSendState();
-  if (!state.authToken) {
-    showLoginScreen();
-    return;
-  }
   try {
     const user = await api("/auth/me");
     state.currentUser = user;
@@ -3982,6 +5294,7 @@ async function initialize() {
     loadConversations(),
     loadModels(),
     loadVoiceCapabilities(),
+    loadAgentModes(),
   ]);
   await Promise.all([loadAgenda(), loadDueReminders(), loadDocuments(), loadInventory(), loadProducts()]);
   await loadNotifications();

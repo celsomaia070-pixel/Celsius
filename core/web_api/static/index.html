@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#f4f7f6">
     <title>Celsius Project AI</title>
     <link rel="icon" href="/app/assets/brand.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/app/assets/app.css?v=20260810.6">
+    <link rel="stylesheet" href="/app/assets/app.css?v=20260930.whatsapp-self-chat3">
   </head>
   <body data-theme="light">
     <!-- LOGIN SCREEN -->
@@ -70,6 +70,9 @@
             <text x="96" y="32" class="wordmark-project">Project</text>
             <text x="172" y="32" class="wordmark-ai">AI</text>
           </svg>
+          <button class="icon-button sidebar-collapse" id="sidebar-collapse" type="button" aria-label="Recolher menu" title="Recolher menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
           <button class="icon-button sidebar-close" id="sidebar-close" type="button" aria-label="Fechar menu" title="Fechar menu">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
@@ -80,6 +83,10 @@
           <span>Nova conversa</span>
         </button>
 
+        <div class="sidebar-menu-heading">
+          <span>Seu espaço</span>
+          <button class="sidebar-customize" id="sidebar-customize" type="button" aria-haspopup="dialog" title="Escolher módulos e organizar o menu">Personalizar menu</button>
+        </div>
         <nav class="primary-nav" aria-label="Modulos">
           <button class="nav-item active" id="chat-button" type="button" aria-current="page">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
@@ -142,9 +149,13 @@
         </div>
 
         <div class="sidebar-footer">
+          <button class="mobile-pair-command" id="whatsapp-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a9 9 0 0 1-13.3 8L3 21l1.5-4.7A9 9 0 1 1 21 11.5Z"/><path d="M8 8c0 4 4 8 8 8l1-2-3-1-1 1-3-3 1-1-1-3Z"/></svg>
+            <span>Conectar WhatsApp</span>
+          </button>
           <button class="mobile-pair-command" id="mobile-pair-button" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
-            <span>Parear celular</span>
+            <span>Abrir modo de voz</span>
           </button>
           <div class="sidebar-status-row">
             <div class="local-state" id="local-state">
@@ -173,9 +184,13 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <span>Local</span>
           </div>
+
           <button class="icon-button notification-bell" id="notification-bell" type="button" aria-label="Notificacoes" title="Notificacoes">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             <span class="notification-badge" id="notification-badge" hidden>0</span>
+          </button>
+          <button class="icon-button" id="settings-btn" type="button" aria-label="Configurações" title="Configurações">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2l3.5 3.5L3 18l6 6 6-6-1.5-1.5z"/></svg>
           </button>
           <div class="user-menu" id="user-menu">
             <button class="icon-button user-avatar" id="user-avatar-btn" type="button" aria-label="Menu do usuario">
@@ -607,6 +622,17 @@
               <div class="admin-health" id="admin-health"></div>
             </div>
             <div class="admin-panel">
+              <h3>Decisoes (JEV)</h3>
+              <div class="decision-metrics" id="admin-decisions">
+                <div class="admin-health-item"><span class="health-label">Camada de decisao</span><span class="health-status"><span class="health-dot warn"></span><span id="decision-enabled">--</span></span></div>
+                <div class="admin-health-item"><span class="health-label">Resultados registrados</span><span class="health-status"><span id="decision-outcomes">--</span></span></div>
+                <div class="admin-health-item"><span class="health-label">Fallbacks de provedor</span><span class="health-status"><span id="decision-fallbacks">--</span></span></div>
+                <div class="admin-health-item"><span class="health-label">Pedidos (ok / erro)</span><span class="health-status"><span id="decision-requests">--</span></span></div>
+                <div class="admin-health-item"><span class="health-label">Latencia media (p95)</span><span class="health-status"><span id="decision-latency">--</span></span></div>
+              </div>
+              <div class="admin-activity-list" id="admin-decision-kinds"></div>
+            </div>
+            <div class="admin-panel">
               <h3>Gerenciar Usuarios</h3>
               <button class="primary-command" id="admin-add-user" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Novo usuario</span></button>
               <div class="admin-user-table-wrap">
@@ -633,10 +659,51 @@
           </div>
         </aside>
 
+        <section class="work-activity collapsed" id="work-activity" aria-live="polite" aria-label="Atividade dos agentes" hidden>
+          <div class="work-activity-shell">
+            <div class="work-activity-heading">
+              <div class="work-activity-title">
+                <span class="work-live-dot" aria-hidden="true"></span>
+                <div>
+                  <strong id="work-activity-label">Agentes trabalhando</strong>
+                  <span id="work-activity-summary">Preparando a tarefa</span>
+                </div>
+              </div>
+              <div class="work-activity-actions">
+                <button class="work-text-button" id="work-stop" type="button">Interromper</button>
+                <button class="work-text-button" id="work-details-button" type="button" hidden>Ver detalhes</button>
+                <button class="icon-button compact" id="work-activity-toggle" type="button" aria-expanded="false" aria-label="Expandir atividade" title="Expandir atividade">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="work-agent-list" id="work-agent-list" aria-label="Agentes selecionados"></div>
+            <ol class="work-timeline" id="work-timeline"></ol>
+            <div class="work-details" id="work-details" hidden>
+              <div class="work-details-heading">
+                <strong>Registro da tarefa</strong>
+                <span id="work-details-status"></span>
+              </div>
+              <p class="work-details-objective" id="work-details-objective"></p>
+              <div class="work-details-grid">
+                <div><span>Plano</span><strong id="work-details-plan">—</strong></div>
+                <div><span>Etapas</span><strong id="work-details-steps">—</strong></div>
+                <div><span>Evidências</span><strong id="work-details-artifacts">—</strong></div>
+              </div>
+              <p class="work-details-result" id="work-details-result"></p>
+            </div>
+          </div>
+        </section>
+
         <footer class="composer-band" id="composer-band">
           <div class="composer-wrap">
             <div class="attachment-list" id="attachment-list" aria-live="polite"></div>
             <div class="composer-options">
+              <button class="work-mode-toggle" id="work-mode-toggle" type="button" aria-pressed="false" aria-label="Ativar modo Work" title="Work: planeja e acompanha tarefas com agentes especializados">
+                <svg class="work-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4v1a4 4 0 0 0-3 6.65V15a4 4 0 0 0 4 4h1M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1 3 6.65V15a4 4 0 0 1-4 4h-1M9 11h6M12 8v8M10 22h4"/></svg>
+                <span class="work-label">Work</span>
+                <span class="work-indicator" id="work-indicator" hidden aria-hidden="true"></span>
+              </button>
               <label class="model-control" title="Escolher o modelo usado nesta conversa">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a4 4 0 0 0-4 4v1a4 4 0 0 0-3 6.65V15a4 4 0 0 0 4 4h1M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1 3 6.65V15a4 4 0 0 1-4 4h-1M9 11h6M12 8v8M10 22h4"/></svg>
                 <span class="visually-hidden">Modelo de linguagem</span>
@@ -644,6 +711,8 @@
                   <option value="">Automatico (recomendado)</option>
                 </select>
               </label>
+              <!-- Mode selector removed - replaced by Work toggle in top bar -->
+              <span id="mode-health" class="mode-health" aria-live="polite" title="Estado da camada Jev"></span>
               <div class="mode-controls" aria-label="Modos do assistente">
                 <label class="mode-toggle" title="Ler as respostas em voz alta">
                   <input id="voice-toggle" type="checkbox">
@@ -701,6 +770,285 @@
           <button class="primary-command" id="memory-save" type="submit">Salvar memoria</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="profile-dialog" id="profile-dialog" aria-labelledby="profile-title">
+      <div class="dialog-header">
+        <div>
+          <h2 id="profile-title">Meu perfil</h2>
+          <p>Dados de acesso salvos apenas neste computador.</p>
+        </div>
+        <button class="icon-button" id="profile-close" type="button" aria-label="Fechar perfil" title="Fechar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="profile-body">
+        <div class="profile-identity">
+          <div class="profile-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div>
+            <strong id="profile-display-label"></strong>
+            <span id="profile-email"></span>
+            <span id="profile-role"></span>
+          </div>
+        </div>
+        <form id="profile-form">
+          <label class="profile-field">Nome de exibicao
+            <input id="profile-display-name" type="text" maxlength="80" autocomplete="name">
+          </label>
+          <div class="form-error" id="profile-error" hidden></div>
+          <div class="profile-actions">
+            <button class="primary-command" id="profile-save" type="submit">Salvar alteracoes</button>
+          </div>
+        </form>
+      </div>
+      <form class="profile-password" id="profile-password-form">
+        <div class="profile-password-heading">
+          <strong>Alterar senha</strong>
+          <span>Requer a senha atual.</span>
+        </div>
+        <label class="profile-field">Senha atual
+          <input id="profile-old-password" type="password" autocomplete="current-password">
+        </label>
+        <label class="profile-field">Nova senha
+          <input id="profile-new-password" type="password" autocomplete="new-password" minlength="8">
+        </label>
+        <label class="profile-field">Confirmar nova senha
+          <input id="profile-password-confirm" type="password" autocomplete="new-password" minlength="8">
+        </label>
+        <div class="form-error" id="profile-password-error" hidden></div>
+        <div class="profile-actions">
+          <button class="secondary-command" id="profile-password-save" type="submit">Alterar senha</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+      <div class="dialog-header">
+        <div>
+          <h2 id="settings-title">Configurações do Celsius</h2>
+          <p>Preferencias salvas apenas neste computador.</p>
+        </div>
+        <button class="icon-button" id="settings-close" type="button" aria-label="Fechar configurações" title="Fechar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <h3>Perfil do cliente/empresa</h3>
+          <div class="settings-field">
+            <label>Seu nome</label>
+            <input type="text" id="settings-user-name" maxlength="100">
+          </div>
+          <div class="settings-field">
+            <label>Empresa</label>
+            <input type="text" id="settings-company-name" maxlength="100">
+          </div>
+          <div class="settings-field">
+            <label>Setor</label>
+            <input type="text" id="settings-company-sector" maxlength="100">
+          </div>
+          <div class="settings-field">
+            <label>Porte</label>
+            <input type="text" id="settings-company-size" maxlength="50">
+          </div>
+          <div class="settings-field">
+            <label>Descricao</label>
+            <textarea id="settings-company-description" rows="3" maxlength="500"></textarea>
+          </div>
+          <div class="settings-field">
+            <label>Seu papel</label>
+            <input type="text" id="settings-user-role" maxlength="100">
+          </div>
+          <div class="settings-field">
+            <label>Tom preferido</label>
+            <input type="text" id="settings-preferred-tone" maxlength="100">
+          </div>
+          <div class="settings-field">
+            <label>Fuso horário</label>
+            <input type="text" id="settings-timezone" value="America/Sao_Paulo" maxlength="50">
+          </div>
+          <div class="settings-field">
+            <label>Contexto de negocio</label>
+            <textarea id="settings-business-context" rows="3" placeholder="Ex: estoque minimo padrao, principais fornecedores..."></textarea>
+          </div>
+          <div class="settings-field">
+            <label>Necessidades principais</label>
+            <textarea id="settings-main-needs" rows="3" placeholder="Ex: organizar estoque, cadastrar clientes..."></textarea>
+          </div>
+          <label class="settings-checkbox">
+            <input type="checkbox" id="settings-offline"> Priorizar operacao local/offline e privacidade
+          </label>
+        </div>
+
+        <div class="settings-section">
+          <h3>Modo resposta</h3>
+          <div class="settings-field">
+            <label>Modo resposta</label>
+            <select id="settings-response-mode">
+              <option value="natural">Natural</option>
+              <option value="tecnico">Técnico</option>
+              <option value="relatorio">Relatório</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Nível de detalhe</label>
+            <select id="settings-response-detail">
+              <option value="conciso">Conciso</option>
+              <option value="equilibrado">Equilibrado</option>
+              <option value="detalhado">Detalhado</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Criatividade</label>
+            <input type="number" id="settings-response-temperature" min="0" max="2" step="0.1" value="0.45">
+          </div>
+          <div class="settings-field">
+            <label>Top-p</label>
+            <input type="number" id="settings-response-top-p" min="0" max="1" step="0.1" value="0.9">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Voz</h3>
+          <div class="settings-field">
+            <label>Ativar saida por voz</label>
+            <input type="checkbox" id="settings-voice-enabled">
+          </div>
+          <div class="settings-field">
+            <label>Perfil de voz</label>
+            <select id="settings-voice-profile">
+              <!-- options populadas via JS -->
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Voz</label>
+            <select id="settings-voice">
+              <option value="pt-BR-AntonioNeural">Antonio Neural</option>
+              <option value="pt-BR-FranciscaNeural">Francisca Neural</option>
+              <option value="pt-BR-BrendaNeural">Brenda Neural</option>
+              <option value="pt-BR-DonatoNeural">Donato Neural</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Velocidade</label>
+            <input type="text" id="settings-voice-rate" value="+5%">
+          </div>
+          <div class="settings-field">
+            <label>Tom da voz</label>
+            <input type="text" id="settings-voice-pitch" value="-2Hz">
+          </div>
+          <div class="settings-field">
+            <label>Volume</label>
+            <input type="text" id="settings-voice-volume" value="+0%">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Acesso pelo celular</h3>
+          <div class="settings-field">
+            <label>Ativar acesso local pelo celular</label>
+            <input type="checkbox" id="settings-mobile-enabled">
+          </div>
+          <div class="settings-field">
+            <label>Permitir acesso pela mesma rede Wi-Fi</label>
+            <input type="checkbox" id="settings-mobile-lan">
+          </div>
+          <div class="settings-field">
+            <label>Permitir comandos de voz pelo celular</label>
+            <input type="checkbox" id="settings-mobile-voice">
+          </div>
+          <div class="settings-field">
+            <label>Usar HTTPS local</label>
+            <input type="checkbox" id="settings-mobile-https">
+          </div>
+          <div class="settings-field">
+            <label>Porta celular</label>
+            <input type="number" id="settings-mobile-port" value="8787" min="1">
+          </div>
+          <div class="settings-field">
+            <label>Token celular</label>
+            <input type="text" id="settings-mobile-token">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Canais e Notificacoes</h3>
+          <div class="settings-field">
+            <label>Ativar Canais e Notificacoes</label>
+            <input type="checkbox" id="settings-notifications-enabled">
+          </div>
+          <div class="settings-field">
+            <label>Permitir envio por internet e servico externo</label>
+            <input type="checkbox" id="settings-notifications-external">
+          </div>
+          <div class="settings-field">
+            <label>Exigir confirmacao antes de enviar mensagens</label>
+            <input type="checkbox" id="settings-notifications-confirmation">
+          </div>
+          <div class="settings-field">
+            <label>Canal padrão</label>
+            <select id="settings-notification-channel">
+              <option value="whatsapp">WhatsApp</option>
+              <option value="email">E-mail</option>
+              <option value="sms">SMS</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Provedor WhatsApp</label>
+            <input type="text" id="settings-whatsapp-provider" value="meta_cloud_api">
+          </div>
+          <div class="settings-field">
+            <label>ID do telefone WhatsApp</label>
+            <input type="text" id="settings-whatsapp-phone-id">
+          </div>
+          <div class="settings-field">
+            <label>Variavel de ambiente do token WhatsApp</label>
+            <input type="text" id="settings-whatsapp-token-env">
+          </div>
+          <div class="settings-field">
+            <label>Provedor e-mail</label>
+            <input type="text" id="settings-email-provider">
+          </div>
+          <div class="settings-field">
+            <label>Remetente e-mail</label>
+            <input type="text" id="settings-email-from">
+          </div>
+          <div class="settings-field">
+            <label>Provedor SMS</label>
+            <input type="text" id="settings-sms-provider">
+          </div>
+          <div class="settings-field">
+            <label>ID do remetente SMS</label>
+            <input type="text" id="settings-sms-sender">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Pastas autorizadas</h3>
+          <label class="settings-field">
+            <span>Uma pasta por linha. Exemplo:</span>
+            <textarea id="settings-allowed-roots" rows="3" placeholder="C:/MeusDocumentos"></textarea>
+          </label>
+          <small id="settings-security-hint">Pastas extras onde o Celsius pode ler arquivos locais. A pasta do projeto sempre e autorizada.</small>
+        </div>
+
+        <div class="settings-section">
+          <h3>Módulos padrão do Celsius</h3>
+          <small id="settings-modules-hint">Padrão para contas sem personalização. Para escolher apenas o seu menu, use “Personalizar menu” na sidebar.</small>
+          <div id="settings-modules-grid"></div>
+          <button class="secondary-command" id="settings-suggest-modules" type="button">Sugerir modulos pelo segmento</button>
+        </div>
+
+        <div id="settings-storage-info" style="margin-top: 12px; font-size: 11px; color: var(--muted);">
+          Dados salvos em: <code>data/customer_profile.json</code> e <code>data/celsius_settings.json</code>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-command" id="settings-cancel" type="button">Cancelar</button>
+        <button class="primary-command" id="settings-save" type="submit">Salvar alteracoes</button>
+      </div>
     </dialog>
 
     <dialog class="agenda-dialog" id="agenda-dialog" aria-labelledby="agenda-dialog-title">
@@ -784,11 +1132,13 @@
           <div class="documents-form-grid">
             <label>Tipo
               <select id="documents-type">
-                <option>Contrato</option><option>Manual</option><option>Nota</option><option>Laudo</option><option selected>Outro</option>
+                <option>Contrato</option><option>Manual</option><option>Nota</option><option>Laudo</option><option>Alunos</option><option selected>Outro</option>
               </select>
             </label>
             <label>Categoria
-              <input id="documents-category" maxlength="120" placeholder="Ex.: Comercial, Qualidade">
+              <select id="documents-category">
+                <option selected>Comercial</option><option>Escolar</option><option>Pessoal</option><option>Fornecedor</option>
+              </select>
             </label>
             <label>Origem
               <input id="documents-origin" maxlength="180" placeholder="Ex.: Fornecedor, setor interno">
@@ -998,22 +1348,78 @@
 
     <dialog class="workflow-dialog mobile-pair-dialog" id="mobile-pair-dialog" aria-labelledby="mobile-pair-title">
       <div class="dialog-header">
-        <div><h2 id="mobile-pair-title">Parear celular</h2><p>Acesso local pela mesma rede Wi-Fi.</p></div>
+        <div><h2 id="mobile-pair-title">Conversar pelo celular</h2><p>Escaneie o QR Code para abrir o modo de voz com o globo interativo.</p></div>
         <button class="icon-button" id="mobile-pair-close" type="button" aria-label="Fechar pareamento" title="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
       </div>
       <div class="mobile-pair-content">
         <div class="mobile-qr-frame"><img id="mobile-pair-qr" alt="QR Code para acessar o Celsius pelo celular" hidden></div>
-        <strong id="mobile-pair-status">Preparando acesso local...</strong>
+        <strong id="mobile-pair-status">Preparando QR Code...</strong>
         <a id="mobile-pair-link" href="#" target="_blank" rel="noreferrer"></a>
         <p class="mobile-pair-note" id="mobile-pair-note"></p>
       </div>
       <div class="dialog-actions">
         <button class="secondary-command" id="mobile-pair-copy" type="button">Copiar link</button>
-        <button class="primary-command" id="mobile-pair-done" type="button">Concluir</button>
+        <button class="primary-command" id="mobile-pair-done" type="button">Pronto</button>
       </div>
     </dialog>
 
+    <dialog class="sidebar-preferences-dialog" id="sidebar-preferences-dialog" aria-labelledby="sidebar-preferences-title" aria-describedby="sidebar-preferences-description">
+      <form id="sidebar-preferences-form">
+        <div class="dialog-header">
+          <div><h2 id="sidebar-preferences-title">Seu menu, do seu jeito</h2><p id="sidebar-preferences-description">Escolha o que faz sentido para você. Estas preferências valem só para sua conta.</p></div>
+          <button class="icon-button" id="sidebar-preferences-close" type="button" aria-label="Fechar personalização"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="sidebar-preferences-body">
+          <p class="sidebar-preferences-label">Comece com uma seleção</p>
+          <div class="sidebar-presets" role="group" aria-label="Seleções de módulos">
+            <button type="button" data-sidebar-preset="education">Ensino e pesquisa</button>
+            <button type="button" data-sidebar-preset="business">Gestão de negócios</button>
+            <button type="button" data-sidebar-preset="essential">Só o essencial</button>
+          </div>
+          <p class="sidebar-preferences-help">Ativar inclui o módulo no seu espaço. Mostrar deixa o atalho visível no menu. Ocultar não desativa nem apaga dados.</p>
+          <div class="sidebar-module-heading" aria-hidden="true"><span>Módulo</span><span>Ativar</span><span>Mostrar</span></div>
+          <div id="sidebar-module-list"></div>
+          <div class="sidebar-visibility-actions">
+            <button class="secondary-command" id="sidebar-hide-modules" type="button">Ocultar atalhos dos módulos</button>
+            <button class="secondary-command" id="sidebar-show-modules" type="button">Mostrar módulos ativos</button>
+          </div>
+          <fieldset class="sidebar-extra-options"><legend>Outros itens do menu</legend>
+            <label><input id="sidebar-show-memories" type="checkbox"> Memórias</label>
+            <label><input id="sidebar-show-conversations" type="checkbox"> Lista de conversas</label>
+          </fieldset>
+          <p class="sidebar-preferences-help">Assistente e configurações continuam acessíveis. Os dados existentes são preservados ao desativar um módulo.</p>
+          <p id="sidebar-preferences-status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-command" id="sidebar-preferences-cancel" type="button">Cancelar</button>
+          <button class="primary-command" id="sidebar-preferences-save" type="submit">Salvar meu menu</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog class="sidebar-preferences-dialog whatsapp-dialog" id="whatsapp-dialog" aria-labelledby="whatsapp-title">
+      <div class="dialog-header">
+        <div><h2 id="whatsapp-title">Celsius no WhatsApp</h2><p>Converse com o Celsius e acompanhe as tarefas do computador.</p></div>
+        <button class="icon-button" id="whatsapp-close" type="button" aria-label="Fechar conexão WhatsApp"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="whatsapp-body">
+        <div class="whatsapp-qr-frame" id="whatsapp-qr-frame" hidden><img id="whatsapp-qr" alt="QR Code para conectar seu WhatsApp ao Celsius"></div>
+        <p id="whatsapp-status" role="status" aria-live="polite">Carregando conexão…</p>
+        <div id="whatsapp-self-chat" class="whatsapp-self-chat" hidden>
+          <a class="primary-command" id="whatsapp-open-chat" target="_blank" rel="noopener noreferrer">Abrir minha conversa no WhatsApp</a>
+          <button class="secondary-command" id="whatsapp-self-chat-send" type="button">Enviar mensagem inicial</button>
+          <p>No celular, procure a mensagem que começa com <strong>Celsius</strong> na conversa com seu próprio nome e <strong>(Você)</strong>. Responda nessa conversa.</p>
+        </div>
+        <ol class="whatsapp-steps"><li>Clique em Conectar para gerar o QR Code.</li><li>No WhatsApp do celular, abra <strong>Dispositivos conectados → Conectar um dispositivo</strong> e escaneie o código.</li><li>Aguarde a confirmação. O Celsius enviará uma mensagem na conversa com <strong>seu próprio número (Você)</strong>. Abra essa conversa e escreva seu pedido. Você também pode usar o botão acima.</li></ol>
+        <div class="whatsapp-examples"><strong>Experimente enviar</strong><p>“Celsius, gere um relatório do estoque”</p><p>“Celsius, dê entrada de 10 peças do item X”</p><p>“Mande mensagem para João: o relatório está pronto”</p><small>Também pode usar AJUDA, STATUS, CANCELAR e NOVA CONVERSA. Antes de enviar a um contato, você verá o texto e confirmará no próprio WhatsApp.</small></div>
+        <p class="sidebar-preferences-help">O computador precisa ficar ligado, conectado à internet e com o Celsius em execução. Esta conexão usa WhatsApp Web por uma biblioteca não oficial e pode exigir novo pareamento após mudanças do WhatsApp.</p>
+      </div>
+      <div class="dialog-actions">
+        <button class="secondary-command" id="whatsapp-pause" type="button">Pausar conexão</button>
+        <button class="primary-command" id="whatsapp-connect" type="button">Conectar</button>
+      </div>
+    </dialog>
     <div class="toast-region" id="toast-region" aria-live="assertive"></div>
-    <script src="/app/assets/app.js?v=20260810.6" defer></script>
+    <script src="/app/assets/app.js?v=20260930.whatsapp-self-chat3" defer></script>
   </body>
 </html>
+

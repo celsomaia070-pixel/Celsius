@@ -49,9 +49,7 @@ def _block_all_network():
     originals: dict[tuple[str, str], Any] = {}
 
     def fake(*_args, **_kwargs):
-        raise RuntimeError(
-            "RED FLAG: network call attempted in document pipeline / offline path"
-        )
+        raise RuntimeError("RED FLAG: network call attempted in document pipeline / offline path")
 
     # Load optional HTTP clients first so their module-level subclassing uses
     # the real socket/http classes.
@@ -91,11 +89,18 @@ class _FakeEmbedder:
         self.dim = dim
 
     def encode(self, texts: list[str], show_progress_bar: bool = False) -> np.ndarray:
+        import hashlib
+        import re
+
         vectors = []
         for text in texts:
-            rng = np.random.RandomState(abs(hash(text)) % (2**31))
-            vec = rng.randn(self.dim).astype(np.float32)
-            vec /= np.linalg.norm(vec) + 1e-9
+            vec = np.zeros(self.dim, dtype=np.float32)
+            for token in re.findall(r"[a-z0-9]+", text.lower()):
+                seed = int(hashlib.sha256(token.encode("utf-8")).hexdigest()[:8], 16)
+                vec[seed % self.dim] += 1.0
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
             vectors.append(vec)
         return np.stack(vectors)
 
@@ -248,9 +253,7 @@ class TestAppContextOfflineMode:
             lambda *_a, **_kw: (MagicMock(stop=lambda: None), None),
         )
         monkeypatch.setattr(ac_mod, "get_mobile_runtime", lambda: MagicMock())
-        monkeypatch.setattr(
-            CelsiusAppContext, "_prepare_model", lambda self, _s: True
-        )
+        monkeypatch.setattr(CelsiusAppContext, "_prepare_model", lambda self, _s: True)
         monkeypatch.setattr(
             CelsiusAppContext,
             "_start_web_server",

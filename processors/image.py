@@ -13,7 +13,7 @@ class ProcessadorImagem(ProcessadorArquivo):
     def processar(cls, caminho: str | Path, base_dir: Path | None = None) -> str:
         from PIL import Image
 
-        path = cls._validar_caminho(caminho, base_dir)
+        path = cls._validar_caminho(str(caminho), base_dir)
         img = Image.open(str(path))
         largura, altura = img.size
         formato = img.format or "Desconhecido"
@@ -31,7 +31,7 @@ class ProcessadorImagem(ProcessadorArquivo):
             info_parts.append("Transparencia: Sim")
 
         try:
-            exif = img._getexif()
+            exif = img.getexif()
             if exif:
                 campos_relevantes = {
                     271: "Camera",

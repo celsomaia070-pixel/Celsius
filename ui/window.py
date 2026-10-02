@@ -369,9 +369,7 @@ class ModernChatWindow(QMainWindow):
         self.worker_controller.ai_status_update.connect(self._on_ai_status_update)
         self.worker_controller.ai_suggestion.connect(self._on_ai_suggestion)
         self.worker_controller.ai_notice.connect(self._on_ai_notice)
-        self.worker_controller.model_loaded.connect(self._on_model_loaded)
         self.worker_controller.model_load_error.connect(self._on_model_load_error)
-        self.worker_controller.model_list_loaded.connect(self._on_model_list_loaded)
         self.worker_controller.mic_ready.connect(self._on_mic_ready)
         self.worker_controller.mic_error.connect(self._on_mic_error)
         self.worker_controller.mic_level.connect(self._on_mic_level)
@@ -1315,96 +1313,6 @@ class ModernChatWindow(QMainWindow):
 
     # Model handlers
 
-
-    def _on_model_list_loaded(self, models: list):
-        self.input_area.set_models(models)
-
-    def _on_model_changed(self, display_name: str):
-        """Switch to the selected model by display name.
-
-        Selecting a specific downloaded model pins it (the client's choice and
-        JEV stops auto-routing); selecting "Auto (JEV)" unpins it.
-        """
-        from core.config import GGUF_MODELS, discover_installed_models
-
-        selected_data = self.input_area.model_combo.currentData()
-        selected_id = selected_data.get("id") if isinstance(selected_data, dict) else None
-        if not selected_id:
-            return
-
-        if selected_id == COMBO_MODEL_AUTO:
-            if self.settings.model.model_client_choice:
-                self.settings.model.model_client_choice = False
-                self.settings.save_local_preferences()
-            return
-
-        old_model = self.settings.llm_model
-        self.settings.model.model_client_choice = True
-        if selected_id == old_model:
-            self.settings.save_local_preferences()
-            return
-
-        match = next(
-            (m for m in GGUF_MODELS if m.id == selected_id or m.display_name == display_name),
-            None,
-        )
-        if match is None:
-            dirs = [self.settings.get_resources_dir()]
-            if self.settings.bundled_resources_dir.is_dir():
-                dirs.append(self.settings.bundled_resources_dir)
-            match = next((m for m in discover_installed_models(*dirs) if m.id == selected_id), None)
-        if match is None:
-            self.settings.model.model_client_choice = False
-            self._select_model_in_combo(COMBO_MODEL_AUTO)
-            return
-        model_path = self.settings.get_model_path(match.id)
-        installed = model_path.exists()
-        if isinstance(selected_data, dict):
-            installed = bool(selected_data.get("installed", installed))
-            if not installed:
-                model_path = type(model_path)(selected_data.get("path", model_path))
-        if not installed:
-            self.settings.model.model_client_choice = False
-            self._select_model_in_combo(COMBO_MODEL_AUTO)
-            QMessageBox.information(
-                self,
-                "Modelo nao instalado",
-                "Este modelo ainda nao esta na pasta resources.\n\n"
-                f"Arquivo esperado:\n{model_path}\n\n"
-                "Baixe no seletor de LLM ou coloque o GGUF em:\n"
-                f"{self.settings.get_resources_dir()}\n\n"
-                f"Repositorio: {match.hf_repo}\n"
-                f"Arquivo: {match.hf_file}",
-            )
-            return
-        self.settings.llm_model = match.id
-        # Restart llama.cpp with the new model
-        from core.llama_cpp import start_llama_server, stop_llama_server
-
-        try:
-            stop_llama_server()
-            if not start_llama_server(
-                model_id=match.id,
-                n_gpu_layers=-1,
-                n_ctx=16384,
-                n_batch=1024,
-                n_threads=0,
-            ):
-                self.settings.llm_model = old_model
-                self.settings.model.model_client_choice = False
-                self._select_model_in_combo(COMBO_MODEL_AUTO)
-                QMessageBox.warning(self, "Erro", f"Falha ao carregar modelo {match.name}")
-                return
-        except Exception as e:
-            self.settings.llm_model = old_model
-            self.settings.model.model_client_choice = False
-            self._select_model_in_combo(COMBO_MODEL_AUTO)
-            QMessageBox.warning(self, "Erro", f"Falha ao trocar modelo: {e}")
-            return
-        self.settings.save_local_preferences()
-
-    def _on_model_loaded(self, model_name: str):
-        self.input_area.set_models(self.input_area.model_combo.currentText(), model_name)
 
     def _on_model_load_error(self, error: str):
         QMessageBox.warning(self, "Erro ao carregar modelo", error)

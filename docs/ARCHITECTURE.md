@@ -30,15 +30,18 @@ Camada de servicos compartilhados:
 
 - `settings.py`: configuracao central com Pydantic.
 - `config.py`: catalogo de modelos e compatibilidade legado.
-- `model_router.py`: escolha de modelo por perfil/capacidade.
+- `model_router.py`: escolha de modelo por perfil/capacidade + roteamento Jev/Kev (`MultiModelManager.route_and_invoke`).
 - `model_downloader.py`: download sob demanda de modelos.
 - `conversations.py`: persistencia de conversas.
 - `memory.py`: memoria semantica (SQLite + cache de embeddings).
 - `inventory.py`: estoque (SQLite com migracao automatica do JSON legado).
+- `agent_tasks.py`: store duravel de tarefas agênticas (SQLite, vocabulário `created/planning/waiting_confirmation/running/paused/cancelled/failed/completed`).
 - `sqlite_store.py`: camada SQLite compartilhada (WAL + lock entre processos).
 - `json_persistence.py`: escrita atomica para arquivos JSON duravels.
-- `sandbox.py`: execucao controlada de codigo (subprocesso local ou backend
-  opcional via Docker).
+- `sandbox.py`: execucao controlada de codigo (subprocesso local ou backend opcional via Docker).
+- `file_security.py`: validacao de caminhos, roots permitidas, travessia, confirmacao de escrita.
+- `audit_log.py`: JSONL `logs/audit.jsonl` (task_id, modo, user, step, tool, args, jev/policy decision, confirmation, result, error, cancelled).
+- `decision_calibration.py`: carregar/medir/calibrar outcomes Jev (`logs/decision_outcomes.jsonl`).
 - `extras.py`: deteccao de extras opcionais (documentos, voz, web, docker).
 - `telemetry.py`, `metrics.py`: observabilidade opcional.
 
@@ -50,27 +53,8 @@ Camada de inteligencia:
 - `react.py`: ciclo de raciocinio/acao.
 - `tools.py`: ferramentas chamadas pela IA.
 - `rag.py`: busca hibrida e contexto documental.
-- `agents.py`: agentes especializados.
+- `agents.py`: agentes especializados (modos agênticos).
 - `browser.py`: automacao web.
-
-### `processors/`
-
-Extrai texto ou metadados de anexos:
-
-- PDF, DOCX, ODF/ODS/ODP.
-- Imagens.
-- Audio.
-- Relatorios.
-
-### `workers/`
-
-Executa tarefas demoradas fora da thread principal:
-
-- `ai_worker.py`: resposta da IA.
-- `mic_worker.py`: microfone/transcricao (Whisper carregado sob demanda e de
-  forma lazy; um daemon pre-carrega o modelo em background em `main.py`).
-- `tts_worker.py`: fala.
-- `code_worker.py`: execucao controlada (sandbox local ou Docker).
 
 ### `ui/`
 
@@ -81,6 +65,13 @@ Interface grafica:
 - `controllers/`: ponte entre UI, workers e persistencia.
 - `theme/`: tokens, esquemas e stylesheet.
 - `kanban_view.py`: gerenciamento visual de estoque.
+- `task_panel.py`: painel de tarefas agênticas (seletor modo, plano, passos, confirm/cancel/pause/continue, historico, Jev status).
+
+### `scripts/`
+
+Utilitarios e testes de integracao:
+
+- `jev_smoke_test.py`: teste real Jev/Kev (health, noul, score, choice, routing, tool guard, RAG gate, fallback). Salva `jev_smoke_test_results.json`.
 
 ## Fluxo de uma Mensagem
 
@@ -89,12 +80,32 @@ Interface grafica:
 3. `WorkerController` envia a tarefa para `AIWorker`.
 4. `AIWorker` processa anexos com `processors/`.
 5. `ai/engine.py` monta contexto, memoria, RAG e ferramentas.
-6. Modelo local gera resposta.
-7. Worker emite sinais para atualizar a UI.
-8. Conversa e memoria sao persistidas.
-9. Apos cada resposta, um thread em background (`remember_from_turn` em
-   `core/memory.py`) extrai fatos duraveis do dialogo e os salva como memoria
-   de longo prazo, reutilizando o mesmo modelo local sem bloquear a UI.
+6. **Se modo agêntico ativo e `TAREFA:`**: `ai/task_runtime.py` cria `AgentTaskStore`, planeja passos, executa com guard Jev + politica deterministica, aguarda confirmacoes.
+7. Modelo local gera resposta.
+8. Worker emite sinais para atualizar a UI.
+9. Conversa e memoria sao persistidas.
+
+## Modos Agênticos e Painel de Tarefas
+
+6 modos em `core/agent_modes.py`:
+- `assistente` (default): leitura + memoria, sem planejamento
+- `executor`: leitura + escrita + relatórios, planeja
+- `documentos`: RAG + leitura, planeja
+- `estoque`: estoque + relatórios, planeja
+- `pesquisador`: web + leitura + RAG, planeja, rede
+- `desenvolvedor`: codigo + arquivos, planeja
+
+Desktop: `ui/task_panel.py` (seletor, plano, passos, botoes confirm/cancel/pause/continue, historico, Jev status).
+Web: `core/web_api/agents.py` (GET/POST tasks/{id}/detail|plan|steps|confirm|cancel|history, GET mode/current).
+
+Voz: `_apply_task_voice_command` em `ui/window.py` processa "consulte andamento", "cancele tarefa", "confirma", "nao confirme", "pause", "continue".
+
+## Segurança
+
+- Sandbox: `core/sandbox.py` (timeout, memoria, output limit, network block, cooperative cancel, fallback seguro).
+- File security: `core/file_security.py` (validate_path, allowed_roots, traversal block, write confirmation).
+- Audit log: `core/audit_log.py` JSONL `logs/audit.jsonl` (task, mode, user, step, tool, args, jev/policy decision, confirmation, result, error, cancelled).
+- Tool policy: `core/tool_policy.py` (allowlist por modo, risk READ/DERIVED/WRITE/DESTRUCTIVE/EXTERNAL/IRREVERSIBLE, Jev so adiciona confirmacao, fail-closed).
 
 ## Memoria de Longo Prazo nas Conversas
 

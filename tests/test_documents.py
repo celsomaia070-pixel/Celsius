@@ -88,6 +88,20 @@ def _headers():
 
 
 class TestDocumentLibrary:
+    def test_listing_and_reference_resolution_expose_only_real_stored_paths(self, document_context):
+        from io import BytesIO
+        from docx import Document
+
+        settings, service, _ = document_context
+        document = Document()
+        document.add_paragraph("Nome: Arthur Medeiros Gomes")
+        content = BytesIO()
+        document.save(content)
+        item = service._create_pending_record("Arthur Medeiros Gomes.docx", content.getvalue(), title="Arthur Medeiros Gomes")
+        path = service._record_path(item)
+        assert path in service.referenced_files("Preencha o documento do Arthur Medeiros Gomes")
+        assert not service.referenced_files("Preencha o documento de outra pessoa")
+        assert str(path) in service.list_text()
     def test_upload_indexes_and_persists_managed_document(self, document_context):
         _settings, service, _rag = document_context
         job, pending = service.submit_upload(

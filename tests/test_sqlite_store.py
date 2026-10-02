@@ -51,9 +51,7 @@ def test_init_schema_is_idempotent(tmp_path):
 def test_memory_schema_includes_origin_columns(tmp_path):
     with connect(tmp_path / "y.json") as conn:
         init_schema(conn)
-        columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()
-        }
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
         assert {"origem", "conversation_id"} <= columns
 
 

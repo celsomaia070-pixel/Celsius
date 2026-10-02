@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.agent_modes import get_mode, is_conversational_greeting, resolve_mode
 from core.chat_attachments import AttachmentStore, StoredAttachment, prepare_prompt_attachments
+from core.chat_outputs import OutputAttachmentStore, collect_outputs
 from core.conversations import ConversationManager, get_conversation_manager
 
 
@@ -39,6 +41,8 @@ class ChatJob:
     conversation_id: str
     user_message_id: str
     attachment_ids: list[str]
+    agent_mode: str = ""
+    work_agents: list[str] = field(default_factory=list)
     status: str = "queued"
     created_at: str = field(default_factory=_now_iso)
     started_at: str = ""
@@ -46,6 +50,7 @@ class ChatJob:
     response: str = ""
     error: str = ""
     chunk_count: int = 0
+    attachments: list[dict[str, Any]] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     future: Future | None = field(default=None, repr=False)
 
@@ -55,12 +60,16 @@ class ChatJob:
             "conversation_id": self.conversation_id,
             "user_message_id": self.user_message_id,
             "status": self.status,
+            "agent_mode": self.agent_mode,
+            "work_agents": self.work_agents,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "response": self.response,
             "error": self.error,
             "chunk_count": self.chunk_count,
+            # Lets the polling fallback deliver generated files too, not just SSE.
+            "attachments": self.attachments,
         }
 
 
@@ -95,6 +104,13 @@ class ChatCoordinator:
             allowed_extensions=settings.all_extensions,
             max_size_mb=settings.max_file_size_mb,
         )
+        # Generated files are kept after the turn so the user can still download
+        # them from the conversation, unlike the temporary uploads above.
+        self.outputs = OutputAttachmentStore(
+            root=Path(settings.data_dir) / "chat_outputs",
+            allowed_extensions=set(settings.all_extensions),
+            max_bytes=max(1, int(settings.max_file_size_mb)) * 1024 * 1024,
+        )
         self._responder = responder or self._default_responder
         self._image_responder = image_responder or self._default_image_responder
         self._ensure_model_ready_callback = ensure_model_ready or self._ensure_model_ready
@@ -111,6 +127,9 @@ class ChatCoordinator:
         conversation_id: str = "",
         attachment_ids: list[str] | None = None,
         model_id: str = "",
+        agent_mode: str = "",
+        work_agents: list[str] | None = None,
+        source: str = "web",
     ) -> dict[str, Any]:
         clean_message = (message or "").strip()
         if not clean_message:
@@ -119,6 +138,22 @@ class ChatCoordinator:
         if len(attachment_ids) > 10:
             raise ValueError("Envie no maximo 10 anexos por mensagem.")
         stored_attachments = self.attachments.resolve(attachment_ids)
+        # Older Work clients prefix every turn, including greetings, with TAREFA.
+        # Normalize at the shared boundary so desktop, phone and WhatsApp agree.
+        if not stored_attachments and is_conversational_greeting(clean_message):
+            clean_message = re.sub(r"^TAREFA\s*:\s*", "", clean_message, flags=re.I)
+            agent_mode = "assistente"
+            work_agents = []
+        # An unknown mode falls back to the default instead of failing the turn.
+        mode = get_mode(agent_mode or self.settings.agent.default_mode)
+        if not self.settings.agent.enabled:
+            mode = get_mode(None)
+        elif not is_conversational_greeting(clean_message):
+            # Route the turn to the lane that actually fits it. The router keeps
+            # an explicitly chosen non-default mode and any "modo X" command, so
+            # this only ever upgrades the default lane. A pure greeting stays on
+            # the assistant instead of being classified into a specialist.
+            mode = get_mode(resolve_mode(clean_message, requested=mode.id))
 
         with self._lock:
             active = self._jobs.get(self._active_job_id)
@@ -134,13 +169,19 @@ class ChatCoordinator:
                 conversation["id"],
                 "user",
                 clean_message,
-                metadata={"attachments": attachment_metadata, "source": "web"},
+                metadata={
+                    "attachments": attachment_metadata,
+                    "source": (source or "web").strip().lower(),
+                    "agent_mode": mode.id,
+                },
             )
             job = ChatJob(
                 id=uuid.uuid4().hex,
                 conversation_id=conversation["id"],
                 user_message_id=user_message["id"],
                 attachment_ids=attachment_ids,
+                agent_mode=mode.id,
+                work_agents=work_agents or [],
             )
             self._jobs[job.id] = job
             self._active_job_id = job.id
@@ -223,9 +264,7 @@ class ChatCoordinator:
                     memory_service = get_memory_service()
                 else:
                     memory_service = self.memory_service
-                delete_for_conversation = getattr(
-                    memory_service, "delete_for_conversation", None
-                )
+                delete_for_conversation = getattr(memory_service, "delete_for_conversation", None)
                 if delete_for_conversation is not None:
                     delete_for_conversation(conversation_id)
             self.event_hub.publish(
@@ -281,16 +320,16 @@ class ChatCoordinator:
             self.event_hub.publish("chat.status", {"job_id": job.id, "text": text})
 
         def on_chunk(chunk: str) -> None:
+            if chunk:
+                with self._lock:
+                    job.response += chunk
+                    job.chunk_count += 1
+                    sequence = job.chunk_count
+                self.event_hub.publish(
+                    "chat.chunk",
+                    {"job_id": job.id, "sequence": sequence, "text": chunk},
+                )
             check_cancelled()
-            if not chunk:
-                return
-            with self._lock:
-                job.chunk_count += 1
-                sequence = job.chunk_count
-            self.event_hub.publish(
-                "chat.chunk",
-                {"job_id": job.id, "sequence": sequence, "text": chunk},
-            )
 
         try:
             check_cancelled()
@@ -306,32 +345,56 @@ class ChatCoordinator:
                 "system_prompt": self._system_prompt(),
                 "historico": history,
                 "approval_scope": job.conversation_id,
+                "agent_mode": job.agent_mode or self.settings.agent.default_mode,
+                "work_agents": job.work_agents,
             }
             prepare_prompt_attachments(prompt, settings=self.settings, fn_status=on_status)
             check_cancelled()
-            if prompt.get("caminho_imagem"):
-                response = self._image_responder(
-                    prompt["caminho_imagem"],
-                    message,
-                    fn_status=on_status,
-                    fn_chunk=on_chunk,
-                )
-            else:
-                response = self._responder(
-                    prompt,
-                    fn_status=on_status,
-                    fn_passo=None,
-                    fn_chunk=on_chunk,
-                )
+            from ai.task_runtime import is_task_command
+
+            # Files the agent generates inside this block are offered to the user
+            # as downloadable attachments on the reply. The job points at the
+            # same list so an interrupted turn keeps whatever was already made.
+            with collect_outputs(self.outputs) as produced:
+                with self._lock:
+                    job.attachments = produced
+                if job.work_agents and len(job.work_agents) >= 2:
+                    from ai.multi_agent import run_multi_agent_work
+
+                    response = run_multi_agent_work(
+                        prompt,
+                        self._responder,
+                        data_dir=self.settings.data_dir,
+                        fn_status=on_status,
+                        fn_chunk=on_chunk,
+                        should_cancel=job.cancel_event.is_set,
+                    )
+                elif prompt.get("caminho_imagem") and not is_task_command(message):
+                    response = self._image_responder(
+                        prompt["caminho_imagem"],
+                        message,
+                        fn_status=on_status,
+                        fn_chunk=on_chunk,
+                    )
+                else:
+                    response = self._responder(
+                        prompt,
+                        fn_status=on_status,
+                        fn_passo=None,
+                        fn_chunk=on_chunk,
+                    )
             check_cancelled()
             response = str(response or "").strip()
             # A completed job guarantees that its temporary uploads are gone.
             self.attachments.discard(job.attachment_ids)
+            metadata: dict[str, Any] = {"source": "web", "job_id": job.id}
+            if produced:
+                metadata["attachments"] = produced
             assistant_message = self.conversations.add_message(
                 job.conversation_id,
                 "assistant",
                 response,
-                metadata={"source": "web", "job_id": job.id},
+                metadata=metadata,
             )
             self._kick_memory_extraction(job.conversation_id)
             with self._lock:
@@ -345,6 +408,7 @@ class ChatCoordinator:
                     "conversation_id": job.conversation_id,
                     "message": assistant_message,
                     "text": response,
+                    "attachments": produced,
                 },
             )
         except ChatCancelled:
@@ -365,13 +429,41 @@ class ChatCoordinator:
                     self._active_job_id = ""
 
     def _finish_cancelled(self, job: ChatJob) -> None:
+        from ai.interruption import marcar_interrompida
+
         with self._lock:
             job.status = "cancelled"
             job.completed_at = _now_iso()
+            partial = str(job.response or "")
             if self._active_job_id == job.id:
                 self._active_job_id = ""
         self.attachments.discard(job.attachment_ids)
-        self.event_hub.publish("chat.cancelled", {"job_id": job.id})
+        payload: dict[str, Any] = {"job_id": job.id, "attachments": job.attachments}
+        if partial.strip():
+            text = marcar_interrompida(partial)
+            job.response = text
+            metadata: dict[str, Any] = {
+                "source": "web",
+                "job_id": job.id,
+                "interrupted": True,
+            }
+            # A file produced before the interruption is still worth keeping.
+            if job.attachments:
+                metadata["attachments"] = job.attachments
+            assistant_message = self.conversations.add_message(
+                job.conversation_id,
+                "assistant",
+                text,
+                metadata=metadata,
+            )
+            payload.update(
+                {
+                    "conversation_id": job.conversation_id,
+                    "message": assistant_message,
+                    "text": text,
+                }
+            )
+        self.event_hub.publish("chat.cancelled", payload)
 
     def _load_memories(
         self,
@@ -440,6 +532,7 @@ class ChatCoordinator:
 
     def _ensure_model_ready(self, on_status: Callable[[str], None]) -> None:
         from core.llama_cpp import get_llama_manager
+        from core.model_router import model_start_kwargs
 
         manager = get_llama_manager()
         if manager.is_healthy():
@@ -448,10 +541,11 @@ class ChatCoordinator:
         if not model_path.is_file():
             raise FileNotFoundError(f"Modelo local nao encontrado: {model_path}")
         on_status("Carregando modelo local...")
+        start_kwargs = model_start_kwargs(self.settings.llm_model)
         started = manager.start(
             model_id=self.settings.llm_model,
-            n_gpu_layers=self.settings.model.n_gpu_layers,
-            n_ctx=self.settings.model.num_ctx,
+            n_gpu_layers=start_kwargs.get("n_gpu_layers", self.settings.model.n_gpu_layers),
+            n_ctx=start_kwargs.get("n_ctx", self.settings.model.num_ctx),
             n_batch=self.settings.model.n_batch,
             n_threads=self.settings.model.n_threads,
             use_mmap=self.settings.model.use_mmap,

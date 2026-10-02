@@ -1,0 +1,30 @@
+# Runtime deps da camada de decisao (JEV/System One) - SERVIDOR kev.serve.
+# Arquivo AUTONOMO: NAO faz parte do Celsius app. Instalar numa venv dedicada.
+# Validado: Windows 11, Python 3.14.4, CPU (sem CUDA).
+#
+# Instalacao (PowerShell):
+#   python -m venv kev-venv
+#   kev-venv\Scripts\python.exe -m pip install -U pip
+#   kev-venv\Scripts\python.exe -m pip install -r requirements-kev.txt `
+#       --extra-index-url https://download.pytorch.org/whl/cpu
+#
+# Depois (kev pina requires-python ">=3.12,<3.14"; em Python >=3.14 use as flags):
+#   kev-venv\Scripts\python.exe -m pip install -e build\kev-src
+#   # se falhar por requires-python:
+#   kev-venv\Scripts\python.exe -m pip install --no-deps --ignore-requires-python -e build\kev-src
+#
+# O atalho para tudo isso: scripts\kev-server.ps1
+
+torch==2.14.0+cpu
+transformers==5.17.0
+huggingface_hub==1.31.0
+peft==0.21.0
+accelerate==1.15.0
+datasets==5.0.1
+typesafe-sdk==0.7.1
+fastapi==0.141.1
+uvicorn==0.52.4
+
+# kev (0.1.0) vem do GitHub, pinado no commit 557598f (2026-09-22):
+#   kev @ git+https://github.com/jaredpalmer/kev@557598fced1dada75dfbf36ed144dce309ac6ceb
+# A instalacao exige o clone + flags acima, por isso nao fica listado como dep normal aqui.

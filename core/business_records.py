@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from core.file_security import restrict_private_file
 from core.modules import get_module_definition
@@ -29,7 +30,7 @@ class BusinessRecord:
     created_at: str = ""
     updated_at: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         now = _now()
         if not self.created_at:
             self.created_at = now
@@ -47,7 +48,7 @@ class BusinessRecord:
 class BusinessRecordService:
     """Simple local registry for modular business records."""
 
-    def __init__(self, data_file: Path | None = None, settings=None):
+    def __init__(self, data_file: Path | None = None, settings: Any | None = None):
         self.settings = settings or get_settings()
         self.data_file = (
             Path(data_file) if data_file else self.settings.data_dir / "business_records.json"
@@ -56,7 +57,7 @@ class BusinessRecordService:
         self._lock = threading.RLock()
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         with self._lock:
             self._records = {}
             if not self.data_file.exists():
@@ -71,7 +72,7 @@ class BusinessRecordService:
             except Exception as exc:
                 logger.error("Erro ao ler registros modulares: %s", exc)
 
-    def _save(self):
+    def _save(self) -> None:
         with self._lock:
             data = {"records": [record.to_dict() for record in self._records.values()]}
             self.data_file.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +101,9 @@ class BusinessRecordService:
         with self._lock:
             return self._records.get(record_id)
 
-    def save_record(self, module_id: str, title: str, fields: dict[str, str], record_id: str = ""):
+    def save_record(
+        self, module_id: str, title: str, fields: dict[str, str], record_id: str = ""
+    ) -> BusinessRecord:
         title = title.strip()
         if not title:
             raise ValueError("Titulo do registro e obrigatorio.")
@@ -155,6 +158,6 @@ def get_business_record_service() -> BusinessRecordService:
     return _business_record_service
 
 
-def reset_business_record_service():
+def reset_business_record_service() -> None:
     global _business_record_service
     _business_record_service = None

@@ -88,14 +88,39 @@ class TestSensitiveToolApproval:
         assert "navegar_web" in message
         assert "https://example.com" in message
 
-    def test_business_writes_and_external_tools_require_approval(self):
+    def test_business_writes_and_external_side_effects_require_approval(self):
         assert {
             "cadastrar_cliente",
             "criar_compromisso_agenda",
             "entrada_estoque",
-            "pesquisar_web",
+            "abrir_no_navegador",
             "salvar_memoria",
         } <= SENSITIVE_TOOLS
+        assert "pesquisar_web" not in SENSITIVE_TOOLS
+
+    def test_force_approval_blocks_non_sensitive_tool(self):
+        from ai import tools
+
+        result = tools.executar_ferramenta(
+            "informacoes_sistema",
+            {},
+            require_approval=True,
+            force_approval=True,
+        )
+        assert result.startswith(APPROVAL_REQUIRED_PREFIX)
+        assert "informacoes_sistema" in result
+
+    def test_without_force_approval_non_sensitive_tool_executes(self):
+        from ai import tools
+
+        result = tools.executar_ferramenta(
+            "informacoes_sistema",
+            {},
+            require_approval=True,
+            force_approval=False,
+        )
+        assert not result.startswith(APPROVAL_REQUIRED_PREFIX)
+        assert result.strip() != ""
 
     def test_approval_cannot_be_consumed_from_another_conversation(self):
         store = ToolApprovalStore()
@@ -125,6 +150,9 @@ def test_document_content_is_not_elevated_to_system_prompt(monkeypatch):
 
         def get_current_complexity(self):
             return "simple"
+
+        def get_last_decision(self):
+            return None
 
     monkeypatch.setattr(ai.react, "get_multi_model_manager", lambda: FakeManager())
     monkeypatch.setattr(ai.react, "_agenda_prompt_context", lambda: "")

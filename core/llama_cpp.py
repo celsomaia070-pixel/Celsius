@@ -63,10 +63,11 @@ class _PILImageLoaderMixin:
             if PIL_AVAILABLE:
                 try:
                     img = Image.open(io.BytesIO(image_bytes))
-                    if img.mode in ("RGBA", "LA", "P"):
-                        img = img.convert("RGB")
+                    img_ref: Any = img
+                    if img_ref.mode in ("RGBA", "LA", "P"):
+                        img_ref = img_ref.convert("RGB")
                     out = io.BytesIO()
-                    img.save(out, format="JPEG", quality=90)
+                    img_ref.save(out, format="JPEG", quality=90)
                     return out.getvalue()
                 except Exception as e:
                     logger.warning("PIL image conversion failed: %s", e)
@@ -75,7 +76,15 @@ class _PILImageLoaderMixin:
             validated_url = validate_public_http_url(image_url)
 
             class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                def redirect_request(
+                    self,
+                    req: Any,
+                    fp: Any = None,
+                    code: int = 0,
+                    msg: str = "",
+                    headers: Any = None,
+                    newurl: str = "",
+                ) -> Any:
                     validate_public_http_url(newurl)
                     return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -92,7 +101,7 @@ class _PILImageLoaderMixin:
             if len(payload) > max_bytes:
                 raise ValueError("Imagem excede o limite de 20 MB.")
             validate_image_content(payload)
-            return payload
+            return bytes(payload)
 
 
 class Qwen25VLChatHandlerWithPIL(_PILImageLoaderMixin, Qwen25VLChatHandler):
@@ -114,7 +123,7 @@ class Llava15ChatHandlerWithPIL(_PILImageLoaderMixin, Llava15ChatHandler):
 class LlamaManager:
     """Manages embedded Llama model using llama-cpp-python with Vulkan support."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._llm: Llama | None = None
         self._chat_handler: Llava15ChatHandler | None = None
         self._started = False
@@ -306,9 +315,54 @@ class LlamaManager:
         if self._on_model_changed:
             self._on_model_changed(model_id)
 
+        self._warm_up_async(model_id)
+
         return True
 
-    def switch_model(self, model_id: str, **kwargs) -> bool:
+    def _warm_up_async(self, model_id: str) -> None:
+        """Run a short synthetic completion in background to warm kernels.
+
+        The first real completion after loading a GGUF pays a fixed cost
+        (CUDA/Vulkan kernels, normalizers, context resize). A tiny warm-up
+        completion run in a daemon thread absorbs that cost so the user's
+        first real prompt responds faster. Never raises into the caller.
+        """
+        try:
+            settings = get_settings()
+            model_cfg = getattr(settings, "model", None)
+            enabled = bool(getattr(model_cfg, "warm_up_on_load", True))
+            if not enabled:
+                return
+            if not self._started or self._llm is None:
+                return
+        except Exception as exc:
+            logger.debug("Warm-up nao executado: %s", exc)
+            return
+
+        def _run() -> None:
+            try:
+                with self._inference_lock:
+                    if self._llm is None:
+                        return
+                    metrics = get_metrics()
+                    with metrics.timer(
+                        MetricNames.LLM_INFERENCE_SECONDS,
+                        model=model_id,
+                        phase="warm-up",
+                    ):
+                        self._llm.create_chat_completion(
+                            messages=[{"role": "user", "content": "Celsius"}],
+                            max_tokens=1,
+                            temperature=0.0,
+                        )
+                logger.info("Warm-up concluido para %s", model_id)
+            except Exception as exc:
+                logger.debug("Warm-up falhou sem afetar o modelo: %s", exc)
+
+        thread = threading.Thread(target=_run, name=f"celsius-warmup-{model_id}", daemon=True)
+        thread.start()
+
+    def switch_model(self, model_id: str, **kwargs: Any) -> bool:
         """Hot-swap to a different model."""
         return self.start(model_id=model_id, **kwargs)
 
@@ -348,9 +402,9 @@ class LlamaManager:
         temperature: float = 0.7,
         max_tokens: int = 2048,
         stream: bool = False,
-        tools: list[dict] | None = None,
+        tools: list[dict[Any, Any]] | None = None,
         tool_choice: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Create chat completion (OpenAI-compatible API)."""
         metrics = get_metrics()
@@ -396,7 +450,7 @@ class LlamaManager:
 
         return result
 
-    def chat_completion(self, **kwargs) -> Any:
+    def chat_completion(self, **kwargs: Any) -> Any:
         """Alias for create_chat_completion."""
         return self.create_chat_completion(**kwargs)
 
@@ -406,7 +460,7 @@ class LlamaManager:
         temperature: float = 0.7,
         max_tokens: int = 2048,
         stream: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Create text completion."""
         self._inference_lock.acquire()
@@ -467,7 +521,7 @@ def start_llama(
     n_ctx: int = 8192,
     n_batch: int = 1024,
     n_threads: int = 0,
-    **kwargs,
+    **kwargs: Any,
 ) -> bool:
     """Start embedded Llama model with GPU acceleration."""
     return get_llama_manager().start(
@@ -485,7 +539,7 @@ def stop_llama() -> None:
     get_llama_manager().stop()
 
 
-def switch_llama_model(model_id: str, **kwargs) -> bool:
+def switch_llama_model(model_id: str, **kwargs: Any) -> bool:
     """Hot-swap to a different model."""
     return get_llama_manager().switch_model(model_id=model_id, **kwargs)
 
@@ -515,9 +569,9 @@ class ModelRouter:
     COMPLEX_MIN_TOKENS: int = 100  # Queries longer than this → main model
 
     # Patterns that indicate complex tasks
-    COMPLEX_PATTERNS: list[str] = None
+    COMPLEX_PATTERNS: list[str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.COMPLEX_PATTERNS is None:
             self.COMPLEX_PATTERNS = [
                 # Reasoning/analysis tasks
@@ -548,9 +602,8 @@ class ModelRouter:
             return "complex"
 
         # Check for complex patterns FIRST (before simple check)
-        complex_score = sum(
-            1 for pattern in self.COMPLEX_PATTERNS if re.search(pattern, query_lower)
-        )
+        patterns = self.COMPLEX_PATTERNS or []
+        complex_score = sum(1 for pattern in patterns if re.search(pattern, query_lower))
 
         # Very short queries without tool/code patterns → simple
         if token_estimate < self.SIMPLE_MAX_TOKENS / 2 and complex_score == 0:
@@ -579,7 +632,7 @@ class ModelRouter:
 class MultiModelManager:
     """Manages multiple models with lazy loading."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Use the global main manager (already started)
         self.main_manager = get_llama_manager()
         # Create separate fast manager for lazy loading
@@ -598,7 +651,7 @@ class MultiModelManager:
         return self.main_manager
 
     def route_and_invoke(
-        self, query: str, has_document: bool = False, **kwargs
+        self, query: str, has_document: bool = False, **kwargs: Any
     ) -> tuple[str, LlamaManager]:
         """Route query to appropriate model and return (model_id, manager)."""
         model_id = self.router.get_model_for_query(query, has_document)
@@ -615,7 +668,7 @@ class MultiModelManager:
 _multi_manager: MultiModelManager | None = None
 
 
-def get_multi_model_manager() -> MultiModelManager:
+def get_multi_model_manager() -> Any:
     """Get singleton multi-model manager.
 
     Delegates to core.model_router so production and tests use the same

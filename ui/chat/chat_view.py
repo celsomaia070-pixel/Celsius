@@ -14,6 +14,24 @@ from ui.chat.message_bubble import MessageBubble
 from ui.theme import LIGHT_SCHEME
 
 
+def _mesclar_com_rodape(stream: str, final: str) -> str:
+    """Keep the prose the user watched and add whatever the engine appended.
+
+    A task's final text is the accumulated output plus a status footer, so it
+    normally already contains everything that streamed.  When it does not -- the
+    engine cleaned the prose, or it answered with a confirmation request -- the
+    stream stays the source of truth and the new information goes below it, so
+    a long task never loses the work the user already read.
+    """
+    if not final.strip():
+        return stream
+    if not stream.strip():
+        return final
+    if stream.strip() in final:
+        return final
+    return f"{stream.rstrip()}\n\n{final.strip()}"
+
+
 class ModernChatView(QWidget):
     """Modern chat view with message bubbles and streaming support."""
 
@@ -105,19 +123,33 @@ class ModernChatView(QWidget):
                 self._streaming_bubble = None
                 self._streaming_content = ""
 
-    def finish_streaming(self, final_content: str = ""):
-        if self._streaming_bubble:
-            try:
-                if final_content:
-                    self._streaming_content = final_content
-                    self._streaming_bubble.update_content(final_content)
-                self._streaming_bubble.finish_streaming()
-                self.messages.append(("assistant", self._streaming_content))
-                self._streaming_bubble = None
-                self._streaming_content = ""
-            except RuntimeError:
-                self._streaming_bubble = None
-                self._streaming_content = ""
+    def finish_streaming(self, final_content: str = "", *, keep_stream: bool = False) -> str:
+        """Close the streaming bubble and return the text that ended up in it."""
+        if not self._streaming_bubble:
+            return final_content
+        try:
+            # A task streams many ReAct turns into this one bubble, and the
+            # string it finally returns is that prose plus a status footer.
+            # With ``keep_stream`` the prose the user already watched is never
+            # dropped, and the footer is merged below it; ordinary turns still
+            # let the engine's cleaned text replace the raw stream.
+            if final_content and not keep_stream:
+                self._streaming_content = final_content
+            elif final_content:
+                self._streaming_content = _mesclar_com_rodape(
+                    self._streaming_content, final_content
+                )
+            self._streaming_bubble.update_content(self._streaming_content)
+            self._streaming_bubble.finish_streaming()
+            self.messages.append(("assistant", self._streaming_content))
+            shown = self._streaming_content
+            self._streaming_bubble = None
+            self._streaming_content = ""
+            return shown
+        except RuntimeError:
+            self._streaming_bubble = None
+            self._streaming_content = ""
+            return final_content
 
     def _scroll_to_bottom(self):
         QTimer.singleShot(

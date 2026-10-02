@@ -64,6 +64,7 @@ python -m pytest tests\test_settings.py::TestTelemetrySettingsDefaults::test_ena
 - `workers/`: tarefas em background.
 - `ui/`: interface grafica.
 - `tests/`: cobertura automatizada.
+- `scripts/`: utilitarios e testes de integracao (ex: `jev_smoke_test.py`).
 
 Ao adicionar uma funcionalidade:
 
@@ -73,6 +74,66 @@ Ao adicionar uma funcionalidade:
 4. Coloque tarefas demoradas em `workers/`.
 5. Exponha na interface em `ui/`.
 6. Adicione ou atualize testes.
+
+## Novos Componentes (Auditoria 2024)
+
+### Painel de Tarefas Desktop (`ui/task_panel.py`)
+Widget Qt com:
+- Seletor de modo agêntico + indicador ativo
+- Painel do plano (passos numerados)
+- Lista de passos: ferramenta, argumentos, status, resultado/erro
+- Botões: Confirmar, Cancelar, Pausar, Continuar
+- Histórico de tarefas da conversa
+- Indicador Jev (off/available/unavailable)
+
+Integração em `ui/window.py`: instanciado, conectado aos sinais do input area, escopo por conversa.
+
+### Painel de Tarefas Web (`core/web_api/agents.py`)
+Novos endpoints `/api/v1/agents/`:
+- `GET /tasks/{id}` — detalhes (plano, passos, resultado)
+- `GET /tasks/{id}/plan` — plano
+- `GET /tasks/{id}/steps` — passos com status
+- `POST /tasks/{id}/confirm` — confirma ação (approval_code)
+- `POST /tasks/{id}/cancel` — cancela tarefa
+- `GET /tasks/{id}/history` — log de execução
+- `GET /mode/current` — modo atual da conversa
+
+### Comandos de Voz para Tarefas (`ui/window.py`)
+`_apply_task_voice_command` processa:
+- "consulte o andamento da tarefa"
+- "cancele a tarefa"
+- "confirma" / "confirmar" / "autorizar"
+- "não confirme" / "rejeitar"
+- "pause a tarefa" / "pausar tarefa"
+- "continue a tarefa" / "retomar tarefa"
+
+Regras: silêncio nunca = confirmação; confirmação explícita obrigatória; funciona desktop + celular; erro compreensível sem tarefa ativa.
+
+### Segurança (`core/file_security.py`, `core/audit_log.py`)
+- `validate_path`: bloqueia traversal, exige roots permitidas (`set_allowed_roots`)
+- `require_write_confirmation`: política de confirmação para escrita/movimentação/exclusão
+- `AuditLogger.record_task_action`: JSONL em `logs/audit.jsonl` com task_id, modo, usuário, etapa, ferramenta, args, decisão Jev, decisão política, confirmação, resultado, erro, cancelamento
+
+### Jev/Kev Smoke Test (`scripts/jev_smoke_test.py`)
+Testa: health check, noul, score, choice, model routing, tool guard, RAG gate, fallback server down. Registra latência, provedor, modelo, resposta, fallback. Salva em `jev_smoke_test_results.json`.
+
+## Testes
+
+Rodar tudo:
+```powershell
+python -m pytest -q
+```
+Resultado esperado: **1134 passed, 3 skipped, 0 failed**
+
+Rodar testes especificos novos:
+```powershell
+python -m pytest tests/test_web_agents.py -v      # 24 testes
+python -m pytest tests/test_file_security.py -v  # 11 testes
+python -m pytest tests/test_decisions.py -v      # 51 testes
+python -m pytest tests/test_model_router.py -v   # 91 testes
+```
+
+Isolamento: `tests/conftest.py` define `CELSIUS_PREFERENCES_FILE` e `CELSIUS_CUSTOMER_PROFILE_FILE` temporarios; mocka `transformers` para evitar erro `openai.__spec__`.
 
 ## Dependencias
 

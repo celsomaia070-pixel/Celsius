@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 from core.sandbox import (
     DockerSandboxExecutor,
     build_restricted_wrapper,
+    build_sandbox_env,
     resolve_sandbox_backend,
     validate_code,
 )
@@ -167,35 +168,30 @@ def _limit_resources() -> None:
     """Set resource limits in child process (Unix only, called via preexec_fn)."""
     import resource
 
-    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-    resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024))
-    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))  # type: ignore[attr-defined]
+    resource.setrlimit(  # type: ignore[attr-defined]
+        resource.RLIMIT_AS,  # type: ignore[attr-defined]
+        (256 * 1024 * 1024, 256 * 1024 * 1024),  # type: ignore[attr-defined]
+    )
+    resource.setrlimit(  # type: ignore[attr-defined]
+        resource.RLIMIT_FSIZE,  # type: ignore[attr-defined]
+        (10 * 1024 * 1024, 10 * 1024 * 1024),  # type: ignore[attr-defined]
+    )
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))  # type: ignore[attr-defined]
     try:
-        os.setgid(65534)  # nogroup
-        os.setuid(65534)  # nobody
+        os.setgid(65534)  # type: ignore[attr-defined]  # nogroup
+        os.setuid(65534)  # type: ignore[attr-defined]  # nobody
     except (PermissionError, OSError):
         pass
 
 
 def _sandbox_env() -> dict[str, str]:
-    env = os.environ.copy()
-    for key in [
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "HUGGING_FACE_HUB_TOKEN",
-        "HF_TOKEN",
-        "GOOGLE_API_KEY",
-        "OPENROUTER_API_KEY",
-    ]:
-        env.pop(key, None)
-    env["PYTHONPATH"] = ""
-    env["PYTHONHOME"] = ""
-    if hasattr(os, "fork"):
-        env["PATH"] = "/usr/bin:/bin"
-    return env
+    """Minimal environment for the child.
+
+    Delegates to the shared allowlist in :mod:`core.sandbox` so the Windows and
+    Unix executors cannot drift apart.
+    """
+    return build_sandbox_env()
 
 
 def _default_sandbox_backend() -> str:
@@ -229,11 +225,11 @@ def executar_codigo(
     resolved_backend = resolve_sandbox_backend(backend)
     if resolved_backend == "docker":
         executor = DockerSandboxExecutor(cpu_time=timeout, max_output=max_output)
-        result = executor.execute(codigo)
+        docker_result = executor.execute(codigo)
         return CodeResult(
-            stdout=result.output,
-            stderr=result.error,
-            returncode=0 if result.success else 1,
+            stdout=docker_result.output,
+            stderr=docker_result.error,
+            returncode=0 if docker_result.success else 1,
         )
 
     # Windows path: use Job Objects sandbox
@@ -244,14 +240,14 @@ def executar_codigo(
         )
 
         config = WindowsSandboxConfig(cpu_time_limit_seconds=timeout)
-        result = executar_codigo_windows(
+        windows_result = executar_codigo_windows(
             codigo, timeout=timeout, max_output=max_output, config=config
         )
         return CodeResult(
-            stdout=result.stdout,
-            stderr=result.stderr,
-            returncode=result.returncode,
-            timed_out=result.timed_out,
+            stdout=windows_result.stdout,
+            stderr=windows_result.stderr,
+            returncode=windows_result.returncode,
+            timed_out=windows_result.timed_out,
         )
 
     # Unix path: use preexec_fn + resource limits

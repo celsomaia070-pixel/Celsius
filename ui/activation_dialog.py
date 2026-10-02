@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 
 from core.license import (
@@ -237,84 +236,3 @@ class ActivationDialog(QDialog):
 
     def was_successful(self) -> bool:
         return self._result_status
-
-
-class TrialWarningBar(QWidget):
-    """Barra sutil de aviso de trial exibida na janela principal."""
-
-    def __init__(self, parent=None, scheme: ColorScheme | None = None):
-        super().__init__(parent)
-        self._scheme = scheme or get_scheme()
-        self._setup_ui()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh)
-        self._timer.start(60000)
-        self._refresh()
-
-    def _setup_ui(self):
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {self._scheme.warning_bg};
-                border-bottom: 1px solid {self._scheme.warning};
-            }}
-            QLabel {{
-                color: {self._scheme.warning_text};
-                font-size: 11px;
-                border: none;
-            }}
-            QPushButton {{
-                background-color: {self._scheme.warning};
-                color: {self._scheme.text_on_accent};
-                border: none;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 4px 12px;
-            }}
-            QPushButton:hover {{
-                background-color: {self._scheme.warning_text};
-            }}
-        """)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 6, 16, 6)
-        layout.setSpacing(8)
-
-        self._icon = QLabel("⏱")
-        self._label = QLabel()
-        self._btn = QPushButton("Ativar")
-        self._btn.setFixedHeight(24)
-        self._btn.clicked.connect(self._on_activate_click)
-
-        layout.addWidget(self._icon)
-        layout.addWidget(self._label, 1)
-        layout.addWidget(self._btn)
-
-    def _refresh(self):
-        status = check_license_status()
-        if status["licensed"]:
-            self.hide()
-            return
-
-        if status["trial"]:
-            days = status.get("days_remaining", 0)
-            self._label.setText(f"Modo teste — {days} dia(s) restante(s)")
-            if days <= 1:
-                self._icon.setStyleSheet(f"color: {self._scheme.error}; font-size: 11px;")
-                self._label.setStyleSheet(
-                    f"color: {self._scheme.error}; font-size: 11px; border: none;"
-                )
-            else:
-                self._icon.setStyleSheet(f"color: {self._scheme.warning}; font-size: 11px;")
-                self._label.setStyleSheet(
-                    f"color: {self._scheme.warning_text}; font-size: 11px; border: none;"
-                )
-            self.show()
-        else:
-            self.hide()
-
-    def _on_activate_click(self):
-        parent = self.window()
-        dialog = ActivationDialog(parent=parent, scheme=self._scheme)
-        dialog.exec()
-        self._refresh()

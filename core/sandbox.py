@@ -17,6 +17,7 @@ import builtins
 import io
 import logging
 import math
+import os
 import random
 import re
 import signal
@@ -32,9 +33,9 @@ from core.metrics import MetricNames, get_metrics
 from core.telemetry import trace_span
 
 try:
-    import resource
+    import resource as resource_module
 except ImportError:  # Windows
-    resource = None
+    resource_module = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -468,6 +469,79 @@ exec(_builtins.compile(_source, '<celsius-sandbox>', 'exec'), _globals, _globals
 # ── AST validation ────────────────────────────────────────────
 
 
+SANDBOX_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "SystemRoot",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+    }
+)
+"""The only parent variables a sandboxed child is allowed to inherit.
+
+An allowlist, not a denylist. Copying ``os.environ`` and removing a few known
+API keys protected only the secrets somebody remembered to enumerate: every
+other credential in the parent process (CI tokens, cloud keys, database URLs)
+reached executed code.
+"""
+
+
+def build_sandbox_env(environ: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a minimal environment for a sandboxed child process.
+
+    Everything outside :data:`SANDBOX_ENV_ALLOWLIST` is dropped, and the
+    interpreter search paths are cleared so the child cannot import code from
+    the application's own directories.
+    """
+    source = dict(os.environ if environ is None else environ)
+    env = {key: value for key, value in source.items() if key in SANDBOX_ENV_ALLOWLIST}
+    windows_root = source.get("SystemRoot") or source.get("SYSTEMROOT") or r"C:\Windows"
+    if os.name == "nt" or windows_root in source:
+        env["PATH"] = os.pathsep.join(
+            path
+            for path in (os.path.join(windows_root, "System32"), windows_root)
+            if path
+        )
+    elif "PATH" not in env:
+        env["PATH"] = "/usr/bin:/bin"
+    env["PYTHONPATH"] = ""
+    env["PYTHONHOME"] = ""
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+BLOCKED_FILE_ACCESSORS: frozenset[str] = frozenset(
+    {
+        "open",
+        "open_code",
+        "FileIO",
+        "BufferedReader",
+        "BufferedWriter",
+        "BufferedRandom",
+    }
+)
+"""Attribute names that reach the filesystem.
+
+``io`` itself is a permitted module, so ``io.open`` and ``io.FileIO`` are the
+same primitives as the blocked ``open`` builtin reached through a different
+route. The runtime proxy already denies them (``SAFE_MODULE_EXPORTS`` only
+exposes ``BytesIO``/``StringIO``, which are in-memory and stay allowed); this
+keeps the static pass equally strict.
+"""
+
+
 def validate_code(code: str) -> str | None:
     """AST-based static analysis. Returns error string or None if safe."""
     try:
@@ -497,6 +571,13 @@ def validate_code(code: str) -> str | None:
                 return f"Blocked function: {func.id}"
             if isinstance(func, ast.Attribute) and func.attr in BLOCKED_METHOD_NAMES:
                 return f"Blocked method: {func.attr}"
+            # Attribute access can smuggle a blocked builtin past the Name check:
+            # ``io.open`` is the same callable as ``open``. Reject any attribute
+            # form of a blocked name so the static pass is not the weak layer.
+            if isinstance(func, ast.Attribute) and func.attr in BLOCKED_FUNCTION_NAMES:
+                return f"Blocked function via attribute: {func.attr}"
+            if isinstance(func, ast.Attribute) and func.attr in BLOCKED_FILE_ACCESSORS:
+                return f"Blocked file accessor: {func.attr}"
 
         if isinstance(node, ast.Attribute) and (
             node.attr in BLOCKED_ATTRIBUTES or node.attr.startswith("_")
@@ -556,13 +637,13 @@ def _timeout_handler_signal(signum: int, frame: Any) -> None:
 
 
 def _set_timeout_signal(seconds: int) -> None:
-    signal.signal(signal.SIGALRM, _timeout_handler_signal)
-    signal.alarm(seconds)
+    signal.signal(signal.SIGALRM, _timeout_handler_signal)  # type: ignore[attr-defined]
+    signal.alarm(seconds)  # type: ignore[attr-defined]
 
 
 def _clear_timeout_signal() -> None:
-    signal.alarm(0)
-    signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    signal.alarm(0)  # type: ignore[attr-defined]
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)  # type: ignore[attr-defined]
 
 
 class _TimeoutWatcher(threading.Thread):
@@ -740,13 +821,15 @@ class SandboxedExecutor:
 
     def _resource_limits_fn(self) -> None:
         """preexec_fn for Unix subprocesses."""
-        if sys.platform == "win32" or resource is None:
+        if sys.platform == "win32" or resource_module is None:
             return
         mem_bytes = self.memory_mb * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_CPU, (self.cpu_time, self.cpu_time))
-        resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+        resource_module.setrlimit(resource_module.RLIMIT_CPU, (self.cpu_time, self.cpu_time))
+        resource_module.setrlimit(resource_module.RLIMIT_AS, (mem_bytes, mem_bytes))
+        resource_module.setrlimit(
+            resource_module.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024)
+        )
+        resource_module.setrlimit(resource_module.RLIMIT_NOFILE, (64, 64))
         try:
             import os
 
@@ -883,7 +966,7 @@ def docker_daemon_running() -> bool:
 
 def resolve_sandbox_backend(backend: str = "auto") -> str:
     """Resolve a backend name to a usable one, falling back to the local sandbox."""
-    if backend == SANDBOX_BACKEND_DOCKER and docker_daemon_running():
+    if backend in {"auto", SANDBOX_BACKEND_DOCKER} and docker_daemon_running():
         return SANDBOX_BACKEND_DOCKER
     return SANDBOX_BACKEND_LOCAL
 
@@ -1001,7 +1084,12 @@ class DockerSandboxExecutor:
             cpu_quota=cpu_quota,
             pids_limit=self.pids_limit,
             read_only=True,
-            tmpfs={"/tmp": f"size={self.disk_mb}m", "/dev/shm": f"size={self.shm_mb}m"},
+            # These are private in-memory filesystems inside the disposable,
+            # read-only container, not shared host temporary directories.
+            tmpfs={  # nosec B108
+                "/tmp": f"size={self.disk_mb}m",
+                "/dev/shm": f"size={self.shm_mb}m",
+            },
             storage_opt={"size": f"{max(1, self.disk_mb * 4)}m"},
             cap_drop=["ALL"],
             security_opt=["no-new-privileges"],

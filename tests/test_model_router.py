@@ -1,5 +1,7 @@
 """Tests for core.model_router (query routing, scoring, model profiles)."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from core.model_router import (
@@ -10,7 +12,10 @@ from core.model_router import (
     RoutingDecision,
     _compute_complexity_score,
     _keyword_score,
+    apply_model_tool_policy,
     get_model_profile,
+    model_runtime_defaults,
+    model_start_kwargs,
 )
 
 # ---------------------------------------------------------------------------
@@ -227,12 +232,14 @@ class TestKeywordScore:
 
 
 class TestModelRouterSimpleQueries:
-    def test_greeting_routes_to_fast_model(self, monkeypatch):
+    def test_greeting_routes_to_single_model(self, monkeypatch):
         monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         decision = router.route("hello")
+        # Celsius runs with a SINGLE LLM (qwen2.5-vl-7b) — SIMPLE queries
+        # no longer escalate to gemma3-4b; everything uses the main model.
         assert decision.complexity == Complexity.SIMPLE
-        assert decision.model_id == "gemma3-4b-q4km"
+        assert decision.model_id == "qwen2.5-vl-7b-q4km"
 
     def test_short_question_simple(self):
         router = ModelRouter()
@@ -297,12 +304,15 @@ class TestModelRouterComplexQueries:
 
         assert decision.model_id == "qwen2.5-vl-7b-q4km"
 
-    def test_deep_analysis_routes_to_reasoning_model(self, monkeypatch):
+    def test_deep_analysis_routes_to_single_model(self, monkeypatch):
         monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         decision = router.route("faca uma analise profunda de viabilidade financeira")
 
-        assert decision.model_id == "deepseek-r1-distill-qwen-7b-q4km"
+        # Celsius runs with a SINGLE LLM (qwen2.5-vl-7b): reasoning escalation
+        # is intentionally disabled, so every query — regardless of complexity —
+        # routes to the same model.
+        assert decision.model_id == "qwen2.5-vl-7b-q4km"
 
     def test_balanced_general_query_routes_to_qwen25_vl(self):
         router = ModelRouter()
@@ -336,18 +346,20 @@ class TestModelRouterDecisionDetails:
             decision = router.route(q)
             assert 0.0 <= decision.confidence <= 1.0
 
-    def test_model_id_matches_complexity(self, monkeypatch):
+    def test_model_id_always_single_qwen25_vl(self, monkeypatch):
         monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         simple = router.route("hi")
-        assert simple.model_id == "gemma3-4b-q4km"
+        # A single LLM means EVERY query (simple or complex) maps to
+        # qwen2.5-vl-7b — no gemma3 fast model, no qwen3-14b quality model.
+        assert simple.model_id == "qwen2.5-vl-7b-q4km"
 
         complex_q = router.route(
             "criar codigo python detalhado com analise, relatorio completo, "
             "debug, testes, performance, estatistica e dashboard"
         )
         assert complex_q.complexity == Complexity.COMPLEX
-        assert complex_q.model_id == "qwen3-14b-q4km"
+        assert complex_q.model_id == "qwen2.5-vl-7b-q4km"
 
 
 class TestModelRouterClassifyComplexity:
@@ -386,11 +398,13 @@ class TestModelRouterGetModelForQuery:
         model = router.get_model_for_query("hi")
         assert isinstance(model, str)
 
-    def test_simple_returns_fast(self, monkeypatch):
+    def test_simple_returns_single_model(self, monkeypatch):
         monkeypatch.setattr("core.model_router._model_file_exists", lambda *_: True)
         router = ModelRouter()
         model = router.get_model_for_query("oi")
-        assert model == "gemma3-4b-q4km"
+        # Celsius runs with a SINGLE LLM — simple queries use the same
+        # qwen2.5-vl-7b as everything else (no gemma3 fast escalation).
+        assert model == "qwen2.5-vl-7b-q4km"
 
 
 class TestModelRouterCascade:
@@ -418,6 +432,382 @@ class TestModelRouterCascade:
         assert cascade[0].model_id == primary.model_id
 
 
+class _FakeLlamaManager:
+    def __init__(self, current: str = "qwen2.5-vl-7b-q4km"):
+        self._started = True
+        self.current_model_id = current
+
+    def start(self, model_id=None, **kwargs):
+        self.current_model_id = model_id
+        return True
+
+    def stop(self):
+        self._started = False
+
+
+def _router_settings(**overrides):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    base = {
+        "llm_model": "qwen2.5-vl-7b-q4km",
+        "default_llm_model": "qwen2.5-vl-7b-q4km",
+        "fast_llm_model": "gemma3-4b-q4km",
+        "model_client_choice": False,
+        "decision": None,
+        "get_resources_dir": lambda: Path("."),
+        "bundled_resources_dir": Path("."),
+        "get_model_path": lambda model_id: Path(".") / (model_id + ".gguf"),
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _make_manager(monkeypatch, settings, *, current: str = "qwen2.5-vl-7b-q4km"):
+    from core.model_router import MultiModelManager
+
+    monkeypatch.setattr("core.model_router.get_settings", lambda: settings)
+    mm = MultiModelManager.__new__(MultiModelManager)
+    mm.main_manager = _FakeLlamaManager(current)
+    mm.fast_manager = _FakeLlamaManager()
+    mm.router = ModelRouter()
+    mm._current_complexity = None
+    mm._last_decision = None
+    mm._active_model_id = None
+    mm._pending_ideal_model = None
+    return mm
+
+
+class _CapturingFakeLlamaManager(_FakeLlamaManager):
+    def __init__(self, current: str = "qwen2.5-vl-7b-q4km"):
+        super().__init__(current)
+        self.start_calls: list[tuple[str | None, dict]] = []
+
+    def start(self, model_id=None, **kwargs):
+        self.start_calls.append((model_id, kwargs))
+        return super().start(model_id, **kwargs)
+
+
+def _installed_examples():
+    from types import SimpleNamespace
+
+    return [
+        SimpleNamespace(id="qwen2.5-vl-7b-q4km", name="Qwen2.5 VL 7B", quant="Q4_K_M", size_gb=4.5),
+        SimpleNamespace(id="qwen3-8b-q4km", name="Qwen3 8B", quant="Q4_K_M", size_gb=5.2),
+    ]
+
+
+class TestMultiModelManagerRouting:
+    def test_client_pin_wins_over_jev(self, monkeypatch):
+        from core.decisions import ModelChoice
+        from core.model_router import MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(
+            model_client_choice=True,
+            decision=DecisionLayerSettings(enabled=True),
+        )
+        mm = _make_manager(monkeypatch, settings)
+
+        def boom(*args, **kwargs):
+            raise AssertionError("JEV must not run when the client pinned a model")
+
+        monkeypatch.setattr("core.decisions.decide_llm_model", boom)
+        monkeypatch.setattr("core.decisions.get_decision_client", lambda: None)
+
+        model_id, _ = mm.route_and_invoke("analise profunda do codigo")
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        assert mm._last_decision.reason == "client"
+
+    def test_jev_picks_among_installed_when_unpinned(self, monkeypatch):
+        from core.decisions import ModelChoice
+        from core.model_router import MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=True))
+        mm = _make_manager(monkeypatch, settings)
+        monkeypatch.setattr(
+            MultiModelManager,
+            "_installed_models",
+            staticmethod(lambda s: _installed_examples()),
+        )
+        monkeypatch.setattr(
+            "core.decisions.decide_llm_model",
+            lambda *args, **kwargs: ModelChoice(
+                model_id="qwen3-8b-q4km", score=2.0, normalized=1.0
+            ),
+        )
+        monkeypatch.setattr("core.decisions.get_decision_client", lambda: None)
+
+        model_id, _ = mm.route_and_invoke("analise profunda do codigo")
+        assert model_id == "qwen3-8b-q4km"
+        assert mm._last_decision.reason == "jev"
+
+    def test_disabled_decision_falls_back_to_router(self, monkeypatch):
+        from core.model_router import MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=False))
+        mm = _make_manager(monkeypatch, settings)
+
+        def boom(*args, **kwargs):
+            raise AssertionError("JEV must not run when decision layer is disabled")
+
+        monkeypatch.setattr("core.decisions.decide_llm_model", boom)
+        monkeypatch.setattr("core.decisions.get_decision_client", lambda: None)
+
+        model_id, _ = mm.route_and_invoke("oi")
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        assert mm._last_decision.reason == "auto"
+
+
+class TestMultiModelManagerContextPreservation:
+    """Improvement #1: avoid swapping the loaded model mid-conversation."""
+
+    def _jev_switching_to_qwen3(self, monkeypatch):
+        from core.decisions import ModelChoice
+        from core.model_router import MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=True))
+        mm = _make_manager(monkeypatch, settings)
+        monkeypatch.setattr(
+            MultiModelManager,
+            "_installed_models",
+            staticmethod(lambda s: _installed_examples()),
+        )
+        monkeypatch.setattr(
+            "core.decisions.decide_llm_model",
+            lambda *args, **kwargs: ModelChoice(
+                model_id="qwen3-8b-q4km", score=2.0, normalized=1.0
+            ),
+        )
+        monkeypatch.setattr("core.decisions.get_decision_client", lambda: None)
+        return mm
+
+    def test_long_conversation_defers_picked_model(self, monkeypatch):
+        from core.model_router import FRESH_CONTEXT_TOKENS
+
+        mm = self._jev_switching_to_qwen3(monkeypatch)
+        model_id, _ = mm.route_and_invoke(
+            "analise profunda do codigo", est_tokens=FRESH_CONTEXT_TOKENS + 1
+        )
+
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        decision = mm._last_decision
+        assert decision is not None
+        assert decision.reason == "jev"
+        assert decision.switched is False
+        assert decision.deferred_model_id == "qwen3-8b-q4km"
+        assert decision.notice and "preservar o contexto" in decision.notice
+
+    def test_fresh_conversation_switches_model(self, monkeypatch):
+        mm = self._jev_switching_to_qwen3(monkeypatch)
+        model_id, _ = mm.route_and_invoke("analise profunda do codigo", est_tokens=0)
+
+        assert model_id == "qwen3-8b-q4km"
+        assert mm._last_decision.switched is True
+        assert mm._last_decision.deferred_model_id is None
+        assert mm._last_decision.notice and "Troquei para" in mm._last_decision.notice
+
+    def test_image_requires_vision_switches_mid_conversation(self, monkeypatch):
+        from core.decisions import ModelChoice
+        from core.model_router import MultiModelManager, FRESH_CONTEXT_TOKENS
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=True))
+        mm = _make_manager(monkeypatch, settings, current="qwen3-8b-q4km")
+        monkeypatch.setattr(
+            MultiModelManager,
+            "_installed_models",
+            staticmethod(lambda s: _installed_examples()),
+        )
+        monkeypatch.setattr(
+            "core.decisions.decide_llm_model",
+            lambda *args, **kwargs: ModelChoice(
+                model_id="qwen2.5-vl-7b-q4km", score=2.0, normalized=1.0
+            ),
+        )
+        monkeypatch.setattr("core.decisions.get_decision_client", lambda: None)
+
+        model_id, _ = mm.route_and_invoke(
+            "o que tem nessa imagem?",
+            has_image=True,
+            est_tokens=FRESH_CONTEXT_TOKENS + 1,
+        )
+
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        assert mm._last_decision.switched is True
+        assert mm._last_decision.notice and "imagem" in mm._last_decision.notice
+
+    def test_same_model_keeps_context_without_notice(self, monkeypatch):
+        from core.model_router import MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=False))
+        mm = _make_manager(monkeypatch, settings)
+
+        model_id, _ = mm.route_and_invoke("oi", est_tokens=20000)
+
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        assert mm._last_decision.switched is False
+        assert mm._last_decision.deferred_model_id is None
+        assert mm._last_decision.notice is None
+
+    def test_active_model_id_tracks_loaded_model(self, monkeypatch):
+        mm = self._jev_switching_to_qwen3(monkeypatch)
+        mm.route_and_invoke("analise profunda do codigo", est_tokens=0)
+        assert mm._active_model_id == "qwen3-8b-q4km"
+
+        mm.route_and_invoke("continuando o assunto...", est_tokens=20000)
+        assert mm._active_model_id == "qwen3-8b-q4km"
+        assert mm._last_decision.switched is False
+        assert mm._last_decision.deferred_model_id is None
+
+
+class TestModelToolPolicy:
+    """Improvement #4a: per-model tool schema (cap + exclusions)."""
+
+    def _tools(self, n: int):
+        from types import SimpleNamespace
+
+        return [SimpleNamespace(nome=f"ferramenta_{i}") for i in range(n)]
+
+    def test_unknown_model_keeps_all_tools(self):
+        tools = self._tools(20)
+        out = apply_model_tool_policy(tools, "modelo-desconhecido")
+        assert out == tools
+        assert len(out) == 20
+
+    def test_cap_trims_to_limit_preserving_order(self):
+        tools = self._tools(20)
+        out = apply_model_tool_policy(tools, "qwen2.5-3b-q8")  # tool_limit=6
+        assert len(out) == 6
+        assert [t.nome for t in out] == [f"ferramenta_{i}" for i in range(6)]
+
+    def test_excluded_tools_are_dropped(self):
+        from types import SimpleNamespace
+
+        tools = [
+            SimpleNamespace(nome="abrir_no_navegador"),
+            SimpleNamespace(nome="pesquisar_web"),
+            SimpleNamespace(nome="gerar_grafico"),
+            SimpleNamespace(nome="executar_codigo"),
+        ]
+        out = apply_model_tool_policy(tools, "llama3.2-3b-q5km")
+        names = {t.nome for t in out}
+        assert "abrir_no_navegador" not in names
+        assert "gerar_grafico" not in names
+        assert "pesquisar_web" in names
+        assert "executar_codigo" in names
+
+    def test_cap_applied_after_exclusions(self):
+        tools = self._tools(20)
+        out = apply_model_tool_policy(tools, "gemma3-4b-q4km")  # tool_limit=6
+        assert len(out) == 6
+
+    def test_strong_model_keeps_full_toolset(self):
+        tools = self._tools(30)
+        out = apply_model_tool_policy(tools, "qwen3-8b-q4km")  # no cap
+        assert len(out) == 30
+
+
+class TestModelRuntimeDefaults:
+    """Improvement #4b: per-model n_ctx / n_gpu_layers defaults."""
+
+    def test_known_model_returns_full_overrides(self):
+        n_ctx, n_gpu = model_runtime_defaults("qwen2.5-vl-7b-q4km")
+        assert n_ctx == 16384
+        assert n_gpu == -1
+
+    def test_partial_overrides(self):
+        n_ctx, n_gpu = model_runtime_defaults("qwen2.5-3b-q8")
+        assert n_ctx == 8192
+        assert n_gpu is None
+
+    def test_unknown_model_returns_none(self):
+        assert model_runtime_defaults("modelo-desconhecido") == (None, None)
+
+
+class TestModelStartKwargs:
+    """Improvement #4c: merged start kwargs for startup sites."""
+
+    def test_profile_full_overrides_settings(self, monkeypatch):
+        settings = _router_settings(model=SimpleNamespace(num_ctx=2048, n_gpu_layers=0))
+        monkeypatch.setattr("core.model_router.get_settings", lambda: settings)
+        kwargs = model_start_kwargs("qwen3-8b-q4km")
+        assert kwargs == {"n_ctx": 16384, "n_gpu_layers": -1}
+
+    def test_partial_profile_keeps_only_defined_keys(self, monkeypatch):
+        settings = _router_settings(model=SimpleNamespace(num_ctx=2048, n_gpu_layers=0))
+        monkeypatch.setattr("core.model_router.get_settings", lambda: settings)
+        kwargs = model_start_kwargs("qwen2.5-3b-q8")
+        assert kwargs == {"n_ctx": 8192}
+
+    def test_unknown_model_falls_back_to_settings(self, monkeypatch):
+        settings = _router_settings(model=SimpleNamespace(num_ctx=4096, n_gpu_layers=2))
+        monkeypatch.setattr("core.model_router.get_settings", lambda: settings)
+        assert model_start_kwargs("modelo-desconhecido") == {
+            "n_ctx": 4096,
+            "n_gpu_layers": 2,
+        }
+
+    def test_unknown_model_without_settings_keeps_empty(self, monkeypatch):
+        monkeypatch.setattr("core.model_router.get_settings", lambda: _router_settings())
+        assert model_start_kwargs("modelo-desconhecido") == {}
+
+
+class TestMultiModelManagerRuntimeOptions:
+    """Improvement #4b: get_manager loads each model with its profile params."""
+
+    def _capturing_manager(self, monkeypatch, settings):
+        from core.model_router import MultiModelManager
+
+        monkeypatch.setattr("core.model_router.get_settings", lambda: settings)
+        mm = MultiModelManager.__new__(MultiModelManager)
+        mm.main_manager = _CapturingFakeLlamaManager()
+        mm.fast_manager = _FakeLlamaManager()
+        mm.router = ModelRouter()
+        mm._current_complexity = None
+        mm._last_decision = None
+        mm._active_model_id = None
+        mm._pending_ideal_model = None
+        return mm
+
+    def test_per_model_n_ctx_used_from_profile(self, monkeypatch):
+        settings = _router_settings()
+        mm = self._capturing_manager(monkeypatch, settings)
+        mm.get_manager("qwen2.5-omni-7b-q4km")  # default_n_ctx=16384, n_gpu_layers=None
+        _mid, kwargs = mm.main_manager.start_calls[0]
+        assert kwargs.get("n_ctx") == 16384
+        assert "n_gpu_layers" not in kwargs
+
+    def test_profile_gpu_layers_used(self, monkeypatch):
+        settings = _router_settings()
+        mm = self._capturing_manager(monkeypatch, settings)
+        mm.get_manager("qwen3-8b-q4km")  # default_n_ctx=16384, default_n_gpu_layers=-1
+        _mid, kwargs = mm.main_manager.start_calls[0]
+        assert kwargs.get("n_ctx") == 16384
+        assert kwargs.get("n_gpu_layers") == -1
+
+    def test_settings_fallback_for_unprofiled_model(self, monkeypatch):
+        from types import SimpleNamespace
+
+        settings = _router_settings(model=SimpleNamespace(num_ctx=4096, n_gpu_layers=2))
+        mm = self._capturing_manager(monkeypatch, settings)
+        mm.get_manager("modelo-desconhecido")
+        _mid, kwargs = mm.main_manager.start_calls[0]
+        assert kwargs.get("n_ctx") == 4096
+        assert kwargs.get("n_gpu_layers") == 2
+
+    def test_no_settings_model_keeps_start_defaults(self, monkeypatch):
+        settings = _router_settings()
+        mm = self._capturing_manager(monkeypatch, settings)
+        mm.get_manager("modelo-desconhecido")
+        _mid, kwargs = mm.main_manager.start_calls[0]
+        assert kwargs == {}
+
+
 class TestModelRouterCustomThresholds:
     def test_very_high_simple_threshold(self):
         router = ModelRouter(simple_threshold=-1.0)
@@ -430,3 +820,93 @@ class TestModelRouterCustomThresholds:
         decision = router.route("hi")
         # With complex_threshold at -0.5, even simple queries may be MEDIUM
         assert decision.complexity in (Complexity.SIMPLE, Complexity.MEDIUM)
+
+
+class TestPreWarmDeferredModel:
+    """Improvement: apply the deferred model on the next fresh conversation."""
+
+    def _pending_manager(self, monkeypatch, jev_model_id="qwen3-8b-q4km"):
+        from core.decisions import ModelChoice
+        from core.model_router import MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=True))
+        mm = _make_manager(monkeypatch, settings)
+        mm._pending_ideal_model = "qwen3-8b-q4km"
+        monkeypatch.setattr(
+            MultiModelManager,
+            "_installed_models",
+            staticmethod(lambda s: _installed_examples()),
+        )
+        monkeypatch.setattr(
+            "core.decisions.decide_llm_model",
+            lambda *args, **kwargs: ModelChoice(model_id=jev_model_id, score=2.0, normalized=1.0),
+        )
+        monkeypatch.setattr("core.decisions.get_decision_client", lambda: None)
+        return mm
+
+    def test_fresh_conversation_applies_pending_model(self, monkeypatch):
+        from core.model_router import FRESH_CONTEXT_TOKENS
+
+        mm = self._pending_manager(monkeypatch)
+        model_id, _ = mm.route_and_invoke(
+            "analise profunda do codigo", est_tokens=FRESH_CONTEXT_TOKENS
+        )
+
+        assert model_id == "qwen3-8b-q4km"
+        assert mm._pending_ideal_model is None
+        assert mm._last_decision.reason == "prewarm"
+        assert mm._last_decision.switched is True
+        assert mm._last_decision.notice and "adiado" in mm._last_decision.notice
+
+    def test_long_conversation_keeps_pending(self, monkeypatch):
+        from core.model_router import FRESH_CONTEXT_TOKENS
+
+        mm = self._pending_manager(monkeypatch)
+        model_id, _ = mm.route_and_invoke(
+            "analise profunda do codigo", est_tokens=FRESH_CONTEXT_TOKENS + 1
+        )
+
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        assert mm._pending_ideal_model == "qwen3-8b-q4km"
+        assert mm._last_decision.switched is False
+
+    def test_jev_choice_supersedes_pending_when_different(self, monkeypatch):
+        mm = self._pending_manager(monkeypatch, jev_model_id="qwen2.5-vl-7b-q4km")
+
+        model_id, _ = mm.route_and_invoke("pergunta complexa", est_tokens=0)
+
+        assert model_id == "qwen2.5-vl-7b-q4km"
+        assert mm._pending_ideal_model is None
+        assert mm._last_decision.reason == "jev"
+
+    def test_pending_applied_when_decision_disabled(self, monkeypatch):
+        from core.model_router import FRESH_CONTEXT_TOKENS, MultiModelManager
+        from core.settings import DecisionLayerSettings
+
+        settings = _router_settings(decision=DecisionLayerSettings(enabled=False))
+        mm = _make_manager(monkeypatch, settings)
+        mm._pending_ideal_model = "qwen3-8b-q4km"
+        monkeypatch.setattr(
+            MultiModelManager,
+            "_installed_models",
+            staticmethod(lambda s: _installed_examples()),
+        )
+
+        model_id, _ = mm.route_and_invoke("oi", est_tokens=FRESH_CONTEXT_TOKENS)
+
+        assert model_id == "qwen3-8b-q4km"
+        assert mm._pending_ideal_model is None
+        assert mm._last_decision.reason == "prewarm"
+
+    def test_pending_consumed_when_already_loaded(self, monkeypatch):
+        mm = self._pending_manager(monkeypatch)
+        mm.main_manager = _FakeLlamaManager(current="qwen3-8b-q4km")
+        mm._active_model_id = "qwen3-8b-q4km"
+
+        model_id, _ = mm.route_and_invoke("analise profunda do codigo", est_tokens=0)
+
+        assert model_id == "qwen3-8b-q4km"
+        assert mm._pending_ideal_model is None
+        assert mm._last_decision.reason != "prewarm"
+        assert mm._last_decision.switched is False

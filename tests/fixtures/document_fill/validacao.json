@@ -1,0 +1,134 @@
+{
+  "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\modelo.docx",
+  "template_sha256": "7ca4220942760fee992fcbb37e9c1eb7b6587428032eb8866c76f4a2f58cc677",
+  "sources": [
+    {
+      "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\origem.docx",
+      "field_count": 5,
+      "conflicts": {},
+      "sha256": "3085b4dae3c6fdc3a894a33e4008f9e7eba4dfe7f7e211f969eb647597ecea22"
+    }
+  ],
+  "mapping": [
+    {
+      "field": "Data de nascimento:",
+      "value": "10/04/2017",
+      "from": "data de nascimento",
+      "score": 1.0,
+      "status": "accepted",
+      "confidence": 1.0,
+      "destination": "table:0/row:1/cell:1",
+      "evidence": [
+        {
+          "key": "data de nascimento",
+          "label": "Data de nascimento",
+          "value": "10/04/2017",
+          "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\origem.docx",
+          "location": "body/paragraph:2"
+        }
+      ]
+    },
+    {
+      "field": "Nome:",
+      "value": "João da Silva",
+      "from": "nome do aluno",
+      "score": 0.96,
+      "status": "accepted",
+      "confidence": 0.96,
+      "destination": "table:0/row:0/cell:1",
+      "evidence": [
+        {
+          "key": "nome do aluno",
+          "label": "Nome do aluno",
+          "value": "João da Silva",
+          "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\origem.docx",
+          "location": "body/paragraph:1"
+        }
+      ]
+    },
+    {
+      "field": "Observações:",
+      "value": "Participa das atividades com apoio visual.",
+      "from": "observacoes",
+      "score": 1.0,
+      "status": "accepted",
+      "confidence": 1.0,
+      "destination": "table:0/row:4/cell:1",
+      "evidence": [
+        {
+          "key": "observacoes",
+          "label": "Observações",
+          "value": "Participa das atividades com apoio visual.",
+          "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\origem.docx",
+          "location": "body/paragraph:5"
+        }
+      ]
+    },
+    {
+      "field": "Unidade escolar:",
+      "value": "Escola Municipal Exemplo",
+      "from": "escola",
+      "score": 0.96,
+      "status": "accepted",
+      "confidence": 0.96,
+      "destination": "table:0/row:2/cell:1",
+      "evidence": [
+        {
+          "key": "escola",
+          "label": "Escola",
+          "value": "Escola Municipal Exemplo",
+          "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\origem.docx",
+          "location": "body/paragraph:3"
+        }
+      ]
+    },
+    {
+      "field": "Necessita adaptação",
+      "value": "Sim",
+      "from": "necessita adaptacao",
+      "score": 1.0,
+      "status": "accepted",
+      "method": "checkbox_exact",
+      "confidence": 1.0,
+      "destination": "table:0/row:3/cell:1",
+      "evidence": [
+        {
+          "key": "necessita adaptacao",
+          "label": "Necessita adaptação",
+          "value": "Sim",
+          "source": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\origem.docx",
+          "location": "body/paragraph:4"
+        }
+      ]
+    }
+  ],
+  "values": {
+    "Data de nascimento:": "10/04/2017",
+    "Observações:": "Participa das atividades com apoio visual.",
+    "Nome:": "João da Silva",
+    "Unidade escolar:": "Escola Municipal Exemplo",
+    "Necessita adaptação": "Sim"
+  },
+  "conflicts": {},
+  "rejected": [],
+  "checkbox_ambiguous": [],
+  "still_open": [
+    "Telefone:"
+  ],
+  "needs_review": [],
+  "llm_note": "",
+  "written": true,
+  "output": "E:\\PythonProjectCELSIUS\\tests\\fixtures\\document_fill\\resultado.docx",
+  "applied_count": 5,
+  "applied": [
+    "Nome:",
+    "Data de nascimento:",
+    "Unidade escolar:",
+    "Necessita adaptação",
+    "Observações:"
+  ],
+  "unmatched": [],
+  "original_preserved": true,
+  "size_bytes": 36832,
+  "needs_review_detail": []
+}

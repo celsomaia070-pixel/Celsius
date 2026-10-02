@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from core.settings import get_settings
 
@@ -35,7 +36,7 @@ class Supplier:
     created_at: str = ""
     updated_at: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         now = _now()
         if not self.created_at:
             self.created_at = now
@@ -51,14 +52,14 @@ class Supplier:
 
 
 class SupplierService:
-    def __init__(self, data_file: Path | None = None, settings=None):
+    def __init__(self, data_file: Path | None = None, settings: Any | None = None):
         self.settings = settings or get_settings()
         self.data_file = Path(data_file) if data_file else self.settings.data_dir / "suppliers.json"
         self._suppliers: dict[str, Supplier] = {}
         self._lock = threading.RLock()
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         with self._lock:
             self._suppliers = {}
             if not self.data_file.exists():
@@ -73,7 +74,7 @@ class SupplierService:
             except Exception as exc:
                 logger.error("Erro ao ler fornecedores: %s", exc)
 
-    def _save(self):
+    def _save(self) -> None:
         with self._lock:
             data = {"suppliers": [supplier.to_dict() for supplier in self._suppliers.values()]}
             self.data_file.parent.mkdir(parents=True, exist_ok=True)
@@ -213,6 +214,6 @@ def get_supplier_service() -> SupplierService:
     return _supplier_service
 
 
-def reset_supplier_service():
+def reset_supplier_service() -> None:
     global _supplier_service
     _supplier_service = None

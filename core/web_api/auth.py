@@ -48,7 +48,7 @@ class BrowserSessionStore:
         with self._lock:
             self._purge()
             while len(self._sessions) >= self.max_sessions:
-                oldest = min(self._sessions, key=self._sessions.get)
+                oldest = min(self._sessions, key=lambda token: self._sessions[token])
                 self._sessions.pop(oldest, None)
             token = secrets.token_urlsafe(32)
             self._sessions[token] = time.monotonic() + self.session_ttl_seconds

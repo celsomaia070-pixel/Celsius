@@ -94,68 +94,6 @@ class CaixaMemoriaDialog(QDialog):
         return self.input_texto.text().strip()
 
 
-class FormatoRelatorioDialog(QDialog):
-    def __init__(self, parent=None, scheme: ColorScheme | None = None):
-        super().__init__(parent)
-        self._scheme = scheme or get_scheme()
-        self.setWindowTitle("Formato do Relatorio")
-        self.setFixedSize(300, 120)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self._formato = "pdf"
-        self._apply_theme()
-
-    def set_scheme(self, scheme: ColorScheme):
-        self._scheme = scheme
-        self._apply_theme()
-
-    def _apply_theme(self):
-        s = self._scheme
-        self.setStyleSheet(f"""
-            QDialog {{ background-color: {s.bg_secondary}; border: 1px solid {s.border_default}; border-radius: 8px; }}
-            QLabel {{ color: {s.text_primary}; font-size: 14px; font-weight: 500; }}
-            QPushButton {{ background-color: {s.bg_tertiary}; color: {s.text_primary}; border: none; border-radius: 6px; font-weight: bold; min-width: 100px; padding: 8px 16px; }}
-            QPushButton:hover {{ background-color: {s.bg_hover}; }}
-            QPushButton#btn_pdf {{ background-color: {s.error}; color: {s.text_on_accent}; }}
-            QPushButton#btn_pdf:hover {{ background-color: {s.error_text}; }}
-            QPushButton#btn_docx {{ background-color: {s.info}; color: {s.text_on_accent}; }}
-            QPushButton#btn_docx:hover {{ background-color: {s.info_text}; }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 15, 20, 15)
-        layout.setSpacing(12)
-
-        label = QLabel("Escolha o formato:")
-        layout.addWidget(label)
-
-        layout_botoes = QHBoxLayout()
-        layout_botoes.setSpacing(10)
-
-        self.btn_pdf = QPushButton("PDF", objectName="btn_pdf")
-        self.btn_docx = QPushButton("DOCX", objectName="btn_docx")
-
-        self.btn_pdf.clicked.connect(self._selecionar_pdf)
-        self.btn_docx.clicked.connect(self._selecionar_docx)
-
-        layout_botoes.addStretch()
-        layout_botoes.addWidget(self.btn_pdf)
-        layout_botoes.addWidget(self.btn_docx)
-        layout_botoes.addStretch()
-
-        layout.addLayout(layout_botoes)
-
-    def _selecionar_pdf(self):
-        self._formato = "pdf"
-        self.accept()
-
-    def _selecionar_docx(self):
-        self._formato = "docx"
-        self.accept()
-
-    def obter_formato(self):
-        return self._formato
-
-
 class FornecedoresDialog(QDialog):
     """Cadastro local de fornecedores."""
 
@@ -1326,9 +1264,7 @@ class ConfiguracoesDialog(QDialog):
         self.input_business_context.setPlainText(customer.business_context)
         self.input_main_needs.setPlainText(customer.main_needs)
         self.check_offline.setChecked(customer.local_offline_required)
-        self.input_allowed_roots.setPlainText(
-            "\n".join(self.settings.security.allowed_file_roots)
-        )
+        self.input_allowed_roots.setPlainText("\n".join(self.settings.security.allowed_file_roots))
         enabled_modules = set(self.settings.modules.enabled)
         for module in module_catalog():
             self.module_checks[module.id].setChecked(module.id in enabled_modules)

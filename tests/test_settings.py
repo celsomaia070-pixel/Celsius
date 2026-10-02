@@ -90,7 +90,7 @@ class TestModelSettingsDefaults:
 
     def test_num_predict(self):
         s = ModelSettings()
-        assert s.num_predict == 2500
+        assert s.num_predict == 8192
 
     def test_n_gpu_layers(self):
         s = ModelSettings()
@@ -695,6 +695,19 @@ class TestSettingsMain:
         assert "security" in data
         assert '"C:/Docs"' in data
         assert '"E:/Empresa"' in data
+
+    def test_save_and_load_model_pin(self, tmp_path):
+        s = Settings(data_dir=tmp_path)
+        s.initialize()
+        s.llm_model = "qwen3-8b-q4km"
+        s.model.model_client_choice = True
+
+        s.save_local_preferences()
+
+        s2 = Settings(data_dir=tmp_path)
+        s2.initialize()
+        assert s2.model.llm_model == "qwen3-8b-q4km"
+        assert s2.model.model_client_choice is True
 
     def test_loads_security_allowed_file_roots(self, tmp_path):
         data_dir = tmp_path / "data"

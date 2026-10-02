@@ -61,11 +61,16 @@ MODULE_RECORD_SCHEMAS: dict[str, ModuleRecordSchema] = {
                 "tipo",
                 "Tipo",
                 "select",
-                options=("Contrato", "Manual", "Nota", "Laudo", "Outro"),
+                options=("Contrato", "Manual", "Nota", "Laudo", "Alunos", "Outro"),
                 summary=True,
             ),
             ModuleField("origem", "Origem"),
-            ModuleField("categoria", "Categoria"),
+            ModuleField(
+                "categoria",
+                "Categoria",
+                "select",
+                options=("Comercial", "Escolar", "Pessoal", "Fornecedor"),
+            ),
             ModuleField("responsavel", "Responsavel"),
             ModuleField("validade", "Validade/Revisao", "date"),
             ModuleField(

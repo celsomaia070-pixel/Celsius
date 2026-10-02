@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ def prepare_prompt_attachments(
 
     doc_names = []
     document_paths = []
+    document_files = []
     first_image = ""
     for file_path, file_name in attachments:
         path = Path(file_path)
@@ -52,6 +54,7 @@ def prepare_prompt_attachments(
             processed = f"Erro ao processar anexo '{file_name}': {exc}"
         doc_names.append(file_name)
         document_paths.append(str(path))
+        document_files.append({"nome": file_name, "caminho": str(path)})
         doc_parts.append(f"### Anexo: {file_name}\n{processed}")
 
     if first_image:
@@ -64,10 +67,31 @@ def prepare_prompt_attachments(
         if doc_names:
             prompt_dict["nome_documento"] = ", ".join(doc_names)
             prompt_dict["caminho_documento"] = "; ".join(document_paths)
+            prompt_dict["documentos_anexados"] = document_files
 
 
 class AttachmentError(ValueError):
     """Raised when a web attachment violates local upload rules."""
+
+
+def retain_task_document_attachments(prompt: dict, workspace: str | Path) -> dict:
+    """Keep uploaded originals usable after the web job cleans temporary files."""
+    retained = []
+    root = Path(workspace).resolve() / "inputs"
+    for item in prompt.get("documentos_anexados") or []:
+        source = Path(item["caminho"]).resolve()
+        validate_file_content(source.name, source.read_bytes())
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / f"{uuid.uuid4().hex}{source.suffix.lower()}"
+        shutil.copy2(source, target)
+        restrict_private_file(target)
+        retained.append({"nome": item["nome"], "caminho": str(target)})
+    if not retained:
+        return {}
+    return {
+        "documentos_anexados": retained,
+        "caminho_documento": "; ".join(item["caminho"] for item in retained),
+    }
 
 
 @dataclass(frozen=True)

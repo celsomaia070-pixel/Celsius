@@ -317,10 +317,10 @@ class BusinessWorkflowService:
         fields = record.fields
         value = cls._money(fields.get("valor", ""))
         valid_until = fields.get("validade", "")
+        valid_date = cls._date(valid_until) if valid_until else None
         expired = bool(
-            valid_until
-            and cls._date(valid_until)
-            and cls._date(valid_until) < date.today()
+            valid_date
+            and valid_date < date.today()
             and fields.get("status", "Rascunho") not in {"Aprovado", "Recusado", "Expirado"}
         )
         return {

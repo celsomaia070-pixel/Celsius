@@ -158,7 +158,7 @@ def circuit_breaker(
                 cb.record_failure()
                 raise
 
-        wrapper.circuit_breaker = cb
+        wrapper.circuit_breaker = cb  # type: ignore[attr-defined]
         return wrapper
 
     return decorator

@@ -12,6 +12,7 @@ from core.users import (
     UserService,
     UserRole,
     _hash_password,
+    _token_key,
     get_user_service,
     reset_user_service,
 )
@@ -96,6 +97,14 @@ class TestAuthentication:
         with pytest.raises(ValueError, match="Credenciais"):
             tmp_data.authenticate("nobody@example.com", "password123")
 
+    def test_login_is_temporarily_limited_after_repeated_failures(self, tmp_data: UserService):
+        tmp_data.register("user@example.com", "password123")
+        for _ in range(5):
+            with pytest.raises(ValueError, match="Credenciais"):
+                tmp_data.authenticate("user@example.com", "wrongpassword", client_key="127.0.0.1")
+        with pytest.raises(ValueError, match="Muitas tentativas"):
+            tmp_data.authenticate("user@example.com", "password123", client_key="127.0.0.1")
+
     def test_validate_token_returns_user(self, tmp_data: UserService):
         tmp_data.register("user@example.com", "password123")
         tokens = tmp_data.authenticate("user@example.com", "password123")
@@ -111,6 +120,14 @@ class TestAuthentication:
         tokens = tmp_data.authenticate("user@example.com", "password123")
         tmp_data.logout(tokens.access_token)
         assert tmp_data.validate_token(tokens.access_token) is None
+
+    def test_logout_preserves_other_device_session(self, tmp_data: UserService):
+        tmp_data.register("user@example.com", "password123")
+        first = tmp_data.authenticate("user@example.com", "password123")
+        second = tmp_data.authenticate("user@example.com", "password123")
+        tmp_data.logout(first.access_token)
+        assert tmp_data.validate_token(first.access_token) is None
+        assert tmp_data.validate_token(second.access_token) is not None
 
 
 class TestRefreshToken:
@@ -131,6 +148,13 @@ class TestRefreshToken:
         new_tokens = tmp_data.refresh(tokens.refresh_token)
         with pytest.raises(ValueError):
             tmp_data.refresh(tokens.refresh_token)
+
+    def test_refresh_revokes_previous_access_in_same_session(self, tmp_data: UserService):
+        tmp_data.register("user@example.com", "password123")
+        tokens = tmp_data.authenticate("user@example.com", "password123")
+        new_tokens = tmp_data.refresh(tokens.refresh_token)
+        assert tmp_data.validate_token(tokens.access_token) is None
+        assert tmp_data.validate_token(new_tokens.access_token) is not None
 
 
 class TestUserManagement:
@@ -167,7 +191,11 @@ class TestUserManagement:
 
     def test_change_password(self, tmp_data: UserService):
         user = tmp_data.register("user@example.com", "password123")
+        old_tokens = tmp_data.authenticate("user@example.com", "password123")
         tmp_data.change_password(user.id, "password123", "newpassword456")
+        assert tmp_data.validate_token(old_tokens.access_token) is None
+        with pytest.raises(ValueError, match="invalido"):
+            tmp_data.refresh(old_tokens.refresh_token)
         tokens = tmp_data.authenticate("user@example.com", "newpassword456")
         assert tokens.access_token
 
@@ -191,8 +219,16 @@ class TestTokenCleanup:
         with tmp_data._lock:
             from datetime import datetime, timedelta, timezone
 
-            tmp_data._tokens_cache[tokens.access_token]["expires_at"] = (
+            tmp_data._tokens_cache[_token_key(tokens.access_token)]["expires_at"] = (
                 datetime.now(timezone.utc) - timedelta(hours=1)
             ).isoformat()
         removed = tmp_data.cleanup_expired_tokens()
         assert removed >= 1
+
+    def test_persisted_tokens_are_hashed(self, tmp_data: UserService):
+        tmp_data.register("user@example.com", "password123")
+        tokens = tmp_data.authenticate("user@example.com", "password123")
+        persisted = (tmp_data._data_dir / "auth_tokens.json").read_text(encoding="utf-8")
+        assert tokens.access_token not in persisted
+        assert tokens.refresh_token not in persisted
+        assert _token_key(tokens.access_token) in persisted

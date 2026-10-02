@@ -94,7 +94,7 @@ class LocalVectorCollection:
             rows = connection.execute(
                 "SELECT id, document, metadata FROM vectors ORDER BY id"
             ).fetchall()
-        result = {"ids": [], "documents": [], "metadatas": []}
+        result: dict[str, list[Any]] = {"ids": [], "documents": [], "metadatas": []}
         for item_id, document, metadata_json in rows:
             metadata = json.loads(metadata_json)
             if where and any(metadata.get(key) != value for key, value in where.items()):

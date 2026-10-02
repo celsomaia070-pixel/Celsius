@@ -76,6 +76,7 @@ class TestWebApi:
             login = client.post("/api/v1/auth/login", json=credentials)
             assert login.status_code == 200
             assert "HttpOnly" in login.headers["set-cookie"]
+            assert "refresh_token" not in login.json()
             token = login.json()["access_token"]
             for path in (
                 "/auth/me",
@@ -93,6 +94,15 @@ class TestWebApi:
                 )
                 assert response.status_code == 200, (path, response.text)
             assert client.get("/api/v1/session").status_code == 200
+            refreshed = client.post("/api/v1/auth/refresh")
+            assert refreshed.status_code == 200
+            assert "refresh_token" not in refreshed.json()
+            assert (
+                client.get(
+                    "/api/v1/session", headers={"Authorization": f"Bearer {token}"}
+                ).status_code
+                == 401
+            )
             with client.websocket_connect("/api/v1/events") as socket:
                 assert socket.receive_json()["type"] == "system.connected"
                 socket.send_json({"type": "ping"})
@@ -104,12 +114,7 @@ class TestWebApi:
                 ).status_code
                 == 401
             )
-            assert (
-                client.post(
-                    "/api/v1/auth/refresh", json={"refresh_token": login.json()["refresh_token"]}
-                ).status_code
-                == 401
-            )
+            assert client.post("/api/v1/auth/refresh", json={}).status_code == 401
             # Pairing identifies the device; it cannot bypass an existing user login.
             assert client.get("/api/v1/session", headers=_headers()).status_code == 401
 
@@ -230,6 +235,8 @@ class TestWebApi:
         self, web_settings, monkeypatch
     ):
         monkeypatch.setattr("core.web_api.mobile.get_lan_ip", lambda: "192.168.1.50")
+        monkeypatch.setattr("core.web_api.app.get_lan_ip", lambda: "192.168.1.50")
+        monkeypatch.setattr("core.mobile_access.get_lan_ip", lambda: "192.168.1.50")
         app = create_app(
             settings=web_settings,
             event_hub=EventHub(),
@@ -242,13 +249,13 @@ class TestWebApi:
 
         payload = response.json()
         assert response.status_code == 200
-        assert payload["url"].startswith("https://192.168.1.50:8790/app?pair=")
+        assert payload["url"].startswith("https://192.168.1.50:8787/?pair=")
         assert "test-pairing-token" not in payload["url"]
         assert payload["qr_code"].startswith("data:image/png;base64,")
         assert payload["lan_access_enabled"] is True
         assert payload["external_service"] is False
         assert payload["https"] is True
-        assert payload["interface"] == "desktop-responsive"
+        assert payload["interface"] == "mobile-companion"
         assert payload["voice_input"] is True
 
     def test_mobile_pairing_starts_https_companion_when_web_is_loopback_only(
@@ -403,19 +410,14 @@ class TestWebApi:
 
         assert response == {"type": "pong", "payload": {"sequence": 7}}
 
-    def test_pairing_code_is_single_use_and_redirects_to_clean_url(self, web_settings, monkeypatch):
+    def test_mobile_pairing_returns_companion_link(self, web_settings, monkeypatch):
         monkeypatch.setattr("core.web_api.mobile.get_lan_ip", lambda: "192.168.1.50")
+        monkeypatch.setattr("core.mobile_access.get_lan_ip", lambda: "192.168.1.50")
         app = create_app(settings=web_settings, event_hub=EventHub(), lan_access_enabled=True)
         with TestClient(app) as client:
             pairing = client.get("/api/v1/mobile/pairing", headers=_headers()).json()
-            pair_query = pairing["url"].split("?", maxsplit=1)[1]
-            first = client.get(f"/app?{pair_query}", follow_redirects=False)
-            second = client.get(f"/app?{pair_query}", follow_redirects=False)
-
-        assert first.status_code == 303
-        assert first.headers["location"] == "/app"
-        assert "celsius_session=" in first.headers["set-cookie"]
-        assert second.status_code == 401
+        assert pairing["interface"] == "mobile-companion"
+        assert pairing["url"].startswith("https://192.168.1.50:8787/?pair=")
 
     def test_rejects_unknown_host_and_cross_origin_request(self, web_settings):
         app = create_app(settings=web_settings, event_hub=EventHub())
@@ -564,6 +566,79 @@ async def test_event_hub_distributes_events():
 
     assert received == published
     assert received["payload"]["title"] == "Reuniao"
+
+
+class TestAdminDecisionDashboard:
+    def _pair_and_register_admin(self, client: TestClient) -> None:
+        body = {"email": "owner@example.test", "password": "test-password-123"}
+        client.get("/app", headers=_headers())
+        assert client.post("/api/v1/auth/register", json=body).status_code == 201
+        login = client.post("/api/v1/auth/login", json=body)
+        assert login.status_code == 200
+        self.access_token = login.json()["access_token"]
+
+    def test_decision_stats_empty_by_default(self, web_settings):
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            self._pair_and_register_admin(client)
+            response = client.get(
+                "/api/v1/admin/dashboard/decisions",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["total_outcomes"] == 0
+            assert payload["by_kind"] == {}
+            assert "latency_ms" in payload
+            assert "requests_total" in payload
+
+    def test_decision_stats_reads_outcome_log(self, web_settings, tmp_path):
+        import json as _json
+
+        outcomes = tmp_path / "logs"
+        outcomes.mkdir()
+        with (outcomes / "decision_outcomes.jsonl").open("w", encoding="utf-8") as handle:
+            handle.write(
+                _json.dumps(
+                    {"kind": "tool_guard", "predicted": True, "value": 0.9, "provider": "local"}
+                )
+                + "\n"
+            )
+            handle.write(
+                _json.dumps(
+                    {"kind": "tool_guard", "predicted": False, "value": 0.2, "provider": "local"}
+                )
+                + "\n"
+            )
+            handle.write(
+                _json.dumps(
+                    {"kind": "rag_gate", "predicted": False, "value": 0.1, "provider": "fallback"}
+                )
+                + "\n"
+            )
+        web_settings.logs_dir = tmp_path / "logs"
+
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            self._pair_and_register_admin(client)
+            response = client.get(
+                "/api/v1/admin/dashboard/decisions",
+                headers={"Authorization": f"Bearer {self.access_token}"},
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["total_outcomes"] == 3
+            assert payload["total_provider_fallbacks"] == 1
+            assert payload["fallback_rate"] == round(1 / 3, 4)
+            assert payload["by_kind"]["tool_guard"]["n"] == 2
+            assert payload["by_kind"]["tool_guard"]["rate"] == round(1 / 2, 4)
+            assert payload["by_kind"]["rag_gate"]["rate"] == 0.0
+
+    def test_decision_stats_requires_admin(self, web_settings):
+        app = create_app(settings=web_settings, event_hub=EventHub())
+        with TestClient(app) as client:
+            response = client.get("/api/v1/admin/dashboard/decisions", headers=_headers())
+            assert response.status_code == 401
 
 
 from core.chat_service import ChatCoordinator

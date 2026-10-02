@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-09-28 20:02:23",
+  "base_url": "http://127.0.0.1:8009",
+  "model": "kev-latest",
+  "results": [
+    {
+      "name": "health_check",
+      "success": true,
+      "latency_ms": 31.60539999953471,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "models": [
+          "kev-latest",
+          "jev-latest"
+        ]
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "noul_decision",
+      "success": true,
+      "latency_ms": 369.14729999989504,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "nouls": {
+          "altera_dados": 0.6612,
+          "irreversivel": 0.2091,
+          "rede": 0.3799,
+          "destrutiva": 0.2507
+        }
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "score_decision",
+      "success": true,
+      "latency_ms": 282.8695000061998,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "scores": {
+          "relevancia": 0.5974
+        }
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "choice_decision",
+      "success": true,
+      "latency_ms": 202.2584999940591,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "choices": {
+          "modelo": "model-a"
+        }
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "model_routing",
+      "success": true,
+      "latency_ms": 347.92580000066664,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "model_scores": {
+          "modelo_kev-latest": 0.8349,
+          "modelo_jev-latest": 0.8054
+        }
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "tool_guard",
+      "success": true,
+      "latency_ms": 354.1912000000593,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "max_noul": 0.4928,
+        "details": {
+          "altera_dados": 0.4928,
+          "irreversivel": 0.2309,
+          "rede": 0.1766,
+          "destrutiva": 0.2685
+        }
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "rag_gate",
+      "success": true,
+      "latency_ms": 248.87490000401158,
+      "provider": "local",
+      "model": "kev-latest",
+      "response": {
+        "scores": {
+          "relevancia": 0.5974
+        }
+      },
+      "error": "",
+      "fallback": false
+    },
+    {
+      "name": "fallback_test",
+      "success": true,
+      "latency_ms": 1012.9594000027282,
+      "provider": "fallback",
+      "model": "",
+      "response": {
+        "expected": "server down"
+      },
+      "error": "",
+      "fallback": true
+    }
+  ]
+}

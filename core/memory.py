@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -113,7 +114,9 @@ class MemoryService:
         self._texts: list[str] = []
         self._term_index: dict[str, set[int]] = {}
         self._lock = threading.RLock()
-        self._file_signature: tuple[int, int] | None = None
+        # SQLite writes normally land in the WAL file. Watching only the main
+        # database misses concurrent writes from the web or desktop process.
+        self._file_signature: tuple[int, int, int, int] | None = None
         self._load_error: Exception | None = None
         self._load()
 
@@ -187,12 +190,18 @@ class MemoryService:
             for term in _search_terms(text):
                 self._term_index.setdefault(term, set()).add(index)
 
-    def _signature(self) -> tuple[int, int] | None:
+    def _signature(self) -> tuple[int, int, int, int] | None:
         try:
             stat = self._db_path.stat()
-            return stat.st_mtime_ns, stat.st_size
         except FileNotFoundError:
             return None
+        wal_path = Path(f"{self._db_path}-wal")
+        try:
+            wal_stat = wal_path.stat()
+            wal_mtime, wal_size = wal_stat.st_mtime_ns, wal_stat.st_size
+        except FileNotFoundError:
+            wal_mtime, wal_size = 0, 0
+        return stat.st_mtime_ns, stat.st_size, wal_mtime, wal_size
 
     def _refresh_if_changed(self) -> None:
         if self._signature() == self._file_signature:
@@ -227,6 +236,13 @@ class MemoryService:
             return self._memories.copy()
 
     def add(self, texto: str, origem: str = ORIGEM_USUARIO, conversation_id: str = "") -> dict:
+        # Encode e' custoso (CPU/network) e nao depende do estado: roda fora do
+        # lock para nao bloquear a GUI durante a extracao de memorias.
+        try:
+            nova_embedding = self._model_instance.encode([texto])[0]
+        except Exception as error:
+            logger.warning("Erro ao gerar embedding para nova memoria: %s", error)
+            nova_embedding = None
         with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             memoria = {
@@ -237,10 +253,8 @@ class MemoryService:
             }
             self._memories.append(memoria)
             self._rebuild_search_index()
-            try:
-                self._embeddings_cache[texto] = self._model_instance.encode([texto])[0]
-            except Exception as error:
-                logger.warning("Erro ao gerar embedding para nova memoria: %s", error)
+            if nova_embedding is not None:
+                self._embeddings_cache[texto] = nova_embedding
             self._save_unlocked()
             return memoria
 
@@ -277,32 +291,42 @@ class MemoryService:
         if not _explicit_memory_recall(query):
             return []
 
-        with self._lock:
-            try:
-                if len(self._embeddings_cache) != len(all_texts):
-                    embeddings = self._model_instance.encode(all_texts)
+        # Encode e' custoso (CPU/network): computa-lo fora do lock mantem a GUI
+        # responsiva mesmo quando a extracao de memorias roda em paralelo.
+        try:
+            with self._lock:
+                cache_pronto = len(self._embeddings_cache) == len(all_texts)
+                cache_snapshot = dict(self._embeddings_cache)
+
+            if cache_pronto:
+                query_embedding = self._model_instance.encode([query])[0]
+                with self._lock:
+                    vetores = np.array([cache_snapshot[text] for text in all_texts])
+            else:
+                embeddings = self._model_instance.encode(all_texts)
+                query_embedding = self._model_instance.encode([query])[0]
+                vetores = np.array(embeddings)
+                with self._lock:
                     self._embeddings_cache = dict(zip(all_texts, embeddings, strict=True))
                     self._persist_embeddings()
-                query_embedding = self._model_instance.encode([query])[0]
-                vetores = np.array([self._embeddings_cache[text] for text in all_texts])
 
-                norm_vetores = np.linalg.norm(vetores, axis=1)
-                norm_query = np.linalg.norm(query_embedding)
+            norm_vetores = np.linalg.norm(vetores, axis=1)
+            norm_query = np.linalg.norm(query_embedding)
 
-                if norm_query == 0 or np.any(norm_vetores == 0):
-                    return []
-
-                similarities = np.dot(vetores, query_embedding) / (norm_vetores * norm_query)
-                top_indices = np.argsort(similarities)[::-1][: self.settings.top_memories]
-
-                return [
-                    all_texts[i]
-                    for i in top_indices
-                    if similarities[i] > self.settings.memory_threshold
-                ]
-            except Exception as e:
-                logger.warning("Memory search failed: %s", e)
+            if norm_query == 0 or np.any(norm_vetores == 0):
                 return []
+
+            similarities = np.dot(vetores, query_embedding) / (norm_vetores * norm_query)
+            top_indices = np.argsort(similarities)[::-1][: self.settings.top_memories]
+
+            return [
+                all_texts[i]
+                for i in top_indices
+                if similarities[i] > self.settings.memory_threshold
+            ]
+        except Exception as e:
+            logger.warning("Memory search failed: %s", e)
+            return []
 
     def add_unique(
         self,
@@ -315,6 +339,11 @@ class MemoryService:
         texto = str(texto or "").strip()
         if not texto:
             return None
+        try:
+            nova_embedding = self._model_instance.encode([texto])[0]
+        except Exception as error:
+            logger.warning("Erro ao gerar embedding para nova memoria: %s", error)
+            nova_embedding = None
         with self._lock, locked_path(self._db_path):
             self._load_unlocked()
             if _is_near_duplicate(texto, self._texts):
@@ -327,10 +356,8 @@ class MemoryService:
             }
             self._memories.append(memoria)
             self._rebuild_search_index()
-            try:
-                self._embeddings_cache[texto] = self._model_instance.encode([texto])[0]
-            except Exception as error:
-                logger.warning("Erro ao gerar embedding para nova memoria: %s", error)
+            if nova_embedding is not None:
+                self._embeddings_cache[texto] = nova_embedding
             self._save_unlocked()
             return memoria
 
@@ -362,9 +389,7 @@ class MemoryService:
                         memory.get("origem", ORIGEM_USUARIO)
                         if isinstance(memory, dict)
                         else ORIGEM_USUARIO,
-                        memory.get("conversation_id", "")
-                        if isinstance(memory, dict)
-                        else "",
+                        memory.get("conversation_id", "") if isinstance(memory, dict) else "",
                     )
                     for memory in self._memories
                 ],

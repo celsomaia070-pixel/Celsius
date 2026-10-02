@@ -12,7 +12,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -72,14 +72,14 @@ def generate_key_pair() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     return private_key, private_key.public_key()
 
 
-def serialize_public_key(key) -> str:
+def serialize_public_key(key: rsa.RSAPublicKey) -> str:
     return key.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
 
 
-def serialize_private_key(key, password: bytes | None = None) -> str:
+def serialize_private_key(key: rsa.RSAPrivateKey, password: bytes | None = None) -> str:
     encryption = (
         serialization.BestAvailableEncryption(password)
         if password
@@ -116,7 +116,10 @@ def create_license_key(
             "Ela nunca deve ser incorporada ao aplicativo."
         )
 
-    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    private_key = cast(
+        rsa.RSAPrivateKey,
+        serialization.load_pem_private_key(private_key_pem, password=None),
+    )
     signature = private_key.sign(
         payload_bytes,
         padding.PKCS1v15(),
@@ -150,7 +153,7 @@ def validate_license_key(
         return False, "Licenciamento ainda nao configurado nesta instalacao.", payload
 
     try:
-        public_key = serialization.load_pem_public_key(public_key_pem)
+        public_key = cast(rsa.RSAPublicKey, serialization.load_pem_public_key(public_key_pem))
     except (TypeError, ValueError):
         return False, "Chave publica de licenciamento invalida.", payload
     try:

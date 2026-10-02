@@ -16,14 +16,16 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Okapi  # type: ignore[import-not-found,import-untyped]
 from sentence_transformers import CrossEncoder
 
 from core.circuit_breaker import get_circuit_breaker
+from core.decisions import DecisionClient, evaluate_rag_chunk, get_decision_client
 from core.embeddings import create_sentence_transformer
 from core.settings import get_settings
 from core.vector_store import LocalVectorCollection
 
+logger: Any = None
 try:
     from core.logging_config import get_logger
 
@@ -52,7 +54,7 @@ class RAGService:
     FINAL_TOP_K = 3
     DISTANCE_THRESHOLD = 1.5
 
-    def __init__(self, settings=None):
+    def __init__(self, settings: Any | None = None):
         self.settings = settings or get_settings()
         self._model: Any | None = None
         self._cross_encoder: CrossEncoder | None = None
@@ -132,9 +134,29 @@ class RAGService:
                 self._collection = self._client
                 self._bm25_dirty = True
 
+    def warmup(self) -> None:
+        """Prepay first-use costs (index rebuild, models) in the background.
+
+        Initially all this work runs inline on the first user question, making
+        the very first response take minutes. Running it once at startup moves
+        the cost out of the first interaction.
+        """
+        try:
+            with self._lock:
+                self._rebuild_managed_documents_once()
+                if self.collection.count() > 0:
+                    self._ensure_bm25_ready()
+                    self._get_model()
+                    if self._enable_reranking:
+                        self._get_cross_encoder()
+            logger.info("rag_warmup_completed")
+        except Exception as exc:
+            logger.warning("rag_warmup_failed error=%s", exc)
+
     @property
-    def collection(self):
+    def collection(self) -> LocalVectorCollection:
         self._init_collection()
+        assert self._collection is not None
         return self._collection
 
     def _ensure_bm25_ready(self) -> None:
@@ -234,7 +256,7 @@ class RAGService:
             sentences = re.split(r"(?<=[.!?])\s+", section)
 
             # Step 3: Merge sentences into chunks
-            current_chunk = []
+            current_chunk: list[str] = []
             current_size = 0
 
             for sentence in sentences:
@@ -277,7 +299,9 @@ class RAGService:
 
         return overlapped
 
-    def _chunk_text(self, text: str, size: int = None, overlap: int = None) -> list[str]:
+    def _chunk_text(
+        self, text: str, size: int | None = None, overlap: int | None = None
+    ) -> list[str]:
         """Legacy character-based chunking (fallback)."""
         size = size or self.CHUNK_SIZE
         overlap = overlap or self.CHUNK_OVERLAP
@@ -439,13 +463,53 @@ class RAGService:
         if not pairs:
             return candidates[:top_k]
 
-        ce_scores = ce.predict(pairs, show_progress_bar=False)
+        ce_scores = ce.predict(pairs, show_progress_bar=False)  # type: ignore[arg-type]
 
         for candidate, ce_score in zip(candidates, ce_scores, strict=False):
             candidate["rerank_score"] = float(ce_score)
 
         candidates.sort(key=lambda x: x.get("rerank_score", float("-inf")), reverse=True)
         return candidates[:top_k]
+
+    def _rag_relevance_gate(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        client: DecisionClient,
+    ) -> list[dict[str, Any]]:
+        """Score chunks with the decision layer; prune only when it is safe to.
+
+        The default posture is "keep". Relevant text is never dropped because a
+        0.5B model was unsure: pruning additionally requires
+        ``decision.rag_prune_enabled`` and a finished calibration (see
+        :func:`core.decisions.evaluate_rag_chunk`).
+
+        Only *removes* context (never adds), capped at the settings' max to
+        bound latency since each chunk costs one /v1/systemone request.
+        """
+        decision_settings = getattr(self.settings, "decision", None)
+        if not decision_settings or not decision_settings.enabled:
+            return candidates
+
+        max_scored = max(1, int(decision_settings.rag_max_gated_chunks))
+        scored = 0
+        kept: list[dict[str, Any]] = []
+        pruned = 0
+        for candidate in candidates:
+            document = candidate.get("document")
+            if document and scored < max_scored:
+                scored += 1
+                verdict = evaluate_rag_chunk(client, decision_settings, query=query, chunk=document)
+                if verdict.keep:
+                    kept.append(candidate)
+                else:
+                    pruned += 1
+                    logger.info("rag gate removeu trecho: %s", verdict.reason)
+            else:
+                kept.append(candidate)
+        if scored:
+            logger.info("rag gate: %d trechos avaliados, %d removidos", scored, pruned)
+        return kept
 
     def index_document(
         self, text: str, doc_name: str, metadata: dict[str, Any] | None = None
@@ -500,7 +564,7 @@ class RAGService:
                 _rag_index_cb.record_failure()
                 raise
 
-    def search_context(self, query: str, top_k: int = None) -> list[str]:
+    def search_context(self, query: str, top_k: int | None = None) -> list[str]:
         """Search with hybrid approach: dense + BM25, then cross-encoder re-ranking."""
         if not _rag_search_cb.allow_request():
             logger.warning("rag_search_cb_open")
@@ -551,6 +615,10 @@ class RAGService:
                         )
                         if dist < self.DISTANCE_THRESHOLD
                     ][:top_k]
+
+                decision_client = get_decision_client()
+                if decision_client.enabled and candidates:
+                    candidates = self._rag_relevance_gate(query, candidates, decision_client)
 
                 resultados = [
                     self._format_context_candidate(c) for c in candidates if c.get("document")
@@ -653,7 +721,7 @@ def indexar_documento(texto: str, nome_doc: str, metadados: dict[str, Any] | Non
     return get_rag_service().index_document(texto, nome_doc, metadados)
 
 
-def buscar_contexto(query: str, top_k: int = None) -> list[str]:
+def buscar_contexto(query: str, top_k: int | None = None) -> list[str]:
     return get_rag_service().search_context(query, top_k)
 
 

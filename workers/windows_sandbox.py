@@ -156,23 +156,14 @@ def _configure_job_limits(job_handle: ctypes.wintypes.HANDLE, config: WindowsSan
 
 
 def _sandbox_env() -> dict[str, str]:
-    """Create a restricted environment for the subprocess."""
-    env = os.environ.copy()
-    for key in [
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "HUGGING_FACE_HUB_TOKEN",
-        "HF_TOKEN",
-        "GOOGLE_API_KEY",
-        "OPENROUTER_API_KEY",
-    ]:
-        env.pop(key, None)
-    env["PYTHONPATH"] = ""
-    env["PYTHONHOME"] = ""
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    return env
+    """Create a minimal environment for the subprocess.
+
+    Uses the shared allowlist implementation so both execution paths remain
+    identical.
+    """
+    from core.sandbox import build_sandbox_env
+
+    return build_sandbox_env()
 
 
 def executar_codigo_windows(

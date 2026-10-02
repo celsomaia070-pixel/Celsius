@@ -1,7 +1,9 @@
 """Tests for core.sandbox (AST validation, SafeNamespace, SandboxedExecutor)."""
 
+import importlib.util
 import signal
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +14,7 @@ from core.sandbox import (
     BLOCKED_IMPORTS,
     BLOCKED_METHOD_NAMES,
     SAFE_MODULES,
+    SANDBOX_ENV_ALLOWLIST,
     ExecutionResult,
     SandboxedExecutor,
     _build_safe_builtins,
@@ -173,6 +176,118 @@ class TestValidateCodeBlockedFunctions:
         err = validate_code(code)
         assert err is not None
         assert "Blocked" in err
+
+
+class TestSandboxEnvironmentIsAnAllowlist:
+    """The child must not inherit arbitrary parent environment variables.
+
+    Copying ``os.environ`` and removing a handful of known API keys only
+    protected the secrets somebody remembered to enumerate; every other
+    credential in the parent process reached executed code.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _parent_env(self, monkeypatch):
+        for key in (
+            "CE_TEST_SECRET",
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "DATABASE_URL",
+        ):
+            monkeypatch.setenv(key, "valor-secreto")
+
+    @staticmethod
+    def _executors():
+        """The real ``_sandbox_env`` of both executors.
+
+        ``tests/conftest.py`` replaces these worker modules with MagicMock to
+        avoid loading their heavy dependencies, so the originals are loaded
+        straight from their source file here.
+        """
+        from core.sandbox import build_sandbox_env
+
+        root = Path(__file__).resolve().parent.parent
+        builders = [build_sandbox_env]
+        for name in ("workers/code_worker.py", "workers/windows_sandbox.py"):
+            path = root / name
+            spec = importlib.util.spec_from_file_location(
+                f"_real_{path.stem}", path
+            )
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            builders.append(module._sandbox_env)
+        return builders
+
+    def test_parent_secrets_do_not_reach_the_child(self):
+        for build_env in self._executors():
+            env = build_env()
+            leaked = [
+                key
+                for key in (
+                    "CE_TEST_SECRET",
+                    "AWS_SECRET_ACCESS_KEY",
+                    "GITHUB_TOKEN",
+                    "DATABASE_URL",
+                )
+                if key in env
+            ]
+            assert leaked == [], f"{build_env.__module__} Vazou: {leaked}"
+
+    def test_interpreter_paths_are_never_inherited(self, monkeypatch):
+        monkeypatch.setenv("PYTHONPATH", "/tmp/app/lib")
+        monkeypatch.setenv("PYTHONHOME", "/tmp/app")
+
+        for build_env in self._executors():
+            env = build_env()
+            assert env["PYTHONPATH"] == ""
+            assert env["PYTHONHOME"] == ""
+            assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+            assert env["PATH"]
+
+    def test_environment_stays_minimal(self):
+        for build_env in self._executors():
+            assert set(build_env()) <= (SANDBOX_ENV_ALLOWLIST | {
+                "PATH",
+                "PYTHONPATH",
+                "PYTHONHOME",
+                "PYTHONDONTWRITEBYTECODE",
+            })
+
+
+class TestValidateCodeFilesystemAccessors:
+    """``io`` is a permitted module, so its file primitives must be denied.
+
+    The bare ``open`` name was already rejected by the Name check, but
+    ``io.open(...)`` is the identical callable reached through an attribute and
+    used to pass the static analysis untouched.
+    """
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            'import io\nio.open("C:/Windows/win.ini").read()',
+            'import io\nio.open("C:/tmp/pwned.txt", "w").write("x")',
+            'import io\nio.FileIO("C:/Windows/win.ini")',
+            'import io\nio.open_code("C:/x.py")',
+            "import os\nos.path.join",
+        ],
+    )
+    def test_file_accessor_blocked(self, code):
+        err = validate_code(code)
+        assert err is not None
+        assert "Blocked" in err
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import io\nb = io.StringIO()\nb.write('ok')\nprint(b.getvalue())",
+            "import math\nprint(math.sqrt(81))",
+            'import json\nprint(json.dumps({"a": 1}))',
+        ],
+    )
+    def test_permitted_code_still_passes(self, code):
+        assert validate_code(code) is None
 
 
 class TestValidateCodeBlockedMethods:
@@ -781,6 +896,13 @@ class TestSandboxBackendResolution:
         monkeypatch.setattr("core.sandbox.docker_daemon_running", lambda: False)
         executor = build_sandbox_executor("auto")
         assert isinstance(executor, SandboxedExecutor)
+
+    def test_auto_prefers_docker_when_daemon_is_running(self, monkeypatch):
+        from core.sandbox import DockerSandboxExecutor, build_sandbox_executor
+
+        monkeypatch.setattr("core.sandbox.docker_daemon_running", lambda: True)
+        executor = build_sandbox_executor("auto")
+        assert isinstance(executor, DockerSandboxExecutor)
 
     def test_docker_resolution_prefers_daemon(self, monkeypatch):
         from core.sandbox import (

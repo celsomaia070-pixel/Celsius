@@ -3,7 +3,14 @@
 from pathlib import Path
 
 import core.config
-from core.config import GGUF_MODELS, GGUFModel, Settings, _get_base_dir, get_model_by_id
+from core.config import (
+    GGUF_MODELS,
+    GGUFModel,
+    Settings,
+    _get_base_dir,
+    discover_installed_models,
+    get_model_by_id,
+)
 
 
 class TestConfig:
@@ -67,6 +74,37 @@ class TestConfig:
         model = GGUF_MODELS[0]
         assert "Q4_K_M" in model.display_name
         assert "Qwen" in model.display_name
+
+
+class TestDiscoverInstalledModels:
+    def test_matches_catalog_file(self, tmp_path):
+        catalog_model = GGUF_MODELS[0]
+        (tmp_path / catalog_model.filename).write_bytes(b"x")
+        models = discover_installed_models(tmp_path)
+        assert [m.id for m in models] == [catalog_model.id]
+        assert models[0] == catalog_model
+
+    def test_discovers_unknown_local_gguf(self, tmp_path):
+        (tmp_path / "qwen-heretic.gguf").write_bytes(b"\x00" * 1024)
+        models = discover_installed_models(tmp_path)
+        assert len(models) == 1
+        model = models[0]
+        assert model.id == "qwen-heretic"
+        assert model.filename == "qwen-heretic.gguf"
+        assert model.category == "custom"
+        assert model.quant == "local"
+
+    def test_ignores_mmproj_projectors(self, tmp_path):
+        llama = get_model_by_id("llama3.2-3b-q5km")
+        assert llama is not None
+        (tmp_path / "mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf").write_bytes(b"\x00" * 4)
+        (tmp_path / llama.filename).write_bytes(b"\x00" * 4)
+        models = discover_installed_models(tmp_path)
+        assert [m.id for m in models] == ["llama3.2-3b-q5km"]
+
+    def test_empty_dir_returns_empty_list(self, tmp_path):
+        assert discover_installed_models(tmp_path) == []
+        assert discover_installed_models(tmp_path / "nao_existe") == []
 
 
 class TestBaseDir:

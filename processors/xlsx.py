@@ -17,7 +17,9 @@ class ProcessadorXLSX(ProcessadorArquivo):
         try:
             from openpyxl import load_workbook
         except ImportError:
-            return "Formato .xlsx nao disponivel: instale openpyxl (pip install celsius[documents])."
+            return (
+                "Formato .xlsx nao disponivel: instale openpyxl (pip install celsius[documents])."
+            )
 
         path = cls._validar_caminho(caminho, base_dir)
         workbook = load_workbook(path, read_only=True, data_only=True)
@@ -42,7 +44,9 @@ class ProcessadorXLSX(ProcessadorArquivo):
             if idx_linha > _MAX_ROWS_PER_SHEET:
                 linhas.append("... [linhas restantes omitidas] ...")
                 break
-            celulas = [cls._formatar_celula(valor) for valor in valores_linha[:_MAX_COLUMNS_PER_ROW]]
+            celulas = [
+                cls._formatar_celula(valor) for valor in valores_linha[:_MAX_COLUMNS_PER_ROW]
+            ]
             if any(c for c in celulas):
                 linhas.append(" | ".join(celulas))
         if not linhas:

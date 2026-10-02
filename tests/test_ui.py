@@ -59,27 +59,27 @@ class TestTheme:
         assert LIGHT_SCHEME.accent_primary in input_area.btn_send.styleSheet()
         assert not input_area.btn_send.icon().isNull()
 
-    def test_input_area_lists_the_six_modes_and_reports_the_selection(self, qapp):
+    def test_task_panel_lists_modes_and_reports_selection(self, qapp):
         from core.agent_modes import MODES, get_mode
-        from ui.chat import ModernInputArea
+        from ui.task_panel import TaskPanel
 
-        input_area = ModernInputArea()
+        panel = TaskPanel()
 
-        assert input_area.mode_combo.count() == len(MODES)
-        assert input_area.get_mode() == get_mode(None).id
-        input_area.set_mode("estoque")
-        assert input_area.get_mode() == "estoque"
-        input_area.set_mode("nao-existe")
-        assert input_area.get_mode() == "estoque"
+        assert panel.mode_combo.count() == len(MODES)
+        assert panel.mode_combo.currentData() == get_mode(None).id
+        panel.set_mode("estoque")
+        assert panel.mode_combo.currentData() == "estoque"
+        panel.set_mode("nao-existe")
+        assert panel.mode_combo.currentData() == "estoque"
 
-    def test_input_area_emits_change_mode(self, qapp):
-        from ui.chat import ModernInputArea
+    def test_task_panel_emits_mode_changed(self, qapp):
+        from ui.task_panel import TaskPanel
 
-        input_area = ModernInputArea()
+        panel = TaskPanel()
         received: list[str] = []
-        input_area.change_mode.connect(received.append)
+        panel.mode_changed.connect(received.append)
 
-        input_area.set_mode("pesquisador")
+        panel.set_mode("pesquisador")
 
         assert received == ["pesquisador"]
 
@@ -851,7 +851,7 @@ class TestModernInputArea:
 
         assert emitted == []
         assert area._busy is True
-        assert area.input.isEnabled() is True
+        assert area.input.isEnabled() is False
         assert area.btn_send.isHidden() is True
         assert area.btn_stop.isHidden() is False
 
@@ -956,44 +956,6 @@ class TestModernChatWindow:
         missing = window._missing_voice_stream_tail("Primeira frase falada. Segunda frase falada.")
 
         assert missing == ""
-
-    def test_model_combo_auto_entry_unpins_client_choice(self, qapp, monkeypatch, tmp_path):
-        from PySide6.QtWidgets import QComboBox
-
-        from core.settings import Settings
-        from ui.window import COMBO_MODEL_AUTO, ModernChatWindow
-
-        class FakeInputArea:
-            def __init__(self, combo):
-                self.model_combo = combo
-
-            def set_models(self, entries):
-                self.model_combo.blockSignals(True)
-                self.model_combo.clear()
-                for entry in entries:
-                    self.model_combo.addItem(entry["label"], entry)
-                self.model_combo.blockSignals(False)
-
-        combo = QComboBox()
-        window = ModernChatWindow.__new__(ModernChatWindow)
-        window.settings = Settings(data_dir=tmp_path)
-        window.settings.initialize()
-        window.settings.model.model_client_choice = False
-        window.input_area = FakeInputArea(combo)
-        monkeypatch.setattr(type(window.settings), "save_local_preferences", lambda self: None)
-
-        window._populate_model_combo()
-        assert combo.itemData(0)["id"] == COMBO_MODEL_AUTO
-        assert combo.currentData()["id"] == COMBO_MODEL_AUTO
-
-        combo.setCurrentIndex(1)
-        window._on_model_changed(combo.currentText())
-        assert window.settings.model.model_client_choice is True
-        assert window.settings.llm_model == combo.currentData()["id"]
-
-        combo.setCurrentIndex(0)
-        window._on_model_changed(combo.currentText())
-        assert window.settings.model.model_client_choice is False
 
     def test_ai_notice_shows_bubble_once(self, qapp):
         from ui.window import ModernChatWindow

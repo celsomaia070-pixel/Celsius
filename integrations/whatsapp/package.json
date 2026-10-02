@@ -1,0 +1,8 @@
+{
+  "name": "celsius-whatsapp-bridge",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "engines": { "node": ">=22" },
+  "dependencies": { "@whiskeysockets/baileys": "7.0.0-rc14", "pino": "^9.6.0" }
+}

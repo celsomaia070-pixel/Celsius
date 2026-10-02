@@ -86,8 +86,10 @@ def suggest_lighter_model(
     if elapsed_seconds < min_elapsed_seconds:
         return None
 
-    used_model = get_model_by_id(used_model_id) if catalog is None else _find_in_catalog(
-        catalog, used_model_id
+    used_model = (
+        get_model_by_id(used_model_id)
+        if catalog is None
+        else _find_in_catalog(catalog, used_model_id)
     )
     if used_model is None:
         return None
@@ -102,10 +104,9 @@ def suggest_lighter_model(
     if installed_ids is None:
         installed_ids = _discover_installed_ids(catalog or GGUF_MODELS, resources_dir)
     lighter_installed = [
-        m for m in (catalog or GGUF_MODELS)
-        if m.id in installed_ids
-        and m.id != used_model_id
-        and m.size_gb < used_model.size_gb
+        m
+        for m in (catalog or GGUF_MODELS)
+        if m.id in installed_ids and m.id != used_model_id and m.size_gb < used_model.size_gb
     ]
     if not lighter_installed:
         return None
@@ -129,9 +130,7 @@ def _find_in_catalog(catalog: list[GGUFModel], model_id: str) -> GGUFModel | Non
     return next((m for m in catalog if m.id == model_id), None)
 
 
-def _discover_installed_ids(
-    catalog: list[GGUFModel], resources_dir: Path | None
-) -> set[str]:
+def _discover_installed_ids(catalog: list[GGUFModel], resources_dir: Path | None) -> set[str]:
     if resources_dir is None:
         return set()
     installed: set[str] = set()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 SUPPORTED_CHART_TYPES = {
     "bar",
@@ -71,11 +71,14 @@ def _numeric_values(values: list) -> list[float] | list[list[float]]:
 
 
 def _single_series(values: list[float] | list[list[float]]) -> list[float]:
-    return values[0] if values and isinstance(values[0], list) else values
+    return cast("list[float]", values[0] if values and isinstance(values[0], list) else values)
 
 
 def _validate_series_lengths(labels: list[str], values: list[float] | list[list[float]]) -> None:
-    series = values if values and isinstance(values[0], list) else [values]
+    series = cast(
+        "list[list[float]]",
+        values if values and isinstance(values[0], list) else [values],
+    )
     if any(len(item) != len(labels) for item in series):
         raise ChartError("a quantidade de labels deve corresponder aos valores")
 
@@ -176,7 +179,7 @@ def render_business_chart(
         if ylabel:
             ax.set_ylabel(ylabel, fontsize=11, color="#374151")
         ax.tick_params(axis="both", labelsize=9, colors="#4B5563")
-        axis = "x" if horizontal else "y"
+        axis: Any = "x" if horizontal else "y"
         ax.grid(True, axis=axis, color="#E5E7EB", linewidth=0.8)
         ax.grid(False, axis="y" if horizontal else "x")
         ax.spines["top"].set_visible(False)
@@ -188,8 +191,9 @@ def render_business_chart(
         if chart_type in {"bar", "grouped_bar"}:
             positions = np.arange(len(labels))
             if isinstance(numeric_values[0], list):
-                width = 0.76 / len(numeric_values)
-                for index, series in enumerate(numeric_values):
+                series_list = cast(list[list[float]], numeric_values)
+                width = 0.76 / len(series_list)
+                for index, series in enumerate(series_list):
                     offset = (index - (len(numeric_values) - 1) / 2) * width
                     ax.bar(
                         positions + offset,
@@ -225,8 +229,9 @@ def render_business_chart(
             apply_style(horizontal=True)
 
         elif chart_type == "stacked_bar":
-            series_list = (
-                numeric_values if isinstance(numeric_values[0], list) else [numeric_values]
+            series_list = cast(
+                list[list[float]],
+                numeric_values if isinstance(numeric_values[0], list) else [numeric_values],
             )
             positions = np.arange(len(labels))
             bottom = np.zeros(len(labels))
@@ -272,8 +277,9 @@ def render_business_chart(
             ax.axis("equal")
 
         elif chart_type in {"line", "area"}:
-            series_list = (
-                numeric_values if isinstance(numeric_values[0], list) else [numeric_values]
+            series_list = cast(
+                list[list[float]],
+                numeric_values if isinstance(numeric_values[0], list) else [numeric_values],
             )
             for index, series in enumerate(series_list):
                 color = palette[index % len(palette)]
@@ -308,15 +314,18 @@ def render_business_chart(
 
         elif chart_type == "scatter":
             if isinstance(numeric_values[0], list) and all(
-                len(point) == 2 for point in numeric_values
+                len(point) == 2 for point in cast(list[list[float]], numeric_values)
             ):
-                x_values = [point[0] for point in numeric_values]
-                y_values = [point[1] for point in numeric_values]
+                points = cast(list[list[float]], numeric_values)
+                x_values = [point[0] for point in points]
+                y_values = [point[1] for point in points]
             elif isinstance(numeric_values[0], list) and len(numeric_values) >= 2:
-                x_values, y_values = numeric_values[:2]
+                points = cast(list[list[float]], numeric_values)
+                x_values, y_values = points[:2]
             else:
-                x_values = list(range(1, len(numeric_values) + 1))
-                y_values = numeric_values
+                flat_values = cast(list[float], numeric_values)
+                x_values = list(range(1, len(flat_values) + 1))
+                y_values = flat_values
             ax.scatter(
                 x_values,
                 y_values,
@@ -330,8 +339,9 @@ def render_business_chart(
             apply_style()
 
         elif chart_type == "radar":
-            series_list = (
-                numeric_values if isinstance(numeric_values[0], list) else [numeric_values]
+            series_list = cast(
+                list[list[float]],
+                numeric_values if isinstance(numeric_values[0], list) else [numeric_values],
             )
             angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
             closed_angles = angles + angles[:1]
@@ -420,8 +430,9 @@ def render_business_chart(
             apply_style(horizontal=True)
 
         elif chart_type == "boxplot":
-            series_list = (
-                numeric_values if isinstance(numeric_values[0], list) else [numeric_values]
+            series_list = cast(
+                list[list[float]],
+                numeric_values if isinstance(numeric_values[0], list) else [numeric_values],
             )
             box = ax.boxplot(series_list, patch_artist=True, tick_labels=labels[: len(series_list)])
             for index, patch in enumerate(box["boxes"]):

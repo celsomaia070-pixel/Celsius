@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+from typing import Any
 
 from core.circuit_breaker import CircuitBreakerOpenError, get_circuit_breaker
 from core.network_security import UnsafeNetworkTargetError, validate_public_http_url
@@ -17,12 +18,12 @@ _browser_content_cb = get_circuit_breaker(
 
 
 class BrowserAgent:
-    def __init__(self):
-        self._playwright = None
-        self._browser = None
-        self._page = None
+    def __init__(self) -> None:
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._page: Any = None
 
-    async def start(self, headless=True):
+    async def start(self, headless: bool = True) -> None:
         from playwright.async_api import async_playwright
 
         self._playwright = await async_playwright().start()
@@ -34,7 +35,7 @@ class BrowserAgent:
         self._page = await context.new_page()
 
     @staticmethod
-    async def _guard_outbound_request(route):
+    async def _guard_outbound_request(route: Any) -> None:
         url = route.request.url
         if url.startswith(("data:", "blob:", "about:")):
             await route.continue_()
@@ -46,20 +47,22 @@ class BrowserAgent:
             return
         await route.continue_()
 
-    async def stop(self):
+    async def stop(self) -> None:
         if self._browser:
             await self._browser.close()
         if self._playwright:
             await self._playwright.stop()
 
-    async def get_accessibility_tree(self):
+    async def get_accessibility_tree(self) -> str:
+        if self._page is None:
+            return "Erro: navegador nao iniciado."
         try:
             snapshot = await self._page.accessibility.snapshot()
             return self._format_tree(snapshot)
         except Exception as e:
             return f"Erro ao obter arvore: {e}"
 
-    def _format_tree(self, node, depth=0):
+    def _format_tree(self, node: Any, depth: int = 0) -> str:
         if not node:
             return ""
         lines = []
@@ -75,9 +78,11 @@ class BrowserAgent:
             lines.append(self._format_tree(child, depth + 1))
         return "\n".join(lines)
 
-    async def execute_action(self, action):
+    async def execute_action(self, action: dict) -> Any:
         act = action
         try:
+            if self._page is None:
+                return "Erro: navegador nao iniciado."
             if act["action"] == "navigate":
                 await self._page.goto(act["url"], wait_until="domcontentloaded")
             elif act["action"] == "click":
@@ -98,14 +103,18 @@ class BrowserAgent:
             with contextlib.suppress(Exception):
                 await self._page.wait_for_load_state("domcontentloaded")
 
-    async def get_page_content(self):
-        return await self._page.content()
+    async def get_page_content(self) -> str:
+        if self._page is None:
+            return ""
+        return str(await self._page.content())
 
-    async def get_current_url(self):
-        return self._page.url
+    async def get_current_url(self) -> str:
+        if self._page is None:
+            return ""
+        return str(self._page.url)
 
 
-def navegar_web(url, timeout=30):
+def navegar_web(url: str, timeout: int = 30) -> str:
     # Check circuit breaker before attempting
     if not _browser_navigate_cb.allow_request():
         raise CircuitBreakerOpenError(
@@ -115,7 +124,7 @@ def navegar_web(url, timeout=30):
     agent = BrowserAgent()
     loop = asyncio.new_event_loop()
 
-    async def _run():
+    async def _run() -> str:
         validated_url = validate_public_http_url(url)
         await agent.start(headless=True)
         await agent.execute_action({"action": "navigate", "url": validated_url})
@@ -125,9 +134,9 @@ def navegar_web(url, timeout=30):
         return f"URL: {url_actual}\n\nArvore de acessibilidade:\n{tree[:3000]}"
 
     try:
-        resultado = loop.run_until_complete(asyncio.wait_for(_run(), timeout=timeout))
+        resultado: str = loop.run_until_complete(asyncio.wait_for(_run(), timeout=timeout))
         _browser_navigate_cb.record_success()
-    except asyncio.TimeoutExpired:
+    except TimeoutError:
         _browser_navigate_cb.record_failure()
         resultado = f"Timeout ao acessar {url}"
     except (CircuitBreakerOpenError, UnsafeNetworkTargetError):

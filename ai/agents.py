@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class SubAgent:
     nome: str
@@ -27,12 +28,25 @@ class SubAgent:
 REGISTRO_AGENTES = [
     SubAgent(
         nome="rag_agent",
-        descricao="Analise e busca em documentos indexados, RAG, indexar documentos",
-        ferramentas=["indexar_documento", "listar_documentos_rag", "remover_documento"],
+        descricao=(
+            "Analise, busca e preenchimento de documentos Word/PDF, formularios e RAG"
+        ),
+        ferramentas=[
+            "inspecionar_formulario_documento",
+            "preencher_documento",
+            "preencher_documento_com_fontes",
+            "gerar_documento_local",
+            "indexar_documento",
+            "listar_documentos_rag",
+            "remover_documento",
+        ],
         system_prompt_extra=(
             "Voce e especialista em RAG. Ao indexar documentos, "
             "confirme o sucesso e sugira perguntas relevantes. "
-            "Ao buscar contexto, selecione as informacoes mais relevantes."
+            "Ao buscar contexto, selecione as informacoes mais relevantes. "
+            "Para preencher, inspecione primeiro, gere uma copia e nunca invente valores. "
+            "Para relatorios pedagogicos, gere um PDF ou DOCX somente com fatos encontrados "
+            "nos documentos indexados."
         ),
     ),
     SubAgent(
@@ -100,6 +114,10 @@ _KEYWORD_MAP = {
         "documento indexado",
         "buscar documento",
         "listar documentos",
+        "preencher documento",
+        "preencher formulario",
+        "editar word",
+        "editar pdf",
     ],
     "code_agent": ["executar codigo", "rodar codigo", "python", "calcular", "script", "programa"],
     "browser_agent": ["navegar", "abrir site", "acessar pagina", "extrair de site", "scraping"],

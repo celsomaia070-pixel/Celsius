@@ -5,7 +5,6 @@ ModernInputArea - Área de entrada moderna com anexos, microfone, modelo.
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,13 +20,13 @@ from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY
 
 
 class ModernInputArea(QWidget):
-    """Modern floating input area with attachments, mic, model selector."""
+    """Modern floating input area with attachments, mic, model and mode selectors."""
 
     send_message = Signal(str)
     attach_file = Signal()
     toggle_mic = Signal()
     toggle_voice = Signal()
-    change_model = Signal(str)
+    stop_response = Signal()
 
     def __init__(self, scheme=None, parent=None):
         super().__init__(parent)
@@ -132,7 +131,7 @@ class ModernInputArea(QWidget):
         self.btn_mic.clicked.connect(self.toggle_mic.emit)
         input_row.addWidget(self.btn_mic)
 
-        # Voice toggle
+# Voice toggle
         self.btn_voice = QPushButton()
         self.btn_voice.setIcon(icon("volume-up", s.text_muted))
         self.btn_voice.setToolTip("Modo voz (Ctrl+Shift+V)")
@@ -155,32 +154,6 @@ class ModernInputArea(QWidget):
         """)
         self.btn_voice.clicked.connect(self.toggle_voice.emit)
         input_row.addWidget(self.btn_voice)
-
-        # Model selector
-        self.model_combo = QComboBox()
-        self.model_combo.setFixedWidth(180)
-        self.model_combo.setCursor(Qt.PointingHandCursor)
-        self.model_combo.currentTextChanged.connect(self.change_model.emit)
-        self.model_combo.setStyleSheet(f"""
-            QComboBox {{
-                background: {s.bg_tertiary};
-                border: 1px solid {s.border_default};
-                border-radius: {RADIUS.radius_md}px;
-                padding: 4px 12px;
-                color: {s.text_primary};
-                font-size: {TYPOGRAPHY.text_sm}px;
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                width: 24px;
-            }}
-            QComboBox QAbstractItemView {{
-                background: {s.bg_secondary};
-                border: 1px solid {s.border_default};
-                selection-background-color: {s.accent_primary};
-            }}
-        """)
-        input_row.addWidget(self.model_combo)
 
         self.btn_send = QPushButton()
         self.btn_send.setIcon(icon("paper-plane", s.text_on_accent))
@@ -206,6 +179,27 @@ class ModernInputArea(QWidget):
         self.btn_send.clicked.connect(self._on_send)
         input_row.addWidget(self.btn_send)
 
+        self.btn_stop = QPushButton()
+        self.btn_stop.setIcon(icon("stop", s.text_on_accent))
+        self.btn_stop.setToolTip("Interromper resposta (Esc)")
+        self.btn_stop.setCursor(Qt.PointingHandCursor)
+        self.btn_stop.setFixedSize(40, 40)
+        self.btn_stop.setStyleSheet(f"""
+            QPushButton {{
+                background: {s.error};
+                border: 1px solid {s.error};
+                border-radius: {RADIUS.radius_md}px;
+                padding: {SPACING.space_2}px;
+            }}
+            QPushButton:hover {{
+                background: {s.error_bg};
+                border-color: {s.error};
+            }}
+        """)
+        self.btn_stop.clicked.connect(self.stop_response.emit)
+        self.btn_stop.hide()
+        input_row.addWidget(self.btn_stop)
+
         container_layout.addLayout(input_row)
 
         main_layout.addWidget(self.container)
@@ -226,10 +220,16 @@ class ModernInputArea(QWidget):
         QShortcut(QKeySequence("Ctrl+Shift+A"), self, activated=self.attach_file.emit)
         QShortcut(QKeySequence("Ctrl+M"), self, activated=self.toggle_mic.emit)
         QShortcut(QKeySequence("Ctrl+Shift+V"), self, activated=self._toggle_voice_shortcut)
+        stop_shortcut = QShortcut(QKeySequence("Esc"), self, activated=self._on_stop)
+        stop_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
 
     def _toggle_voice_shortcut(self):
         self.btn_voice.setChecked(not self.btn_voice.isChecked())
         self.toggle_voice.emit()
+
+
+    def _on_stop(self):
+        self.stop_response.emit()
 
     def _on_send(self):
         if self._busy:
@@ -238,21 +238,6 @@ class ModernInputArea(QWidget):
         if text:
             self.send_message.emit(text)
             self.input.clear()
-
-    def set_busy(self, busy: bool):
-        """Block new sends while the local model is generating a response."""
-        self._busy = busy
-        self.input.setEnabled(not busy)
-        self.btn_attach.setEnabled(not busy)
-        self.btn_mic.setEnabled(not busy)
-        self.btn_voice.setEnabled(not busy)
-        self.model_combo.setEnabled(not busy)
-        self.btn_send.setEnabled(not busy)
-        if busy:
-            self.input.setPlaceholderText("Celsius esta respondendo...")
-        else:
-            self.input.setPlaceholderText("Mensagem...")
-            self.input.setFocus()
 
     def add_attachment(self, file_path: str, file_name: str = None):
         from pathlib import Path
@@ -309,25 +294,13 @@ class ModernInputArea(QWidget):
             self.btn_mic.setToolTip("Ditar mensagem (Ctrl+M)")
             self.btn_mic.setIcon(icon("microphone", self._scheme.text_muted))
 
-    def set_models(self, models: list, current_model: str = ""):
-        self.model_combo.blockSignals(True)
-        try:
-            self.model_combo.clear()
-            for model in models:
-                if isinstance(model, dict):
-                    label = str(model.get("label") or model.get("name") or model.get("id") or "")
-                    self.model_combo.addItem(label, model)
-                    item = self.model_combo.model().item(self.model_combo.count() - 1)
-                    if item is not None:
-                        item.setEnabled(bool(model.get("installed", True)))
-                else:
-                    self.model_combo.addItem(str(model), model)
-            if current_model:
-                idx = self.model_combo.findText(current_model)
-                if idx >= 0:
-                    self.model_combo.setCurrentIndex(idx)
-        finally:
-            self.model_combo.blockSignals(False)
+    def set_busy(self, busy: bool):
+        """Set busy state: disables input, shows stop button, hides send button."""
+        self._busy = busy
+        self.btn_send.setVisible(not busy)
+        self.btn_stop.setVisible(busy)
+        self.input.setEnabled(not busy)
+
 
     def set_scheme(self, scheme):
         self._scheme = scheme
@@ -396,25 +369,6 @@ class ModernInputArea(QWidget):
             }}
             QPushButton:checked {{
                 background: {s.accent_primary}20;
-            }}
-        """)
-        self.model_combo.setStyleSheet(f"""
-            QComboBox {{
-                background: {s.bg_tertiary};
-                border: 1px solid {s.border_default};
-                border-radius: {RADIUS.radius_md}px;
-                padding: 4px 12px;
-                color: {s.text_primary};
-                font-size: {TYPOGRAPHY.text_sm}px;
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                width: 24px;
-            }}
-            QComboBox QAbstractItemView {{
-                background: {s.bg_secondary};
-                border: 1px solid {s.border_default};
-                selection-background-color: {s.accent_primary};
             }}
         """)
         self.btn_send.setIcon(icon("paper-plane", s.text_on_accent))

@@ -95,6 +95,7 @@ class MobileChatBridge:
         self.transcriber = transcriber or self._transcribe
         self.wake_controller = wake_controller or WakeWordController()
         self._conversation_id = ""
+        self._job_ids: set[str] = set()
         self._lock = threading.Lock()
 
     @staticmethod
@@ -103,9 +104,16 @@ class MobileChatBridge:
 
         return transcribe_mobile_wav(audio, model_name=model_name)
 
-    def handle_command(self, message: str, _source: str = "phone") -> tuple[bool, str]:
-        result = self._submit(message)
-        return bool(result["ok"]), str(result["message"])
+    def handle_command(self, message: str, _source: str = "phone") -> dict:
+        return self._submit(message)
+
+    def owns_job(self, job_id: str) -> bool:
+        with self._lock:
+            return bool(job_id and job_id in self._job_ids)
+
+    def finish_job(self, job_id: str) -> None:
+        with self._lock:
+            self._job_ids.discard(job_id)
 
     def handle_voice(self, audio: bytes, _mime_type: str) -> dict:
         try:
@@ -135,14 +143,17 @@ class MobileChatBridge:
             job = self.chat_coordinator.submit(
                 message=message,
                 conversation_id=conversation_id,
+                source="mobile",
             )
             with self._lock:
                 self._conversation_id = str(job["conversation_id"])
+                self._job_ids.add(str(job["id"]))
             return {
                 "ok": True,
                 "message": "Comando enviado ao Celsius.",
                 "command_submitted": True,
                 "job_id": str(job["id"]),
+                "conversation_id": str(job["conversation_id"]),
             }
         except ChatBusyError as exc:
             return {"ok": False, "message": str(exc), "command_submitted": False}

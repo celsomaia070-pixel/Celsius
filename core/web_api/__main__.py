@@ -26,7 +26,7 @@ def main() -> int:
     # Restore stdlib SSL before importing FastAPI/Uvicorn. On some Windows
     # environments pip injects a client-only truststore context at startup.
     native_ssl_context = _create_server_ssl_context()
-    ssl.SSLContext = type(native_ssl_context)
+    ssl.SSLContext = type(native_ssl_context)  # type: ignore[misc]
 
     import uvicorn
 
@@ -51,12 +51,9 @@ def main() -> int:
     args.port = args.port if args.port is not None else settings.web.port
     if not 1 <= args.port <= 65535:
         parser.error("A porta deve estar entre 1 e 65535.")
-    configured_lan = bool(settings.mobile.enabled and settings.mobile.allow_lan)
     # Binding all interfaces is allowed only after the explicit LAN checks below.
-    host = args.host or (
-        "0.0.0.0" if configured_lan else settings.web.host  # nosec B104
-    )
-    if not _is_loopback(host) and not (args.allow_lan or configured_lan):
+    host = args.host or ("0.0.0.0" if args.allow_lan else settings.web.host)  # nosec B104
+    if not _is_loopback(host) and not args.allow_lan:
         parser.error("Use --allow-lan para expor a API fora deste computador.")
     if not _is_loopback(host) and args.http:
         parser.error("HTTP so e permitido em loopback. A rede local exige HTTPS.")
@@ -89,6 +86,7 @@ def main() -> int:
         # Uvicorn receives the native context on affected Windows installations.
         config = uvicorn.Config(application, host=host, port=args.port, log_level="info")
         config.load()
+        assert ssl_context is not None
         ssl_context.load_cert_chain(str(cert_file), str(key_file))
         config.ssl = ssl_context
         uvicorn.Server(config).run()

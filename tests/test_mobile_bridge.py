@@ -74,3 +74,7 @@ def test_mobile_command_keeps_same_conversation():
         ("quantos itens tenho no estoque", ""),
         ("e quais estao criticos", "abc123def456"),
     ]
+    assert bridge.owns_job("job-1") is True
+    assert bridge.owns_job("job-2") is True
+    bridge.finish_job("job-1")
+    assert bridge.owns_job("job-1") is False

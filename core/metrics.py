@@ -8,20 +8,9 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class MetricPoint:
-    """Single metric data point."""
-
-    name: str
-    value: float
-    timestamp: float
-    labels: dict[str, str] = field(default_factory=dict)
 
 
 class MetricsCollector:
@@ -182,6 +171,10 @@ class MetricNames:
     RAG_SEARCH_TOTAL = "celsius_rag_search_total"
     RAG_INDEX_TOTAL = "celsius_rag_index_total"
     RAG_CHUNKS_TOTAL = "celsius_rag_chunks_total"
+
+    # Decision layer
+    DECISION_REQUESTS_TOTAL = "celsius_decision_requests_total"
+    DECISION_LATENCY_SECONDS = "celsius_decision_latency_seconds"
 
     # Circuit breaker
     CB_STATE = "celsius_circuit_breaker_state"

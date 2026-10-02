@@ -8,6 +8,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from ai.engine import gerar_resposta, gerar_resposta_com_imagem
+from ai.interruption import marcar_interrompida
 from core.chat_attachments import prepare_prompt_attachments
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ class WorkerSignals(QObject):
     chunk = Signal(str)
     error = Signal(str)
     suggestion = Signal(str)
+    notice = Signal(str)
+    cancelled = Signal(str)
 
 
 class AIWorker(QRunnable):
@@ -36,11 +39,14 @@ class AIWorker(QRunnable):
         fn_step: Callable[[object], None] | None = None,
         fn_chunk: Callable[[str], None] | None = None,
         fn_suggestion: Callable[[str], None] | None = None,
+        fn_notice: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ):
         super().__init__()
         self.setAutoDelete(False)
         self.prompt_dict = prompt_dict
         self.signals = WorkerSignals()
+        self.cancel_event = cancel_event or threading.Event()
 
         self._fn_status = fn_status
         self._fn_step = fn_step
@@ -54,6 +60,8 @@ class AIWorker(QRunnable):
             self.signals.chunk.connect(fn_chunk)
         if fn_suggestion:
             self.signals.suggestion.connect(fn_suggestion)
+        if fn_notice:
+            self.signals.notice.connect(fn_notice)
 
     @Slot()
     def run(self):
@@ -72,12 +80,18 @@ class AIWorker(QRunnable):
             self._prepare_attachments()
             attachments_seconds = time.perf_counter() - attachments_started_at
             generation_started_at = time.perf_counter()
-            if self.prompt_dict.get("caminho_imagem"):
+            should_cancel = self.cancel_event.is_set
+            from ai.task_runtime import is_task_command
+
+            if self.prompt_dict.get("caminho_imagem") and not is_task_command(
+                self.prompt_dict.get("pergunta", "")
+            ):
                 resposta = gerar_resposta_com_imagem(
                     self.prompt_dict["caminho_imagem"],
                     self.prompt_dict.get("pergunta", ""),
                     fn_status=self.signals.status.emit,
                     fn_chunk=self.signals.chunk.emit,
+                    should_cancel=should_cancel,
                 )
             else:
                 resposta = gerar_resposta(
@@ -85,6 +99,7 @@ class AIWorker(QRunnable):
                     fn_status=self.signals.status.emit,
                     fn_passo=self.signals.step.emit,
                     fn_chunk=self.signals.chunk.emit,
+                    should_cancel=should_cancel,
                 )
             generation_seconds = time.perf_counter() - generation_started_at
             logger.info(
@@ -93,17 +108,28 @@ class AIWorker(QRunnable):
                 generation_seconds,
                 time.perf_counter() - started_at,
             )
-            self.signals.finished.emit(resposta)
-            self._emit_slow_model_suggestion(resposta, generation_seconds)
+            if self.cancel_event.is_set():
+                resposta = marcar_interrompida(resposta)
+                with contextlib.suppress(RuntimeError):
+                    self.signals.cancelled.emit(resposta)
+            else:
+                self.signals.finished.emit(resposta)
+                self._emit_slow_model_suggestion(resposta, generation_seconds)
+                self._emit_switch_notice()
         except Exception as e:
-            logger.exception(
-                "Falha na resposta apos %.2fs",
-                time.perf_counter() - started_at,
-            )
-            with contextlib.suppress(RuntimeError):
-                self.signals.error.emit(str(e))
-            with contextlib.suppress(RuntimeError):
-                self.signals.finished.emit(f"Erro: {e}")
+            if self.cancel_event.is_set():
+                logger.info("Geracao interrompida pelo usuario: %s", e)
+                with contextlib.suppress(RuntimeError):
+                    self.signals.cancelled.emit(marcar_interrompida(""))
+            else:
+                logger.exception(
+                    "Falha na resposta apos %.2fs",
+                    time.perf_counter() - started_at,
+                )
+                with contextlib.suppress(RuntimeError):
+                    self.signals.error.emit(str(e))
+                with contextlib.suppress(RuntimeError):
+                    self.signals.finished.emit(f"Erro: {e}")
         finally:
             gc.enable()
             _AI_GENERATION_LOCK.release()
@@ -157,6 +183,20 @@ class AIWorker(QRunnable):
         except Exception as exc:
             logger.debug("Nao foi possivel avaliar lentidao do modelo: %s", exc)
 
+    def _emit_switch_notice(self) -> None:
+        """Emit the router notice (e.g. model swapped / kept) to the UI."""
+        try:
+            from core.model_router import get_multi_model_manager
+
+            decision = get_multi_model_manager().get_last_decision()
+            notice = decision.notice if decision else None
+            if not notice:
+                return
+            with contextlib.suppress(RuntimeError):
+                self.signals.notice.emit(notice)
+        except Exception as exc:
+            logger.debug("Nao foi possivel emitir aviso de troca de modelo: %s", exc)
+
 
 class WorkerManager:
     """Manages thread pool and workers."""
@@ -165,6 +205,7 @@ class WorkerManager:
         self.pool = QThreadPool()
         self.pool.setMaxThreadCount(max_threads)
         self._active_workers: list[AIWorker] = []
+        self._current_worker: AIWorker | None = None
 
     def is_busy(self) -> bool:
         return bool(self._active_workers)
@@ -177,7 +218,9 @@ class WorkerManager:
         on_step: Callable[[object], None] | None = None,
         on_chunk: Callable[[str], None] | None = None,
         on_suggestion: Callable[[str], None] | None = None,
+        on_notice: Callable[[str], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        on_cancelled: Callable[[str], None] | None = None,
     ) -> AIWorker:
         """Submit an AI task to the thread pool."""
         if self.is_busy():
@@ -189,20 +232,35 @@ class WorkerManager:
             fn_step=on_step,
             fn_chunk=on_chunk,
             fn_suggestion=on_suggestion,
+            fn_notice=on_notice,
         )
         worker.signals.finished.connect(on_finished)
         if on_error:
             worker.signals.error.connect(on_error)
+        if on_cancelled:
+            worker.signals.cancelled.connect(on_cancelled)
         worker.signals.finished.connect(lambda _: self._cleanup_worker(worker))
         worker.signals.error.connect(lambda _: self._cleanup_worker(worker))
+        worker.signals.cancelled.connect(lambda _: self._cleanup_worker(worker))
 
         self._active_workers.append(worker)
+        self._current_worker = worker
         self.pool.start(worker)
         return worker
+
+    def cancel_current(self) -> bool:
+        """Ask the running worker to stop after the current token."""
+        worker = self._current_worker
+        if worker is None:
+            return False
+        worker.cancel_event.set()
+        return True
 
     def _cleanup_worker(self, worker: AIWorker) -> None:
         if worker in self._active_workers:
             self._active_workers.remove(worker)
+        if worker is self._current_worker:
+            self._current_worker = None
 
     def cancel_all(self) -> None:
         for worker in self._active_workers:

@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from core.settings import get_settings
 
@@ -47,7 +47,7 @@ class NotificationMessage:
     created_at: str = ""
     updated_at: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         now = _now()
         if not self.created_at:
             self.created_at = now
@@ -73,7 +73,7 @@ class NotificationResult:
 class NotificationService:
     """Local notification history and provider gate for external channels."""
 
-    def __init__(self, data_file: Path | None = None, settings=None):
+    def __init__(self, data_file: Path | None = None, settings: Any | None = None):
         self.settings = settings or get_settings()
         self.data_file = (
             Path(data_file) if data_file else self.settings.data_dir / "notifications.json"
@@ -82,7 +82,7 @@ class NotificationService:
         self._lock = threading.RLock()
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         with self._lock:
             self._messages = {}
             if not self.data_file.exists():
@@ -96,7 +96,7 @@ class NotificationService:
             except Exception as exc:
                 logger.error("Erro ao ler notificacoes: %s", exc)
 
-    def _save(self):
+    def _save(self) -> None:
         with self._lock:
             data = {"messages": [message.to_dict() for message in self._messages.values()]}
             self.data_file.parent.mkdir(parents=True, exist_ok=True)
@@ -226,6 +226,6 @@ def get_notification_service() -> NotificationService:
     return _notification_service
 
 
-def reset_notification_service():
+def reset_notification_service() -> None:
     global _notification_service
     _notification_service = None

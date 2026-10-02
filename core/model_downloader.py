@@ -2,8 +2,11 @@
 
 import hashlib
 import re
+import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from core.config import GGUFModel
 from core.settings import get_settings
@@ -72,11 +75,137 @@ def _stored_digest(path: Path) -> str:
     return sidecar.read_text(encoding="ascii").split(maxsplit=1)[0].strip().lower()
 
 
+def _call_with_retry(
+    fn: Callable[[], Any],
+    *,
+    attempts: int = 3,
+    base_delay: float = 1.0,
+) -> Any:
+    """Retry a transient network call with exponential backoff."""
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return fn()
+        except Exception as error:  # noqa: BLE001 - transient network faults retry
+            last_error = error
+            if attempt + 1 < max(1, attempts):
+                time.sleep(base_delay * (2**attempt))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("operacao de rede falhou")
+
+
+def _required_bytes(size_gb: float) -> int:
+    """Disk bytes needed (model + 10% margin); 0 for unknown (no pre-check)."""
+    return int(max(size_gb, 0.0) * (1024**3) * 1.1)
+
+
+def _sufficient_disk_space(directory: Path, required_bytes: int) -> bool:
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError:
+        return True
+    return free >= required_bytes
+
+
+def _staging_dir(resources: Path) -> Path:
+    staging = resources / ".downloads" / f"artifact-{time.time_ns()}"
+    staging.mkdir(parents=True, exist_ok=True)
+    return staging
+
+
+def _download_artifact(
+    model: GGUFModel,
+    *,
+    source_filename: str,
+    target_filename: str,
+    sha_field: str,
+    size_gb: float,
+    fn_status: Callable[[str], None] | None,
+) -> Path | None:
+    """Download a single artifact into ``resources`` with verification.
+
+    Downloads go to a staging directory and only move to the final name
+    after the SHA-256 check passes (atomic ``Path.replace``). A corrupt
+    local copy is repaired in place, and partial/interrupted downloads
+    never linger under the final filename.
+    """
+    resources = get_settings().get_resources_dir()
+    resources.mkdir(parents=True, exist_ok=True)
+    dest = resources / target_filename
+
+    registered = str(getattr(model, sha_field, "") or "").strip()
+    if dest.exists():
+        try:
+            expected = registered or _remote_sha256(model.hf_repo, source_filename, revision="main")
+            verify_model_file(dest, expected)
+            _store_digest(dest, expected)
+            return dest
+        except Exception as error:
+            if fn_status:
+                fn_status(f"Arquivo local invalido; baixando novamente: {error}")
+
+    required = _required_bytes(size_gb)
+    if required and not _sufficient_disk_space(resources, required):
+        if fn_status:
+            fn_status("Sem espaco em disco: necessario ~%.1f GB livre." % (required / (1024**3)))
+        return None
+
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as err:
+        raise ImportError(
+            "huggingface_hub nao esta instalado. Execute: pip install huggingface_hub"
+        ) from err
+
+    if fn_status:
+        fn_status(f"Baixando {dest.name}...")
+
+    staging = _staging_dir(resources)
+    try:
+        revision = _call_with_retry(lambda: _resolve_revision(model.hf_repo))
+        expected = registered or _call_with_retry(
+            lambda: _remote_sha256(model.hf_repo, source_filename, revision=revision)
+        )
+
+        downloaded = _call_with_retry(
+            lambda: hf_hub_download(
+                repo_id=model.hf_repo,
+                filename=source_filename,
+                revision=revision,
+                local_dir=str(staging),
+            )
+        )
+        staged = Path(downloaded)
+        if staged.name != target_filename:
+            target_in_staging = staging / target_filename
+            staged.rename(target_in_staging)
+            staged = target_in_staging
+
+        verify_model_file(staged, expected)
+        staged.replace(dest)
+        _store_digest(dest, expected)
+        if fn_status:
+            fn_status(f"Download concluido: {dest.name} (verificado)")
+        return dest
+    except Exception as error:
+        if fn_status:
+            fn_status(f"Erro ao baixar {dest.name}: {error}")
+        return None
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def verify_registered_model(model_id: str, path: Path | None = None) -> bool:
-    """Verify a local model when a trusted catalog hash is registered."""
+    """Verify a local model when a trusted catalog hash is registered.
+
+    Models not present in the catalog (e.g. a custom local GGUF such as
+    ``qwen-heretic.gguf``) have no trust anchor, so they are accepted without
+    verification; a sidecar ``.sha256`` digest is still enforced when present.
+    """
     model = _find_model(model_id)
     if model is None:
-        raise ValueError(f"Model '{model_id}' not found in registry")
+        return True
     model_path = path or get_settings().get_model_path(model_id)
     expected = model.sha256 or _stored_digest(model_path)
     if not expected:
@@ -135,64 +264,20 @@ def download_model(
     if not model:
         raise ValueError(f"Model '{model_id}' not found in registry")
 
-    resources = get_settings().get_resources_dir()
-    resources.mkdir(parents=True, exist_ok=True)
-
-    dest = resources / model.filename
-    if dest.exists():
-        try:
-            expected = model.sha256 or _remote_sha256(model.hf_repo, model.hf_file)
-            if fn_status:
-                fn_status(f"Verificando integridade de {dest.name}...")
-            verify_model_file(dest, expected)
-            _store_digest(dest, expected)
-            if fn_status:
-                fn_status(f"Modelo verificado: {dest.name}")
-            return dest
-        except Exception as error:
-            if fn_status:
-                fn_status(f"Modelo local invalido: {error}")
-            return None
-
     try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as err:
-        raise ImportError(
-            "huggingface_hub nao esta instalado. Execute: pip install huggingface_hub"
-        ) from err
-
-    if fn_status:
-        fn_status(f"Baixando {model.name} ({model.quant})...")
-
-    try:
-        revision = _resolve_revision(model.hf_repo)
-        expected = model.sha256 or _remote_sha256(model.hf_repo, model.hf_file, revision=revision)
-        path = hf_hub_download(
-            repo_id=model.hf_repo,
-            filename=model.hf_file,
-            revision=revision,
-            local_dir=str(resources),
+        return _download_artifact(
+            model,
+            source_filename=model.hf_file,
+            target_filename=model.filename,
+            sha_field="sha256",
+            size_gb=model.size_gb,
+            fn_status=fn_status,
         )
-        result = Path(path)
-
-        # Rename if needed (hf_hub_download keeps original name)
-        if result.name != model.filename:
-            target = resources / model.filename
-            result.rename(target)
-            result = target
-
+    except ImportError:
+        raise
+    except Exception as error:
         if fn_status:
-            fn_status("Verificando SHA-256 do modelo...")
-        verify_model_file(result, expected)
-        _store_digest(result, expected)
-
-        if fn_status:
-            fn_status(f"Download concluido: {result.name}")
-
-        return result
-    except Exception as e:
-        if fn_status:
-            fn_status(f"Erro ao baixar modelo: {e}")
+            fn_status(f"Erro ao baixar modelo: {error}")
         return None
 
 
@@ -205,47 +290,16 @@ def download_mmproj(
     if not model or not model.has_mmproj:
         return None
 
-    resources = get_settings().get_resources_dir()
-    dest = resources / model.mmproj_file
-    if dest.exists():
-        try:
-            expected = model.mmproj_sha256 or _remote_sha256(model.hf_repo, model.mmproj_file)
-            verify_model_file(dest, expected)
-            _store_digest(dest, expected)
-            return dest
-        except Exception as error:
-            if fn_status:
-                fn_status(f"Projetor visual local invalido: {error}")
-            return None
-
     try:
-        from huggingface_hub import hf_hub_download
+        return _download_artifact(
+            model,
+            source_filename=model.mmproj_file,
+            target_filename=model.mmproj_file,
+            sha_field="mmproj_sha256",
+            size_gb=0.0,
+            fn_status=fn_status,
+        )
     except ImportError:
-        return None
-
-    if fn_status:
-        fn_status("Baixando mmproj (suporte a visao)...")
-
-    try:
-        revision = _resolve_revision(model.hf_repo)
-        expected = model.mmproj_sha256 or _remote_sha256(
-            model.hf_repo, model.mmproj_file, revision=revision
-        )
-        path = hf_hub_download(
-            repo_id=model.hf_repo,
-            filename=model.mmproj_file,
-            revision=revision,
-            local_dir=str(resources),
-        )
-        result = Path(path)
-        verify_model_file(result, expected)
-        _store_digest(result, expected)
-        if fn_status:
-            fn_status(f"mmproj baixado: {result.name}")
-        return result
-    except Exception as e:
-        if fn_status:
-            fn_status(f"Erro ao baixar mmproj: {e}")
         return None
 
 

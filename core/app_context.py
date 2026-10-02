@@ -10,13 +10,18 @@ from __future__ import annotations
 import contextlib
 import faulthandler
 import logging
+import os
 import sqlite3
+import subprocess
 import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
 
 from core.container import get_container, reset_container
+from core.file_security import restrict_private_directory
 from core.llama_cpp import start_llama_server, stop_llama_server
 from core.logging_config import setup_logging
 from core.mobile_access import get_mobile_runtime, rotate_mobile_token, start_for_settings
@@ -109,7 +114,7 @@ class CelsiusAppContext:
         self.start_llama = start_llama
         self.start_web = start_web
 
-        self.web_api_server = None
+        self.web_api_server: Any | None = None
         self._whisper_thread: threading.Thread | None = None
         self._llama_started = False
         self._started = False
@@ -123,12 +128,13 @@ class CelsiusAppContext:
         settings = self.settings
         self.failure_message = None
         try:
+            self._prepare_private_runtime(settings)
             self._bootstrap_logging(settings)
+            self._start_decision_layer(settings)
             if getattr(settings.customer, "local_offline_required", False):
                 self.report(
                     "Celsius em MODO OFF-LINE: documentos, memorias e dados permanecem nesta maquina."
                 )
-            self._start_mobile(settings)
             self._log_hardware(settings)
             features = get_feature_flags()
             self._preload_embeddings(features)
@@ -138,6 +144,7 @@ class CelsiusAppContext:
                 return False
             if self.start_web:
                 self._start_web_server(settings)
+            self._start_mobile(settings)
 
             self._started = True
             return True
@@ -149,6 +156,16 @@ class CelsiusAppContext:
         self._started = False
         self.shutdown()
         return False
+
+    @staticmethod
+    def _prepare_private_runtime(settings: Settings) -> None:
+        """Keep application and third-party caches inside a private local tree."""
+        restrict_private_directory(settings.data_dir)
+        cache_dir = settings.data_dir / "cache"
+        restrict_private_directory(cache_dir)
+        os.environ.setdefault("CELSIUS_CACHE_HOME", str(cache_dir))
+        os.environ.setdefault("HF_HOME", str(cache_dir / "huggingface"))
+        os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
 
     def shutdown(self) -> None:
         self._backup_databases()
@@ -200,6 +217,54 @@ class CelsiusAppContext:
                 )
         get_container()
 
+    def _start_decision_layer(self, settings: Settings) -> None:
+        """Start the already-installed local KEV supervisor when configured."""
+        decision = settings.decision
+        if not decision.enabled or decision.provider != "local" or not decision.auto_start:
+            return
+        if "pytest" in sys.modules:
+            return
+        root = Path(__file__).resolve().parents[1]
+        supervisor = root / "scripts" / "kev-supervisor.ps1"
+        kev_python = root / "kev-venv" / "Scripts" / "python.exe"
+        if not supervisor.is_file() or not kev_python.is_file():
+            logger.warning(
+                "JEV/KEV habilitado, mas o runtime ainda nao foi preparado. "
+                "Execute scripts\\kev-server.ps1 -NoStart."
+            )
+            return
+        port = 8009
+        try:
+            parsed = urlsplit(decision.base_url)
+            port = parsed.port or 8009
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(supervisor),
+                    "-Action",
+                    "Start",
+                    "-Port",
+                    str(port),
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=12,
+                creationflags=flags,
+                check=False,
+            )
+            if result.returncode == 0:
+                self.report("Supervisor local JEV/KEV iniciado.")
+            else:
+                logger.warning("Falha ao iniciar supervisor JEV/KEV: %s", result.stderr.strip())
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            logger.warning("Supervisor JEV/KEV indisponivel: %s", exc)
+
     def _start_mobile(self, settings: Settings) -> None:
         if not settings.mobile.enabled:
             return
@@ -250,8 +315,12 @@ class CelsiusAppContext:
             self.report("Preparando memoria semantica...")
             try:
                 from ai.agents import preload_embedding_model
+                from ai.tool_retrieval import preload_tool_embeddings
 
                 preload_embedding_model()
+                # Shares the encoder loaded just above; only the static tool
+                # vectors are new, so the first chat turn starts warm.
+                preload_tool_embeddings()
             except Exception as exc:
                 logger.warning("Falha ao pre-carregar modelo de embeddings: %s", exc)
         elif features.multi_agent:
@@ -297,9 +366,13 @@ class CelsiusAppContext:
         self.report("Verificando o modelo local...")
         _ensure_model_available(settings, fn_status=self.report)
         self.report("Carregando a inteligencia artificial local...")
+        from core.model_router import model_start_kwargs
+
+        start_kwargs = model_start_kwargs(settings.model.llm_model)
         if not start_llama_server(
-            n_gpu_layers=settings.model.n_gpu_layers,
-            n_ctx=settings.model.num_ctx,
+            model_id=settings.model.llm_model,
+            n_gpu_layers=start_kwargs.get("n_gpu_layers", settings.model.n_gpu_layers),
+            n_ctx=start_kwargs.get("n_ctx", settings.model.num_ctx),
             n_batch=settings.model.n_batch,
             n_threads=settings.model.n_threads,
         ):

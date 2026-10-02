@@ -16,9 +16,6 @@ from typing import Any
 from core.metrics import MetricNames, get_metrics
 from core.model_catalog import (
     DEFAULT_LLM_MODEL,
-    FAST_LLM_MODEL,
-    QUALITY_LLM_MODEL,
-    REASONING_LLM_MODEL,
     VISION_LLM_MODEL,
 )
 from core.settings import get_settings
@@ -46,6 +43,10 @@ class ModelProfile:
     supports_tools: bool = False
     speed_rating: float = 1.0  # 1.0 = fastest
     quality_rating: float = 0.5  # 0-1
+    tool_limit: int | None = None  # caps schemas sent; None = no cap
+    excluded_tools: tuple[str, ...] = ()  # tools this model must never receive
+    default_n_ctx: int | None = None  # recommended context size for this model
+    default_n_gpu_layers: int | None = None  # recommended GPU offload for this model
 
 
 @dataclass
@@ -57,6 +58,14 @@ class RoutingDecision:
     confidence: float
     reason: str
     score: float = 0.0
+    switched: bool = True
+    deferred_model_id: str | None = None
+    notice: str | None = None
+
+
+# Conversation is "fresh" (safe to swap the loaded model without meaningful
+# context loss) while its history stays below this many estimated tokens.
+FRESH_CONTEXT_TOKENS = 1200
 
 
 # ── Model profiles (known models) ────────────────────────────
@@ -68,6 +77,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.78,
         quality_rating=0.78,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen3-14b-q4km": ModelProfile(
         name="Qwen3 14B Instruct",
@@ -75,6 +86,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.48,
         quality_rating=0.88,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-vl-3b-q4km": ModelProfile(
         name="Qwen2.5 VL 3B",
@@ -83,6 +96,7 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.88,
         quality_rating=0.65,
+        tool_limit=8,
     ),
     "deepseek-r1-distill-qwen-7b-q4km": ModelProfile(
         name="DeepSeek R1 Distill Qwen 7B",
@@ -90,6 +104,9 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.58,
         quality_rating=0.82,
+        tool_limit=10,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "deepseek-r1-distill-qwen-14b-q4km": ModelProfile(
         name="DeepSeek R1 Distill Qwen 14B",
@@ -97,24 +114,36 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.38,
         quality_rating=0.9,
+        tool_limit=10,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "llama3.2-3b-q5km": ModelProfile(
         name="Llama 3.2 3B",
         max_context=8192,
         speed_rating=1.0,
         quality_rating=0.35,
+        tool_limit=6,
+        excluded_tools=("abrir_no_navegador", "gerar_grafico"),
+        default_n_ctx=8192,
     ),
     "qwen2.5-3b-q8": ModelProfile(
         name="Qwen2.5 3B",
         max_context=32768,
         speed_rating=0.95,
         quality_rating=0.4,
+        tool_limit=6,
+        excluded_tools=("abrir_no_navegador", "gerar_grafico"),
+        default_n_ctx=8192,
     ),
     "qwen3.5-35b-a3b-q4km": ModelProfile(
         name="Qwen3.5 35B-A3B",
         max_context=131072,
         speed_rating=0.85,
         quality_rating=0.8,
+        tool_limit=12,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-vl-7b-q4km": ModelProfile(
         name="Qwen2.5 VL 7B",
@@ -123,6 +152,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.7,
         quality_rating=0.75,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-vl-7b-q5km": ModelProfile(
         name="Qwen2.5 VL 7B Q5",
@@ -131,6 +162,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.65,
         quality_rating=0.78,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-vl-7b-q6k": ModelProfile(
         name="Qwen2.5 VL 7B Q6",
@@ -139,6 +172,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.6,
         quality_rating=0.80,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-coder-7b-q5km": ModelProfile(
         name="Qwen2.5 Coder 7B",
@@ -146,6 +181,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.7,
         quality_rating=0.72,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-coder-14b-q4km": ModelProfile(
         name="Qwen2.5 Coder 14B",
@@ -153,6 +190,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_tools=True,
         speed_rating=0.5,
         quality_rating=0.82,
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "gemma3-4b-q4km": ModelProfile(
         name="Gemma 3 4B",
@@ -160,6 +199,10 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_vision=True,
         speed_rating=0.9,
         quality_rating=0.6,
+        tool_limit=6,
+        excluded_tools=("abrir_no_navegador",),
+        default_n_ctx=16384,
+        default_n_gpu_layers=-1,
     ),
     "qwen2.5-omni-7b-q4km": ModelProfile(
         name="Qwen2.5 Omni 7B",
@@ -167,6 +210,8 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         supports_vision=True,
         speed_rating=0.7,
         quality_rating=0.7,
+        tool_limit=8,
+        default_n_ctx=16384,
     ),
 }
 
@@ -174,6 +219,59 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
 def get_model_profile(model_id: str) -> ModelProfile | None:
     """Return the profile for *model_id*, or ``None`` if unknown."""
     return MODEL_PROFILES.get(model_id)
+
+
+def model_runtime_defaults(model_id: str) -> tuple[int | None, int | None]:
+    """Return the per-model recommended ``(n_ctx, n_gpu_layers)``.
+
+    Either value may be ``None``, meaning "use the caller-provided default".
+    """
+    profile = MODEL_PROFILES.get(model_id)
+    if profile is None:
+        return None, None
+    return profile.default_n_ctx, profile.default_n_gpu_layers
+
+
+def model_start_kwargs(model_id: str) -> dict[str, Any]:
+    """Resolve the runtime kwargs for *model_id* (``n_ctx`` / ``n_gpu_layers``).
+
+    Per-model profile defaults win when defined; otherwise the global
+    ``settings.model`` values are used. Mirrors ``get_manager`` semantics so
+    startup and hot-swap agree on the model's context/layers.
+    """
+    n_ctx, n_gpu_layers = model_runtime_defaults(model_id)
+    start_kwargs: dict[str, Any] = {}
+    if n_ctx is not None:
+        start_kwargs["n_ctx"] = n_ctx
+    if n_gpu_layers is not None:
+        start_kwargs["n_gpu_layers"] = n_gpu_layers
+    if start_kwargs:
+        return start_kwargs
+    cfg = getattr(get_settings(), "model", None)
+    if cfg is not None:
+        if getattr(cfg, "num_ctx", None):
+            start_kwargs["n_ctx"] = cfg.num_ctx
+        if getattr(cfg, "n_gpu_layers", None) is not None:
+            start_kwargs["n_gpu_layers"] = cfg.n_gpu_layers
+    return start_kwargs
+
+
+def apply_model_tool_policy(tools: list[Any], model_id: str) -> list[Any]:
+    """Trim tool schemas to what *model_id* can handle reliably.
+
+    Uses the model profile to drop excluded tools and cap the total number
+    of schemas sent to the model (small/reasoning models degrade when forced
+    to choose among many tools). Unknown models are returned unchanged.
+    """
+    profile = MODEL_PROFILES.get(model_id)
+    if profile is None:
+        return tools
+    if profile.excluded_tools:
+        excluded = set(profile.excluded_tools)
+        tools = [t for t in tools if getattr(t, "nome", None) not in excluded]
+    if profile.tool_limit is not None and len(tools) > profile.tool_limit:
+        tools = tools[: profile.tool_limit]
+    return tools
 
 
 # ── Scoring engine ────────────────────────────────────────────
@@ -338,7 +436,7 @@ def _needs_reasoning_model(lower: str) -> bool:
 
 def _model_file_exists(settings: Any, model_id: str) -> bool:
     try:
-        return settings.get_model_path(model_id).exists()
+        return bool(settings.get_model_path(model_id).exists())
     except Exception:
         return False
 
@@ -432,29 +530,13 @@ class ModelRouter:
 
             confidence = max(0.1, min(1.0, confidence))
 
-            # Pick model from user-facing product modes.
-            lower = query.lower()
-            preferred_complexity_model = ""
-            if _needs_vision_model(has_image):
-                model_id = getattr(settings, "vision_llm_model", VISION_LLM_MODEL)
-            elif _needs_reasoning_model(lower):
-                model_id = getattr(settings, "reasoning_llm_model", REASONING_LLM_MODEL)
-            elif has_document:
-                model_id = settings.llm_model or DEFAULT_LLM_MODEL
-            elif complexity == Complexity.SIMPLE:
-                model_id = getattr(settings, "fast_llm_model", FAST_LLM_MODEL)
-                preferred_complexity_model = model_id
-            elif complexity == Complexity.COMPLEX:
-                model_id = getattr(settings, "quality_llm_model", QUALITY_LLM_MODEL)
-            else:
-                model_id = settings.llm_model or DEFAULT_LLM_MODEL
+            # Celsius runs with a SINGLE LLM: qwen2.5-vl-7b.
+            # Complexity / fast / quality / reasoning escalation is intentionally
+            # disabled so only ONE model is ever loaded into GPU memory
+            # (fits the 8 GB RX 7600; no spill to CPU, no second manager).
+            settings = get_settings()
+            model_id = settings.llm_model or getattr(settings, "vision_llm_model", VISION_LLM_MODEL)
             resolved_model_id = _available_model_id(settings, model_id)
-            if (
-                preferred_complexity_model
-                and resolved_model_id != preferred_complexity_model
-                and complexity == Complexity.SIMPLE
-            ):
-                _warn_once_fast_model_missing(preferred_complexity_model, resolved_model_id)
             model_id = resolved_model_id
 
             reason = "; ".join(reasons) if reasons else "default routing"
@@ -499,38 +581,9 @@ class ModelRouter:
         primary = self.route(query, has_document, has_image)
         cascade: list[RoutingDecision] = [primary]
 
-        if not self.cascade_enabled or primary.confidence >= self.cascade_min_confidence:
-            return cascade
-
-        # Low confidence → suggest escalation
-        settings = get_settings()
-        models = available_models or [
-            getattr(settings, "reasoning_llm_model", REASONING_LLM_MODEL),
-            getattr(settings, "quality_llm_model", QUALITY_LLM_MODEL),
-            getattr(settings, "vision_llm_model", VISION_LLM_MODEL),
-            settings.llm_model,
-            getattr(settings, "fast_llm_model", FAST_LLM_MODEL),
-        ]
-        profiles = [
-            (mid, MODEL_PROFILES.get(mid)) for mid in models if mid and mid != primary.model_id
-        ]
-
-        # Sort by quality_rating descending
-        profiles.sort(key=lambda x: x[1].quality_rating if x[1] else 0, reverse=True)
-
-        for mid, profile in profiles:
-            cascade.append(
-                RoutingDecision(
-                    model_id=mid,
-                    complexity=primary.complexity,
-                    confidence=primary.confidence,
-                    reason=f"cascade escalation (quality_rating={profile.quality_rating:.2f})"
-                    if profile
-                    else "cascade fallback",
-                    score=primary.score,
-                )
-            )
-
+        # Celsius runs with a SINGLE LLM (qwen2.5-vl-7b): escalation to
+        # fast/quality/reasoning cascades is intentionally disabled so a
+        # second model is never started (avoids VRAM spill to CPU).
         return cascade
 
     def get_profile(self, model_id: str) -> ModelProfile | None:
@@ -564,19 +617,25 @@ class MultiModelManager:
         self.router = ModelRouter()
         self._current_complexity: Complexity | None = None
         self._last_decision: RoutingDecision | None = None
+        self._active_model_id: str | None = None
+        self._pending_ideal_model: str | None = None
 
     def get_manager(self, model_id: str) -> Any:
         """Get the appropriate LlamaManager for a model ID.
 
         Lazily starts the fast model when routing to it and the file exists.
-        Falls back to the main manager on failure so inferencing still works.
+        Any other model (e.g. picked by JEV or pinned by the client) is loaded
+        on the main manager, replacing the previous model. Falls back to the
+        currently loaded model on failure so inferencing still works.
         """
         settings = get_settings()
+        start_kwargs = model_start_kwargs(model_id)
+
         if model_id == getattr(settings, "fast_llm_model", None):
             if self.fast_manager._started:
                 return self.fast_manager
             try:
-                if self.fast_manager.start(model_id=model_id):
+                if self.fast_manager.start(model_id=model_id, **start_kwargs):
                     return self.fast_manager
             except Exception as exc:
                 logger.warning(
@@ -585,21 +644,200 @@ class MultiModelManager:
                     exc,
                 )
             return self.main_manager
-        return self.main_manager
+
+        main = self.main_manager
+        try:
+            needs_start = not main._started or main.current_model_id != model_id
+            if needs_start and main.start(model_id=model_id, **start_kwargs):
+                return main
+        except Exception as exc:
+            logger.warning(
+                "Nao foi possivel carregar %s; mantendo o modelo carregado (%s).",
+                model_id,
+                exc,
+            )
+        return main
 
     def route_and_invoke(
         self,
         query: str,
         has_document: bool = False,
         has_image: bool = False,
+        *,
+        est_tokens: int = 0,
         **kwargs: Any,
     ) -> tuple[str, Any]:
-        """Route query to appropriate model and return (model_id, manager)."""
-        decision = self.router.route(query, has_document, has_image)
-        manager = self.get_manager(decision.model_id)
-        self._current_complexity = decision.complexity
-        self._last_decision = decision
-        return decision.model_id, manager
+        """Pick the LLM and return (model_id, manager).
+
+        Decision precedence:
+        1. the client pinned a specific model in the UI (``model_client_choice``);
+        2. JEV picks among the downloaded models (when the decision layer is
+           enabled and ``model_routing`` is on);
+        3. the keyword router (fast vs. main model) as before.
+
+        The picked model is only actually loaded when it differs from the model
+        already active on the main manager AND the swap is safe for the current
+        conversation (``est_tokens`` below ``FRESH_CONTEXT_TOKENS``), the client
+        pinned it, or the current model lacks a capability the message requires
+        (e.g. an image without vision). Otherwise the current model is kept and
+        the ideal one stays pending for the next fresh conversation.
+        """
+        settings = get_settings()
+        base = self.router.route(query, has_document, has_image)
+
+        picked_id = base.model_id
+        reason = "auto"
+        if getattr(settings, "model_client_choice", False) and settings.llm_model:
+            picked_id = settings.llm_model
+            reason = "client"
+        else:
+            decision = getattr(settings, "decision", None)
+            if decision is not None and decision.enabled and decision.model_routing:
+                candidates = self._installed_models(settings)
+                if len(candidates) >= 2:
+                    from core.decisions import decide_llm_model, get_decision_client
+
+                    try:
+                        picked = decide_llm_model(
+                            get_decision_client(),
+                            decision,
+                            query=query,
+                            models=candidates,
+                            has_document=has_document,
+                            has_image=has_image,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - nunca derruba o fluxo
+                        logger.warning("JEV model routing falhou: %s", exc)
+                        picked = None
+                    if picked is not None and picked.model_id in self._installed_ids(settings):
+                        picked_id = picked.model_id
+                        reason = "jev"
+
+        current_id = self._active_model_id or getattr(self.main_manager, "current_model_id", None)
+
+        # Pre-warm: apply a model that was deferred (kept to preserve context)
+        # the moment a fresh conversation makes the swap safe. When the JEV or
+        # the router re-picked the same model, the swap is recorded as
+        # "prewarm"; a newer pick for a *different* model supersedes the stale
+        # pending one. A client pin always wins over the pending model.
+        pending = self._pending_ideal_model
+        if (
+            pending is not None
+            and pending in self._installed_ids(settings)
+            and est_tokens <= FRESH_CONTEXT_TOKENS
+        ):
+            if reason == "client":
+                self._pending_ideal_model = None
+            elif picked_id == pending:
+                self._pending_ideal_model = None
+                if pending != current_id:
+                    reason = "prewarm"
+            elif reason == "auto":
+                self._pending_ideal_model = None
+                if pending != current_id:
+                    picked_id = pending
+                    reason = "prewarm"
+            else:
+                self._pending_ideal_model = None
+
+        model_id, switched, deferred_id, notice = self._apply_switch_policy(
+            current_id,
+            picked_id,
+            reason,
+            est_tokens=est_tokens,
+            has_image=has_image,
+        )
+        if deferred_id is not None:
+            self._pending_ideal_model = deferred_id
+
+        manager = self.get_manager(model_id)
+        self._active_model_id = model_id
+        self._current_complexity = base.complexity
+        self._last_decision = RoutingDecision(
+            model_id=model_id,
+            complexity=base.complexity,
+            confidence=base.confidence,
+            reason=reason,
+            score=base.score,
+            switched=switched,
+            deferred_model_id=deferred_id,
+            notice=notice,
+        )
+        return model_id, manager
+
+    def _apply_switch_policy(
+        self,
+        current_id: str | None,
+        picked_id: str,
+        reason: str,
+        *,
+        est_tokens: int,
+        has_image: bool,
+    ) -> tuple[str, bool, str | None, str | None]:
+        """Decide whether to swap the loaded model to ``picked_id``.
+
+        Swapping destroys the KV-cache/context, so it only happens for short
+        conversations (``est_tokens`` at or below ``FRESH_CONTEXT_TOKENS``),
+        when the client pinned a model, or when the current model cannot handle
+        a capability the message requires. Otherwise keep the current model and
+        remember the ideal one for a future fresh conversation.
+        """
+        if picked_id == current_id or current_id is None:
+            return picked_id, False, None, None
+
+        if reason == "client":
+            return picked_id, True, None, None
+
+        if reason == "prewarm":
+            notice = (
+                f"Apliquei o modelo adiado ({picked_id}): a conversa nova "
+                "esta curta, entao troquei sem perder contexto."
+            )
+            return picked_id, True, None, notice
+
+        if has_image and not self._supports_vision(current_id) and self._supports_vision(picked_id):
+            notice = (
+                f"Troquei para {picked_id}: a pergunta usa imagem e o modelo "
+                "atual nao possui visao."
+            )
+            return picked_id, True, None, notice
+
+        if est_tokens <= FRESH_CONTEXT_TOKENS:
+            notice = (
+                f"Troquei para {picked_id}. A conversa era curta e o contexto "
+                "foi reiniciado para este modelo."
+            )
+            return picked_id, True, None, notice
+
+        notice = (
+            f"O JEV sugeriu '{picked_id}', mas mantive '{current_id}' para "
+            "preservar o contexto desta conversa. O novo modelo sera aplicado "
+            "na proxima conversa ou se voce escolher manualmente no seletor."
+        )
+        return current_id, False, picked_id, notice
+
+    @staticmethod
+    def _supports_vision(model_id: str) -> bool:
+        """Heuristic capability check, tolerant of unknown/renamed model IDs."""
+        profile = MODEL_PROFILES.get(model_id)
+        if profile is not None:
+            return profile.supports_vision
+        lowered = model_id.lower()
+        return "vl" in lowered or "vision" in lowered
+
+    @staticmethod
+    def _installed_models(settings: Any) -> list[Any]:
+        from core.config import discover_installed_models
+
+        dirs = [settings.get_resources_dir()]
+        bundled = getattr(settings, "bundled_resources_dir", None)
+        if bundled is not None and bundled.is_dir():
+            dirs.append(bundled)
+        return discover_installed_models(*dirs)
+
+    @staticmethod
+    def _installed_ids(settings: Any) -> set[str]:
+        return {m.id for m in MultiModelManager._installed_models(settings)}
 
     def get_current_complexity(self) -> str | None:
         """Get the last classification result as a string."""

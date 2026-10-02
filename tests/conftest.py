@@ -9,6 +9,43 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import contextlib
+import os
+import tempfile
+
+# ---------------------------------------------------------------------------
+# Test isolation.
+#
+# These must be set at *import* time, before any `core.*` module is imported:
+# `core.settings` builds its process-wide settings singleton on first import and
+# would otherwise load the developer's real `data/celsius_settings.json`, which
+# silently pins tests to whatever model this machine happens to use.
+#
+# The production code honours these same overrides (see
+# `Settings.local_preferences_file` and `default_outcomes_path`), so tests never
+# read or write real user data.
+# ---------------------------------------------------------------------------
+
+_TEST_ISOLATION_DIR = tempfile.mkdtemp(prefix="celsius-tests-")
+
+# The user's real data/celsius_settings.json pins whatever model this machine
+# uses, which made router tests machine-dependent. Pointing the preferences file
+# at an empty temp file is enough: Settings then falls back to its documented
+# defaults. The model is deliberately NOT forced via env, because env must keep
+# winning over the file for every other test (see test_save_and_load_model_pin).
+os.environ.setdefault(
+    "CELSIUS_PREFERENCES_FILE", str(Path(_TEST_ISOLATION_DIR) / "celsius_settings.json")
+)
+os.environ.setdefault(
+    "CELSIUS_CUSTOMER_PROFILE_FILE", str(Path(_TEST_ISOLATION_DIR) / "customer_profile.json")
+)
+
+# The decision layer is exercised explicitly in tests/test_decisions.py; keep it
+# off by default so no test depends on a running kev.serve.
+os.environ.setdefault("CELSIUS_DECISION_ENABLED", "false")
+os.environ.setdefault("CELSIUS_DECISION__ENABLED", "false")
+
+# No telemetry from the test run.
+os.environ.setdefault("CELSIUS_TELEMETRY_ENABLED", "false")
 
 # Check if PySide6 is properly installed (not just a mock)
 _PYSIDE6_AVAILABLE = False
@@ -62,7 +99,7 @@ _HEAVY_MODULES = [
     "pygame",
     "edge_tts",
     # ML / AI
-    "sentence_transformers",
+    "transformers",
     # Other heavy deps
     "openai",
     "playwright",
@@ -93,15 +130,7 @@ _llama.LlamaManager = type("LlamaManager", (), {})
 _llama.MultiModelManager = type("MultiModelManager", (), {})
 _llama.ModelRouter = type("ModelRouter", (), {})
 
-# Mock sentence_transformers.SentenceTransformer to return numpy-like embeddings
-_st = sys.modules["sentence_transformers"]
-import numpy as _np
 
-_mock_encoder = MagicMock()
-_mock_encoder.encode = MagicMock(
-    side_effect=lambda texts: [_np.random.randn(384).astype(_np.float32) for _ in texts]
-)
-_st.SentenceTransformer = MagicMock(return_value=_mock_encoder)
 
 _core_rag = sys.modules["core.rag"]
 _core_rag.RAGService = type("RAGService", (), {})

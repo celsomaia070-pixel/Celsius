@@ -102,6 +102,24 @@ def _get_physical_cores() -> int:
     system = platform.system()
     try:
         if system == "Windows":
+            # WMIC is removed from current Windows builds. CIM is the supported
+            # source and correctly reports the Ryzen 5 5500 as 6C/12T.
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Processor | "
+                    "Measure-Object -Property NumberOfCores -Sum).Sum",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line.isdigit() and int(line) > 0:
+                    return int(line)
             result = subprocess.run(
                 ["wmic", "cpu", "get", "NumberOfCores"],
                 capture_output=True,

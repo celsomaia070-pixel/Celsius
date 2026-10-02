@@ -77,6 +77,16 @@ def _write_self_test_report(
     return path
 
 
+def _warm_background_services() -> None:
+    """Warm RAG/embeddings off the first question, in a background daemon thread."""
+    try:
+        from ai.rag import get_rag_service
+
+        get_rag_service().warmup()
+    except Exception:
+        logger.debug("Warmup em background incompleto", exc_info=True)
+
+
 def _start_health_check(app, model_id: str, settings):
     """Start periodic health check for the LLM model."""
     from PySide6.QtCore import QTimer
@@ -273,6 +283,13 @@ def main():
     window.show()
     startup_progress.close()
     app.processEvents()
+
+    warmup_thread = threading.Thread(
+        target=_warm_background_services,
+        name="background-warmup",
+        daemon=True,
+    )
+    warmup_thread.start()
 
     def _safe_shutdown():
         context.shutdown()

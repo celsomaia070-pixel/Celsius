@@ -43,3 +43,17 @@ def clear_sentence_transformer_cache() -> None:
     """Clear shared models for controlled shutdowns and isolated tests."""
     with _MODEL_CACHE_LOCK:
         _MODEL_CACHE.clear()
+
+
+def try_get_sentence_transformer(model_name: str) -> Any | None:
+    """Return the shared model, or ``None`` when it cannot be loaded.
+
+    Several call sites (sub-agent classification, tool retrieval, mode routing)
+    need the same model and must all degrade to a lexical path rather than
+    fail. They share this accessor so the singleton and its failure handling
+    live in one place instead of being re-implemented per caller.
+    """
+    try:
+        return create_sentence_transformer(model_name)
+    except Exception:
+        return None

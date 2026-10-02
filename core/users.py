@@ -6,6 +6,7 @@ import hashlib
 import logging
 import secrets
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -20,6 +21,9 @@ _HASH_ITERATIONS = 260_000
 _SALT_BYTES = 16
 _TOKEN_EXPIRY_HOURS = 24
 _REFRESH_EXPIRY_DAYS = 30
+_TOKEN_KEY_PREFIX = "sha256:"
+_LOGIN_WINDOW_SECONDS = 5 * 60
+_LOGIN_MAX_FAILURES = 5
 
 
 class UserRole(str, Enum):
@@ -42,6 +46,7 @@ class User:
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_login: str = ""
     avatar_url: str = ""
+    sidebar_preferences: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -78,6 +83,12 @@ def _generate_token() -> str:
     return secrets.token_urlsafe(48)
 
 
+def _token_key(token: str) -> str:
+    """Return the non-reversible key persisted for a bearer token."""
+    digest = hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+    return f"{_TOKEN_KEY_PREFIX}{digest}"
+
+
 class UserService:
     """Manages user registration, authentication, and session tokens."""
 
@@ -91,6 +102,7 @@ class UserService:
         self._lock = threading.Lock()
         self._users_cache: dict[str, User] = {}
         self._tokens_cache: dict[str, dict[str, Any]] = {}
+        self._login_failures: dict[str, list[float]] = {}
         self._load_all()
 
     def _users_file(self, user_id: str) -> Path:
@@ -109,7 +121,16 @@ class UserService:
                     logger.warning("Falha ao carregar usuario %s: %s", f.name, exc)
             raw_tokens = read_json(self._tokens_file, {})
             if isinstance(raw_tokens, dict):
-                self._tokens_cache = raw_tokens
+                migrated = False
+                protected: dict[str, dict[str, Any]] = {}
+                for token, metadata in raw_tokens.items():
+                    key = token if token.startswith(_TOKEN_KEY_PREFIX) else _token_key(token)
+                    migrated = migrated or key != token
+                    if isinstance(metadata, dict):
+                        protected[key] = metadata
+                self._tokens_cache = protected
+                if migrated:
+                    self._save_tokens()
 
     def _save_user(self, user: User) -> None:
         path = self._users_file(user.id)
@@ -150,33 +171,49 @@ class UserService:
         logger.info("Usuario registrado: %s (%s)", user.email, user.id)
         return user
 
-    def authenticate(self, email: str, password: str) -> AuthToken:
+    def authenticate(self, email: str, password: str, *, client_key: str = "") -> AuthToken:
         email = email.strip().lower()
+        attempt_key = f"{client_key.strip()}:{email}"
         with self._lock:
+            now_monotonic = time.monotonic()
+            failures = [
+                value
+                for value in self._login_failures.get(attempt_key, ())
+                if now_monotonic - value < _LOGIN_WINDOW_SECONDS
+            ]
+            self._login_failures[attempt_key] = failures
+            if len(failures) >= _LOGIN_MAX_FAILURES:
+                raise ValueError("Muitas tentativas. Aguarde alguns minutos e tente novamente.")
             user = None
             for u in self._users_cache.values():
                 if u.email == email:
                     user = u
                     break
             if user is None or not user.is_active:
+                failures.append(now_monotonic)
                 raise ValueError("Credenciais invalidas.")
             computed_hash, _ = _hash_password(password, user.salt)
             if not secrets.compare_digest(computed_hash, user.password_hash):
+                failures.append(now_monotonic)
                 raise ValueError("Credenciais invalidas.")
+            self._login_failures.pop(attempt_key, None)
             user.last_login = datetime.now(timezone.utc).isoformat()
             user.updated_at = user.last_login
             self._save_user(user)
             access = _generate_token()
             refresh = _generate_token()
+            session_id = secrets.token_hex(12)
             now = datetime.now(timezone.utc)
-            self._tokens_cache[access] = {
+            self._tokens_cache[_token_key(access)] = {
                 "user_id": user.id,
                 "type": "access",
+                "session_id": session_id,
                 "expires_at": (now + timedelta(hours=_TOKEN_EXPIRY_HOURS)).isoformat(),
             }
-            self._tokens_cache[refresh] = {
+            self._tokens_cache[_token_key(refresh)] = {
                 "user_id": user.id,
                 "type": "refresh",
+                "session_id": session_id,
                 "expires_at": (now + timedelta(days=_REFRESH_EXPIRY_DAYS)).isoformat(),
             }
             self._save_tokens()
@@ -184,29 +221,40 @@ class UserService:
 
     def refresh(self, refresh_token: str) -> AuthToken:
         with self._lock:
-            token_data = self._tokens_cache.get(refresh_token)
+            refresh_key = _token_key(refresh_token)
+            token_data = self._tokens_cache.get(refresh_key)
             if not token_data or token_data.get("type") != "refresh":
                 raise ValueError("Refresh token invalido.")
             expires_at = datetime.fromisoformat(token_data["expires_at"])
             if datetime.now(timezone.utc) > expires_at:
-                self._tokens_cache.pop(refresh_token, None)
+                self._tokens_cache.pop(refresh_key, None)
                 self._save_tokens()
                 raise ValueError("Refresh token expirado.")
             user = self._users_cache.get(token_data["user_id"])
             if not user or not user.is_active:
                 raise ValueError("Usuario invalido ou inativo.")
-            self._tokens_cache.pop(refresh_token, None)
+            session_id = str(token_data.get("session_id") or "")
+            for key, item in list(self._tokens_cache.items()):
+                same_user = item.get("user_id") == user.id
+                same_session = session_id and item.get("session_id") == session_id
+                legacy_session = not session_id and same_user and not item.get("session_id")
+                if same_session or legacy_session:
+                    self._tokens_cache.pop(key, None)
+            if not session_id:
+                session_id = secrets.token_hex(12)
             access = _generate_token()
             new_refresh = _generate_token()
             now = datetime.now(timezone.utc)
-            self._tokens_cache[access] = {
+            self._tokens_cache[_token_key(access)] = {
                 "user_id": user.id,
                 "type": "access",
+                "session_id": session_id,
                 "expires_at": (now + timedelta(hours=_TOKEN_EXPIRY_HOURS)).isoformat(),
             }
-            self._tokens_cache[new_refresh] = {
+            self._tokens_cache[_token_key(new_refresh)] = {
                 "user_id": user.id,
                 "type": "refresh",
+                "session_id": session_id,
                 "expires_at": (now + timedelta(days=_REFRESH_EXPIRY_DAYS)).isoformat(),
             }
             self._save_tokens()
@@ -214,12 +262,13 @@ class UserService:
 
     def validate_token(self, token: str) -> User | None:
         with self._lock:
-            token_data = self._tokens_cache.get(token)
+            token_key = _token_key(token)
+            token_data = self._tokens_cache.get(token_key)
             if not token_data or token_data.get("type") != "access":
                 return None
             expires_at = datetime.fromisoformat(token_data["expires_at"])
             if datetime.now(timezone.utc) > expires_at:
-                self._tokens_cache.pop(token, None)
+                self._tokens_cache.pop(token_key, None)
                 return None
             user = self._users_cache.get(token_data["user_id"])
             if user and user.is_active:
@@ -228,9 +277,15 @@ class UserService:
 
     def logout(self, token: str) -> None:
         with self._lock:
-            user_id = self._tokens_cache.get(token, {}).get("user_id")
-            for key in list(self._tokens_cache):
-                if self._tokens_cache[key].get("user_id") == user_id:
+            token_data = self._tokens_cache.get(_token_key(token))
+            if token_data is None:
+                return
+            user_id = token_data.get("user_id")
+            session_id = token_data.get("session_id")
+            for key, item in list(self._tokens_cache.items()):
+                same_session = session_id and item.get("session_id") == session_id
+                legacy_session = not session_id and item.get("user_id") == user_id
+                if same_session or legacy_session:
                     self._tokens_cache.pop(key, None)
             self._save_tokens()
 
@@ -272,6 +327,28 @@ class UserService:
             self._save_user(user)
         return user
 
+    def update_sidebar_preferences(self, user_id: str, changes: dict[str, Any]) -> User:
+        """Merge personal workspace preferences without changing other users."""
+        with self._lock:
+            user = self._users_cache.get(user_id)
+            if user is None:
+                raise ValueError("Usuario nao encontrado.")
+            preferences = dict(user.sidebar_preferences)
+            visibility = changes.get("sidebar_visible")
+            preferences.update(changes)
+            if visibility is not None:
+                preferences["sidebar_visible"] = {
+                    **user.sidebar_preferences.get("sidebar_visible", {}), **visibility,
+                }
+            previous = user.sidebar_preferences
+            user.sidebar_preferences = preferences
+            try:
+                self._save_user(user)
+            except OSError:
+                user.sidebar_preferences = previous
+                raise
+        return user
+
     def change_password(self, user_id: str, old_password: str, new_password: str) -> None:
         if len(new_password) < 8:
             raise ValueError("A nova senha deve ter no minimo 8 caracteres.")
@@ -287,6 +364,17 @@ class UserService:
             user.salt = new_salt
             user.updated_at = datetime.now(timezone.utc).isoformat()
             self._save_user(user)
+            # Password rotation is a security boundary: every browser and
+            # companion must authenticate again with the new password.
+            revoked = [
+                token
+                for token, data in self._tokens_cache.items()
+                if data.get("user_id") == user_id
+            ]
+            for token in revoked:
+                self._tokens_cache.pop(token, None)
+            if revoked:
+                self._save_tokens()
 
     def delete_user(self, user_id: str) -> bool:
         with self._lock:

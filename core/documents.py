@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import threading
 import uuid
 from collections.abc import Callable
@@ -390,11 +391,30 @@ class DocumentLibraryService:
         if not items:
             return "Nenhum documento indexado."
         lines = [f"Documentos locais ({len(items)}):"]
-        lines.extend(
-            f"- {item['title']} | {item['status']} | {item['chunk_count']} trechos"
-            for item in items
-        )
+        for item in items:
+            line = f"- {item['title']} | {item['status']} | {item['chunk_count']} trechos"
+            if item.get("file_available"):
+                path, filename = self.resolve_file(item["id"])
+                line += f" | arquivo: {filename} | caminho: {path}"
+            lines.append(line)
         return "\n".join(lines)
+
+    def referenced_files(self, question: str) -> list[Path]:
+        """Resolve explicit title/name references using stored records, not guessed paths."""
+        from core.document_forms import _normalized
+
+        tokens = _normalized(question).split()
+        phrases = {" ".join(tokens[i:i + 3]) for i in range(max(0, len(tokens) - 2))}
+        hits = []
+        for record in self.record_service.list_by_module(MODULE_KNOWLEDGE):
+            path = self._record_path(record)
+            if path is None or not path.is_file():
+                continue
+            names = [_normalized(record.title), _normalized(record.fields.get("nome_arquivo", ""))]
+            if any(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", name)
+                   for phrase in phrases for name in names):
+                hits.append(path)
+        return hits
 
     def _managed_record(self, document_id: str) -> BusinessRecord:
         record = self.record_service.get(document_id)

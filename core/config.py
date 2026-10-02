@@ -209,6 +209,54 @@ def get_model_by_id(model_id: str) -> GGUFModel | None:
     return next((m for m in GGUF_MODELS if m.id == model_id), None)
 
 
+def discover_installed_models(*resources_dirs: Path) -> list[GGUFModel]:
+    """Models whose GGUF files actually exist on disk.
+
+    Returns catalog entries whose file is present plus ephemeral entries for any
+    extra ``*.gguf`` found in the given directories (e.g. ``qwen-heretic.gguf``).
+    Vision projectors (``mmproj-*``) are ignored. ``resources_dirs`` are scanned
+    in order and the first file with a given name wins.
+    """
+    files: dict[str, Path] = {}
+    for directory in resources_dirs:
+        directory = Path(directory)
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if path.is_file() and path.suffix.lower() == ".gguf":
+                files.setdefault(path.name, path)
+    if not files:
+        return []
+
+    by_filename = {model.filename: model for model in GGUF_MODELS}
+    models: list[GGUFModel] = []
+    seen: set[str] = set()
+    for filename in sorted(files):
+        if filename.lower().startswith("mmproj-"):
+            continue
+        model = by_filename.get(filename)
+        if model is None:
+            stem = Path(filename).stem
+            try:
+                size_gb = round(files[filename].stat().st_size / (1024**3), 1)
+            except OSError:
+                size_gb = 0.0
+            model = GGUFModel(
+                id=stem.lower(),
+                name=" ".join(stem.replace("_", " ").split()).title(),
+                category="custom",
+                filename=filename,
+                hf_repo="",
+                hf_file=filename,
+                size_gb=size_gb,
+                quant="local",
+            )
+        if model.id not in seen:
+            models.append(model)
+            seen.add(model.id)
+    return models
+
+
 # ── Settings ────────────────────────────────────────────────────
 
 
@@ -232,7 +280,7 @@ class Settings:
     max_file_size_mb: int = 50
     doc_text_limit: int = 12000
     num_ctx: int = 16384
-    num_predict: int = 2500
+    num_predict: int = 8192
     max_history_session: int = 16
     memory_threshold: float = 0.15
     top_memories: int = 10

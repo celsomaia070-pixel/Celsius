@@ -38,7 +38,7 @@ class BusinessOperationsService:
         elif use_global_services:
             self.inventory_service = get_inventory_service()
         else:
-            explicit_fields = getattr(self.settings, "model_fields_set", set())
+            explicit_fields: set[str] = getattr(self.settings, "model_fields_set", set())
             inventory_file = (
                 self.settings.inventory_file
                 if "inventory_file" in explicit_fields
@@ -86,11 +86,12 @@ class BusinessOperationsService:
         if maximum and minimum > maximum:
             raise OperationsError("Estoque minimo nao pode ser maior que o maximo.")
 
+        saved_item: ItemEstoque | None
         if existing is None:
             quantity = self._integer(values.get("quantity", 0))
             if quantity < 0:
                 raise OperationsError("Quantidade inicial nao pode ser negativa.")
-            item = self.inventory_service.adicionar_item(
+            saved_item = self.inventory_service.adicionar_item(
                 nome=name,
                 categoria=category or "Geral",
                 quantidade=quantity,
@@ -98,15 +99,17 @@ class BusinessOperationsService:
                 estoque_max=maximum,
             )
         else:
-            item = self.inventory_service.editar_item(
+            saved_item = self.inventory_service.editar_item(
                 item_id,
                 nome=name,
                 categoria=category or "Geral",
                 estoque_min=minimum,
                 estoque_max=maximum,
             )
-            if item is None:
+            if saved_item is None:
                 raise OperationsError("Item de estoque nao encontrado.")
+
+        assert saved_item is not None
 
         location = str(values.get("location", "")).strip()
         if location:
@@ -114,9 +117,9 @@ class BusinessOperationsService:
                 column = ColunaKanban(location)
             except ValueError as exc:
                 raise OperationsError("Localizacao de estoque invalida.") from exc
-            self.inventory_service.mover_item(item.id, column)
-            item = self._inventory_record(item.id)
-        return self._inventory_item(item)
+            self.inventory_service.mover_item(saved_item.id, column)
+            saved_item = self._inventory_record(saved_item.id)
+        return self._inventory_item(saved_item)
 
     def delete_inventory_item(self, item_id: str) -> bool:
         self._inventory_record(item_id)

@@ -9,12 +9,15 @@ if not exist "%PYTHON_EXE%" (
 )
 
 set "SCHEME=http"
-set "MODE=loopback"
+set "MODE=lan"
 if /i "%~1"=="--lan" set "MODE=lan"
 if /i "%~1"=="--loopback" set "MODE=loopback"
 if "%MODE%"=="lan" set "SCHEME=https"
 
-powershell -NoProfile -Command "[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }; try { $r = Invoke-WebRequest -Uri '%SCHEME%://127.0.0.1:8790/app' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }"
+rem Probe the TCP port instead of issuing an HTTPS request. A request-based probe
+rem depends on a certificate-validation scriptblock, which fails on PowerShell 5.1
+rem runspaces and makes an already running server look like a dead one.
+powershell -NoProfile -Command "try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 8790); $c.Close(); exit 0 } catch { exit 1 }"
 if errorlevel 1 goto :start_server
 
 echo O Celsius Web ja esta ativo em %SCHEME%://127.0.0.1:8790/app

@@ -7,28 +7,25 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Lazy container - avoids import-time failures
-_container: Any = None
+_container: _LazyContainer | None = None
 
 
 class _LazyContainer:
     """Lazy dependency container that defers imports until first access."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._services: dict[str, Any] = {}
         self._singletons: dict[str, Any] = {}
         self._factories: dict[str, Any] = {}
         self._initialized = False
         self._lock = threading.Lock()
 
-    def _ensure_initialized(self):
+    def _ensure_initialized(self) -> None:
         if self._initialized:
             return
         with self._lock:
@@ -51,7 +48,7 @@ class _LazyContainer:
         self._singletons[name] = instance
         return instance
 
-    def register(self, name: str, factory) -> None:
+    def register(self, name: str, factory: Any) -> None:
         self._factories[name] = factory
 
     def reset(self) -> None:
@@ -74,37 +71,37 @@ def _create_container() -> _LazyContainer:
     return container
 
 
-def _import_settings():
+def _import_settings() -> Any:
     from core.settings import get_settings
 
     return get_settings()
 
 
-def _import_memory_service():
+def _import_memory_service() -> Any:
     from core.memory import get_memory_service
 
     return get_memory_service()
 
 
-def _import_rag_service():
+def _import_rag_service() -> Any:
     from ai.rag import get_rag_service
 
     return get_rag_service()
 
 
-def _import_llama_manager():
+def _import_llama_manager() -> Any:
     from core.llama_cpp import get_llama_manager
 
     return get_llama_manager()
 
 
-def _import_multi_model_manager():
+def _import_multi_model_manager() -> Any:
     from core.llama_cpp import get_multi_model_manager
 
     return get_multi_model_manager()
 
 
-def _import_conversation_manager():
+def _import_conversation_manager() -> Any:
     from core.conversations import get_conversation_manager
 
     return get_conversation_manager()

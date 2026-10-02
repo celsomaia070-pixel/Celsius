@@ -20,6 +20,11 @@ from ui.icons import icon
 from ui.theme import LIGHT_SCHEME
 from ui.theme.tokens import RADIUS, SPACING, TYPOGRAPHY
 
+#: Cadence for redrawing a streaming bubble.  Tokens arrive far faster than a
+#: human reads, and every redraw re-parses the whole markdown, so the rate is
+#: capped here instead of once per token.
+_RENDER_INTERVAL_MS = 80
+
 
 class MessageBubble(QWidget):
     """Clean message with label - no bubble, text directly on page."""
@@ -40,15 +45,20 @@ class MessageBubble(QWidget):
         self.attachments = attachments or []
         self._full_content = content
         self._scheme = scheme or LIGHT_SCHEME
+        self._cursor_visible = True
+        self._render_pending = False
         self._setup_ui()
         self._render_content()
         self._fade_in()
-        self._cursor_visible = True
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(_RENDER_INTERVAL_MS)
+        self._render_timer.timeout.connect(self._flush_render)
         self._cursor_timer = QTimer()
         self._cursor_timer.setInterval(530)
         self._cursor_timer.timeout.connect(self._blink_cursor)
         if self.is_streaming:
             self._cursor_timer.start()
+            self._render_timer.start()
 
     def _blink_cursor(self):
         self._cursor_visible = not self._cursor_visible
@@ -276,8 +286,10 @@ class MessageBubble(QWidget):
             self._hide_timer.stop()
 
     def _render_content(self):
-        html = self._markdown_to_html(self.content)
-        self.content_label.setHtml(html)
+        display = self.content
+        if self.is_streaming and self._cursor_visible:
+            display += "▌"
+        self.content_label.setHtml(self._markdown_to_html(display))
         self._adjust_height()
 
     def _markdown_to_html(self, text: str) -> str:
@@ -424,11 +436,25 @@ class MessageBubble(QWidget):
     def update_content(self, content: str):
         self.content = content
         self._full_content = content
-        display = content
-        if self.is_streaming and self._cursor_visible:
-            display += "▌"
-        self.content_label.setHtml(self._markdown_to_html(display))
-        self._adjust_height()
+        if not self._schedule_render():
+            self._render_content()
+
+    def _schedule_render(self) -> bool:
+        """Coalesce streaming redraws onto a timer.
+
+        ``update_content`` arrives once per token, and rendering re-parses the
+        whole markdown, so a long answer would cost O(n) per token and freeze
+        the UI.  Marking the bubble dirty and rendering at a fixed cadence keeps
+        the cost linear; the trailing text is picked up on the next tick.
+        """
+        if not self.is_streaming or self._render_timer is None:
+            return False
+        self._render_pending = True
+        return True
+
+    def _flush_render(self):
+        self._render_pending = False
+        self._render_content()
 
     def set_status(self, text: str):
         if self.is_user:
@@ -446,6 +472,7 @@ class MessageBubble(QWidget):
     def finish_streaming(self):
         self.is_streaming = False
         self._cursor_timer.stop()
+        self._render_timer.stop()
         self.clear_status()
         if hasattr(self, "name_label"):
             self.name_label.show()

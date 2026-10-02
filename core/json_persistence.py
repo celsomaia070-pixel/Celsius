@@ -31,42 +31,53 @@ def locked_path(path: Path, timeout: float = 10.0) -> Iterator[None]:
     lock_path = path.with_name(f"{path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _process_lock(path), lock_path.open("a+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"\0")
-            handle.flush()
+    thread_lock = _process_lock(path)
+    thread_deadline = time.monotonic() + timeout
+    while not thread_lock.acquire(timeout=0.05):
+        if time.monotonic() >= thread_deadline:
+            raise TimeoutError(f"Tempo esgotado ao bloquear em processo {path.name}") from None
+    try:
+        with lock_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
 
-        deadline = time.monotonic() + timeout
-        while True:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    handle.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(  # type: ignore[attr-defined]
+                            handle.fileno(),
+                            fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                        )
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Tempo esgotado ao bloquear {path.name}") from None
+                    time.sleep(0.05)
+
             try:
+                yield
+            finally:
                 handle.seek(0)
                 if os.name == "nt":
                     import msvcrt
 
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     import fcntl
 
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Tempo esgotado ao bloquear {path.name}") from None
-                time.sleep(0.05)
-
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+    finally:
+        thread_lock.release()
 
 
 def read_json(path: Path, default: Any) -> Any:

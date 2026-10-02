@@ -126,3 +126,93 @@ def test_shutdown_backs_up_databases(monkeypatch, settings, fake_runtime, tmp_pa
     assert (tmp_path / "backups").is_dir()
     backups = list((tmp_path / "backups").glob("*.db"))
     assert len(backups) == 2
+
+
+def test_prepare_model_uses_profile_runtime_kwargs(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from core.model_router import get_model_profile
+
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"gguf")
+    settings = SimpleNamespace(
+        get_model_path=lambda _mid: model_file,
+        get_mmproj_path=lambda _mid: None,
+        model=SimpleNamespace(
+            llm_model="qwen2.5-vl-7b-q4km",
+            num_ctx=2048,
+            n_gpu_layers=0,
+            n_batch=512,
+            n_threads=4,
+        ),
+    )
+
+    captured = {}
+    monkeypatch.setattr(app_context, "_ensure_model_available", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app_context,
+        "start_llama_server",
+        lambda **kwargs: captured.update(kwargs) or True,
+    )
+    import core.config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_model_by_id",
+        lambda _mid: SimpleNamespace(has_mmproj=False),
+    )
+
+    ctx = CelsiusAppContext.__new__(CelsiusAppContext)
+    ctx._confirm_download = None
+    ctx.report = lambda *_: None
+    ctx._llama_started = False
+
+    assert ctx._prepare_model(settings) is True
+
+    profile = get_model_profile("qwen2.5-vl-7b-q4km")
+    assert captured["n_ctx"] == profile.default_n_ctx
+    assert captured["n_gpu_layers"] == profile.default_n_gpu_layers
+
+
+def test_prepare_model_falls_back_to_settings_for_unknown_model(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"gguf")
+    settings = SimpleNamespace(
+        get_model_path=lambda _mid: model_file,
+        get_mmproj_path=lambda _mid: None,
+        model=SimpleNamespace(
+            llm_model="modelo-desconhecido",
+            num_ctx=2048,
+            n_gpu_layers=0,
+            n_batch=512,
+            n_threads=4,
+        ),
+    )
+
+    captured = {}
+    monkeypatch.setattr(app_context, "_ensure_model_available", lambda *a, **k: None)
+    monkeypatch.setattr(
+        app_context,
+        "start_llama_server",
+        lambda **kwargs: captured.update(kwargs) or True,
+    )
+    import core.config as config_module
+    import core.model_router as model_router_module
+
+    monkeypatch.setattr(
+        config_module,
+        "get_model_by_id",
+        lambda _mid: SimpleNamespace(has_mmproj=False),
+    )
+    monkeypatch.setattr(model_router_module, "get_settings", lambda: settings)
+
+    ctx = CelsiusAppContext.__new__(CelsiusAppContext)
+    ctx._confirm_download = None
+    ctx.report = lambda *_: None
+    ctx._llama_started = False
+
+    assert ctx._prepare_model(settings) is True
+    assert captured["n_ctx"] == 2048
+    assert captured["n_gpu_layers"] == 0

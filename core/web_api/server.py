@@ -36,16 +36,15 @@ class LocalWebApiServer:
         allow_lan: bool = False,
     ):
         settings = settings or get_settings()
-        configured_lan = allow_lan or bool(settings.mobile.enabled and settings.mobile.allow_lan)
         self.host = (
             host
             if host is not None
-            else (
-                "0.0.0.0" if configured_lan else "127.0.0.1"  # nosec B104
-            )
+            else ("0.0.0.0" if allow_lan else settings.web.host)  # nosec B104
         )
         self.port = port
         self.lan_access_enabled = not _is_loopback(self.host)
+        if self.lan_access_enabled and not allow_lan:
+            raise ValueError("A exposicao da API na rede local exige allow_lan=True.")
 
         self.use_https = self.lan_access_enabled
         cert_file = key_file = None

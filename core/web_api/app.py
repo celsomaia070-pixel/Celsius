@@ -16,20 +16,21 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from core.agenda import AgendaService, get_agenda_service
+from core.agent_schedule import AgentScheduleStore
 from core.audit_log import AuditLogger
 from core.business_records import BusinessRecordService
-from core.chat_service import ChatCoordinator
+from core.chat_service import ChatBusyError, ChatCoordinator, ChatNotFoundError
 from core.conversation_history import ConversationHistoryService
 from core.documents import DocumentLibraryService, get_document_library_service
 from core.memory import MemoryService, get_memory_service
 from core.mobile_access import MobileAccessServer, ensure_mobile_certificate, get_lan_ip
-from core.modules import module_catalog
+from core.modules import effective_module_preferences, module_catalog
 from core.operations import BusinessOperationsService, get_operations_service
 from core.proactive_notifications import ProactiveNotificationService
 from core.relationships import RelationshipService, get_relationship_service
@@ -39,6 +40,7 @@ from core.users import UserRole, UserService
 from core.web_api.admin_dashboard import router as admin_router
 from core.web_api.agenda import agenda_event_payload
 from core.web_api.agenda import router as agenda_router
+from core.web_api.agents import router as agents_router
 from core.web_api.auth import (
     BrowserSessionStore,
     credential_is_valid,
@@ -57,7 +59,10 @@ from core.web_api.mobile_bridge import MobileChatBridge
 from core.web_api.notifications_api import router as notifications_router
 from core.web_api.operations import router as operations_router
 from core.web_api.relationships import router as relationships_router
+from core.web_api.settings_api import router as settings_router
+from core.web_api.whatsapp_api import router as whatsapp_router
 from core.web_api.workflows import router as workflows_router
+from core.whatsapp import WhatsAppService
 from core.workflows import BusinessWorkflowService, get_workflow_service
 
 API_PREFIX = "/api/v1"
@@ -95,9 +100,10 @@ def _application_version() -> str:
         return "1.0.0"
 
 
-def _module_payload(settings, module) -> dict[str, Any]:
-    enabled = settings.modules.is_enabled(module.id)
-    sidebar_preference = settings.modules.sidebar_visible.get(module.id, True)
+def _module_payload(settings, module, user=None) -> dict[str, Any]:
+    enabled_ids, visibility = effective_module_preferences(settings, user)
+    enabled = module.id in enabled_ids
+    sidebar_preference = visibility.get(module.id, True)
     in_navigation = bool(
         enabled and module.is_ready and module.show_in_sidebar and sidebar_preference
     )
@@ -259,7 +265,6 @@ def create_app(
                 # The companion is a TLS-only loopback proxy for the responsive
                 # web UI. The phone therefore gets every existing module while
                 # the main API remains bound to localhost.
-                web_port = app.state.web_port
                 return MobileAccessServer(
                     host=host,
                     port=port,
@@ -270,8 +275,11 @@ def create_app(
                     use_https=https,
                     cert_file=cert_file if https else None,
                     key_file=key_file if https else None,
-                    web_proxy_url=f"http://127.0.0.1:{web_port}",
-                    web_pairing_code_callback=browser_sessions.issue_pairing_code,
+                    # The phone companion is intentionally a focused voice
+                    # conversation surface. The full web UI remains available
+                    # at /app on desktop browsers.
+                    web_proxy_url="",
+                    web_pairing_code_callback=None,
                 )
 
             configured_port = int(settings.mobile.port)
@@ -304,7 +312,40 @@ def create_app(
                 )
             await asyncio.sleep(5)
 
+    async def run_agent_schedules() -> None:
+        """Dispatch due schedules through the same single-worker chat queue."""
+        while True:
+            schedule_store = getattr(app.state, "agent_schedule_store", None)
+            if schedule_store is not None:
+                for item in await asyncio.to_thread(schedule_store.due):
+                    try:
+                        request = await asyncio.to_thread(
+                            chat_coordinator.submit,
+                            message=f"TAREFA: {item['objective']}",
+                            conversation_id=item["scope"],
+                            agent_mode=item["mode"],
+                        )
+                        event_hub.publish(
+                            "agent.schedule_started", {"schedule_id": item["id"], "job": request}
+                        )
+                        await asyncio.to_thread(
+                            schedule_store.record_dispatch, item["id"], request["id"]
+                        )
+                    except ChatBusyError as exc:
+                        await asyncio.to_thread(
+                            schedule_store.defer, item["id"], str(exc), retry_seconds=30
+                        )
+                    except ChatNotFoundError as exc:
+                        await asyncio.to_thread(schedule_store.record_error, item["id"], str(exc))
+                        await asyncio.to_thread(
+                            schedule_store.set_enabled, item["id"], item["scope"], False
+                        )
+                    except ValueError as exc:
+                        await asyncio.to_thread(schedule_store.record_error, item["id"], str(exc))
+            await asyncio.sleep(10)
+
     async def forward_mobile_responses() -> None:
+        partial_by_job: dict[str, str] = {}
         async with event_hub.subscribe() as queue:
             while True:
                 event = await queue.get()
@@ -312,7 +353,19 @@ def create_app(
                 if server is None or not server.is_running:
                     continue
                 payload = event.get("payload", {})
-                if event.get("type") == "chat.completed":
+                job_id = str(payload.get("job_id", ""))
+                if not mobile_bridge.owns_job(job_id):
+                    continue
+                if event.get("type") == "chat.status":
+                    status_text = str(payload.get("text", "")).strip()
+                    if status_text:
+                        server.publish_partial(status_text)
+                elif event.get("type") == "chat.chunk":
+                    partial_by_job[job_id] = partial_by_job.get(job_id, "") + str(
+                        payload.get("text", "")
+                    )
+                    server.publish_partial(partial_by_job[job_id])
+                elif event.get("type") == "chat.completed":
                     text = str(payload.get("text", "")).strip()
                     if not text:
                         continue
@@ -322,23 +375,37 @@ def create_app(
                         server.publish_audio(audio, mime_type="audio/mpeg")
                     except Exception as exc:
                         logger.warning("Audio movel nao foi gerado: %s", exc)
+                    partial_by_job.pop(job_id, None)
+                    mobile_bridge.finish_job(job_id)
                 elif event.get("type") == "chat.failed":
                     error = str(payload.get("error", "Falha local")).strip()
                     server.publish_response(f"Erro ao responder: {error}", kind="error")
+                    partial_by_job.pop(job_id, None)
+                    mobile_bridge.finish_job(job_id)
+                elif event.get("type") == "chat.cancelled":
+                    server.publish_response("Resposta interrompida no computador.", kind="error")
+                    partial_by_job.pop(job_id, None)
+                    mobile_bridge.finish_job(job_id)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        await asyncio.to_thread(_app.state.whatsapp_service.resume)
         reminder_task = asyncio.create_task(watch_agenda_reminders())
         mobile_response_task = asyncio.create_task(forward_mobile_responses())
+        agent_schedule_task = asyncio.create_task(run_agent_schedules())
         try:
             yield
         finally:
+            await asyncio.to_thread(_app.state.whatsapp_service.shutdown)
             reminder_task.cancel()
             mobile_response_task.cancel()
+            agent_schedule_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reminder_task
             with contextlib.suppress(asyncio.CancelledError):
                 await mobile_response_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await agent_schedule_task
             mobile_server = getattr(_app.state, "mobile_server", None)
             if mobile_server is not None:
                 await asyncio.to_thread(mobile_server.stop)
@@ -368,10 +435,15 @@ def create_app(
     audit_logger = AuditLogger(Path(settings.data_dir) / "audit.log")
     app.state.settings = settings
     app.state.user_service = UserService(data_dir=settings.data_dir)
+    app.state.whatsapp_service = WhatsAppService(
+        settings=settings, coordinator=chat_coordinator,
+        user_service=app.state.user_service, event_hub=event_hub,
+    )
     app.state.history_service = ConversationHistoryService(
         base_dir=settings.data_dir / "conversation_history"
     )
     app.state.notification_service = ProactiveNotificationService(data_dir=settings.data_dir)
+    app.state.agent_schedule_store = AgentScheduleStore(settings.data_dir)
     app.state.event_hub = event_hub
     app.state.access_token = access_token
     app.state.browser_sessions = browser_sessions
@@ -457,7 +529,15 @@ def create_app(
         )
         user = app.state.user_service.validate_token(candidate) if candidate else None
         if user is not None:
-            if user.role == UserRole.VIEWER and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            request.state.current_user = user
+            personal_menu_update = (
+                request.method == "PATCH" and request.url.path == f"{API_PREFIX}/settings/sidebar"
+            )
+            if (
+                user.role == UserRole.VIEWER
+                and request.method not in {"GET", "HEAD", "OPTIONS"}
+                and not personal_menu_update
+            ):
                 raise HTTPException(
                     status_code=403, detail="Este usuario possui acesso somente de leitura."
                 )
@@ -483,6 +563,22 @@ def create_app(
     async def root() -> RedirectResponse:
         return RedirectResponse(url="/app")
 
+    @app.get("/mobile", include_in_schema=False)
+    async def mobile_app(request: Request) -> RedirectResponse:
+        """Open the dedicated voice companion for a phone on the LAN."""
+
+        if not _is_loopback_request(request):
+            candidate = request_token(request)
+            user = app.state.user_service.validate_token(candidate) if candidate else None
+            if user is None and not browser_sessions.is_valid(candidate):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Abra o companion pelo QR Code gerado no Celsius.",
+                )
+
+        server = app.state.ensure_mobile_access(allow_lan=True)
+        return RedirectResponse(url=server.url, status_code=307)
+
     @app.get("/app", include_in_schema=False)
     @app.get("/app/", include_in_schema=False)
     async def web_app(request: Request):
@@ -501,11 +597,17 @@ def create_app(
                 sessions=browser_sessions,
             ):
                 new_session = browser_sessions.issue_session()
+            elif app.state.lan_access_enabled:
+                # A LAN client may open the login screen directly.  The
+                # authenticated API routes remain protected by the user
+                # account, while pairing stays available as a one-click QR
+                # shortcut from the desktop.
+                pass
             else:
                 raise HTTPException(status_code=401, detail="Pareamento do Celsius necessario.")
 
         if pairing_code:
-            response = RedirectResponse(url="/app", status_code=303)
+            response: Response = RedirectResponse(url="/app", status_code=303)
         else:
             response = FileResponse(STATIC_DIR / "index.html")
         if new_session:
@@ -554,21 +656,33 @@ def create_app(
         }
 
     @app.get(f"{API_PREFIX}/modules", dependencies=[Depends(require_access)])
-    async def modules() -> dict[str, Any]:
+    async def modules(request: Request) -> dict[str, Any]:
+        user = getattr(request.state, "current_user", None)
         return {
             "ok": True,
-            "items": [_module_payload(settings, module) for module in module_catalog()],
+            "items": [_module_payload(settings, module, user) for module in module_catalog()],
         }
 
     @app.get(f"{API_PREFIX}/navigation", dependencies=[Depends(require_access)])
-    async def navigation() -> dict[str, Any]:
-        items = [_module_payload(settings, module) for module in module_catalog()]
-        return {"ok": True, "items": [item for item in items if item["in_navigation"]]}
+    async def navigation(request: Request) -> dict[str, Any]:
+        user = getattr(request.state, "current_user", None)
+        items = [_module_payload(settings, module, user) for module in module_catalog()]
+        return {
+            "ok": True,
+            "items": [item for item in items if item["in_navigation"]],
+            "preferences": getattr(user, "sidebar_preferences", {}) or {},
+        }
 
     app.include_router(auth_router, prefix=API_PREFIX)
+    app.include_router(whatsapp_router, prefix=API_PREFIX, dependencies=[Depends(require_access)])
     app.include_router(chat_history_router, prefix=API_PREFIX)
     app.include_router(admin_router, prefix=API_PREFIX)
     app.include_router(notifications_router, prefix=API_PREFIX)
+    app.include_router(
+        agents_router,
+        prefix=API_PREFIX,
+        dependencies=[Depends(require_access)],
+    )
     app.include_router(
         chat_router,
         prefix=API_PREFIX,
@@ -606,6 +720,11 @@ def create_app(
     )
     app.include_router(
         mobile_router,
+        prefix=API_PREFIX,
+        dependencies=[Depends(require_access)],
+    )
+    app.include_router(
+        settings_router,
         prefix=API_PREFIX,
         dependencies=[Depends(require_access)],
     )
