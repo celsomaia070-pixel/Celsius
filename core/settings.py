@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from enum import Enum
 from pathlib import Path
 from typing import Literal
@@ -122,10 +122,23 @@ def _get_base_dir() -> Path:
     return _get_install_dir()
 
 
+def _get_default_data_dir() -> Path:
+    """Where persistent state lives when the caller supplies no ``data_dir``."""
+    if getattr(sys, "frozen", False):
+        return _get_frozen_data_dir()
+    return _get_base_dir() / "data"
+
+
 def _get_resources_dir() -> Path:
     if getattr(sys, "frozen", False):
         return _get_base_dir() / "models"
     return _get_install_dir() / "resources"
+
+
+def _env_path(name: str) -> Path | None:
+    """Read an absolute-path override from the environment, if set."""
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else None
 
 
 class LogLevel(str, Enum):
@@ -307,7 +320,7 @@ class ModelSettings(BaseSettings):
     embedding_model: str = "qwen3-embedding-0.6b"
     whisper_model: str = "small"
     num_ctx: int = 16384
-    num_predict: int = 2500
+    num_predict: int = 8192
     n_gpu_layers: int = -1
     n_batch: int = 1024
     n_threads: int = 0
@@ -316,6 +329,25 @@ class ModelSettings(BaseSettings):
     offload_kqv: bool = True
     flash_attn: bool = True
     auto_configured: bool = False
+    model_client_choice: bool = False
+    warm_up_on_load: bool = True
+
+    def to_storage(self) -> dict[str, object]:
+        return {
+            "llm_model": self.llm_model,
+            "model_client_choice": self.model_client_choice,
+        }
+
+    def apply_storage(self, data: Mapping[str, object], *, preserve_explicit: bool = True) -> None:
+        explicit = self.model_fields_set if preserve_explicit else set()
+        if "llm_model" not in explicit or not preserve_explicit:
+            value = data.get("llm_model")
+            if isinstance(value, str) and value:
+                self.llm_model = value
+        if "model_client_choice" not in explicit or not preserve_explicit:
+            value = data.get("model_client_choice")
+            if isinstance(value, bool):
+                self.model_client_choice = value
 
 
 class ResponseStyleSettings(BaseSettings):
@@ -426,6 +458,147 @@ class RagSettings(BaseSettings):
     rerank_top_k: int = 10
 
 
+class DecisionLayerSettings(BaseSettings):
+    """Local decision-model layer (Jev-style System One contracts).
+
+    Disabled by default so existing behavior is preserved until the layer is
+    explicitly turned on. Env vars use the ``CELSIUS_DECISION_`` prefix (the
+    ``CELSIUS_DECISION__*`` nested form works too, e.g. in ``.env``).
+
+    Safety posture enforced by this layer:
+
+    * ``decisions.HealthCheck`` / ``DecisionClient.health()`` verify the local
+      ``kev.serve`` is reachable; when it is not, every call degrades to a
+      recorded fallback and Celsius keeps working unchanged.
+    * The tool guard can only *add* confirmations. The deterministic policy in
+      ``core.tool_policy`` owns the mandatory confirmations; the probabilistic
+      model only ever suggests more.
+    * The RAG gate scores chunks but never prunes unless explicitly enabled and
+      calibrated, so no relevant passage is ever dropped by default.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_DECISION_")
+
+    enabled: bool = False
+    provider: Literal["off", "local"] = "local"
+    base_url: str = "http://127.0.0.1:8009"
+    model: str = "kev-latest"
+    auto_start: bool = True
+    timeout_ms: int = 4000
+    guard_risk_threshold: float = 0.70
+    guard_uncertainty_band: float = 0.15
+    rag_relevance_threshold: float = 0.60
+    rag_max_gated_chunks: int = 5
+    # Auto model routing: when enabled, JEV chooses which downloaded LLM answers
+    # each task (unless the client pinned a specific model in the UI).
+    model_routing: bool = True
+    # Record every gate/route outcome to a JSONL file so the user can measure
+    # false-approval and pruning rates while calibrating (DECISION_LAYER §9).
+    record_outcomes: bool = True
+    # Health probing: seconds between two /v1/models probes used by the UI
+    # status indicator (0 disables caching, i.e. probe on every call).
+    health_cache_seconds: float = 15.0
+    # Minimum separation (normalized score) between the best and the runner-up
+    # model for the router to commit to a switch. A tie keeps the current model.
+    model_route_min_margin: float = 0.15
+    # Minimum confidence (0..1) required to commit to an automatic model swap.
+    # Below this the current model is kept and the reason is logged.
+    model_route_min_confidence: float = 0.35
+    # RAG gate safety: while calibrating, chunks are only scored and recorded,
+    # never removed. Pruning additionally requires ``rag_prune_enabled`` and at
+    # least ``rag_min_samples`` labeled examples in the outcomes log.
+    rag_calibration_mode: bool = True
+    rag_prune_enabled: bool = False
+    rag_min_samples: int = 30
+    # Only prune a chunk when its score is clearly below the threshold.
+    rag_prune_margin: float = 0.15
+
+    def normalized_endpoint(self) -> str:
+        return self.base_url.rstrip("/")
+
+
+class AgentModeSettings(BaseSettings):
+    """Selectable agentic modes (see ``core.agent_modes``).
+
+    ``enabled`` keeps the whole feature optional: with it off the Celsius
+    behaves exactly as the traditional single-mode chat.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="CELSIUS_AGENT_")
+
+    enabled: bool = True
+    default_mode: str = "assistente"
+    # Per-mode hard limits. A task may never exceed these, whatever the mode
+    # declares, so a bad plan cannot loop forever. ``max_iterations`` is budgeted
+    # apart from ``max_steps`` because a model turn and a tool call are different
+    # resources; a document batch spends most of its turns writing prose.
+    max_steps: int = 24
+    max_iterations: int = 200
+    max_seconds: int = 900
+    max_attempts: int = 2
+    max_plan_items: int = 6
+
+    # ── Tool retrieval for a chat turn (see ``ai.tool_retrieval``) ──
+    # The lexical keyword map in ``ai.react`` stays in place as one signal;
+    # these knobs add the semantic ranking on top of it, so a request the
+    # model understood correctly no longer reaches it with the required tool
+    # hidden. Turning this off restores the previous lexical-only behaviour.
+    tool_retrieval_enabled: bool = True
+    #: How many tools the semantic ranker may contribute per turn.
+    tool_retrieval_top_k: int = 6
+    #: Minimum cosine similarity for a tool to be retrieved semantically.
+    tool_retrieval_min_score: float = 0.38
+    #: Minimum similarity to read the message as operational at all. Below
+    #: this a general-knowledge question keeps receiving zero tools.
+    operational_intent_min_score: float = 0.55
+
+    # ── Automatic mode routing (see ``core.agent_modes.resolve_mode``) ──
+    # An explicit "modo X" always wins and is unaffected by these knobs.
+    auto_route_enabled: bool = True
+    #: Minimum similarity for the automatic router to leave the current mode
+    #: alone. Set high to keep mode switching deliberately manual.
+    auto_route_min_score: float = 0.5
+
+    # ── ReAct loop budget (see ``ai.loop_budget``) ──
+    #: Safety ceiling applied to *every* turn, whatever a mode declares. This is
+    #: the only number here that exists to stop a runaway, so it is the only one
+    #: that must never be lowered by a class or a mode.
+    loop_hard_cap: int = 200
+    #: Tiers for a chat turn, chosen by request complexity. The previous code
+    #: spent 5 iterations on every request including a greeting, which was not a
+    #: safety limit but a leftover, and it truncated real multi-step work.
+    loop_budget_conversa: int = 6
+    loop_budget_ferramenta_simples: int = 14
+    loop_budget_multi_step: int = 28
+    #: Fallback for a task session whose mode declares nothing.
+    loop_budget_task: int = 60
+    #: Consecutive equivalent tool calls before the loop is broken for the
+    #: model. 2 means: first repeat warns, second repeat stops.
+    loop_repeat_threshold: int = 3
+
+    # ── Model generation parameters (see ``ai.react``) ──
+    #: Presence penalty for task turns. Lower values reduce unwanted repetition
+    #: in structured outputs (tables, tool calls, reports).
+    task_presence_penalty: float = 0.0
+    #: Frequency penalty for task turns. Lower values allow legitimate token reuse.
+    task_frequency_penalty: float = 0.1
+    #: Max tokens for a task turn response. Increased from 1536 to allow longer
+    #: multi-step executions without truncation.
+    task_max_tokens: int = 3072
+    #: Presence penalty for chat turns (non-task).
+    chat_presence_penalty: float = 0.1
+    #: Frequency penalty for chat turns (non-task).
+    chat_frequency_penalty: float = 0.2
+    #: Max tokens for a chat turn response.
+    chat_max_tokens: int = 1536
+
+    # ── Conditional reflection (see ``ai.reflection``) ──
+    #: Enable the post-answer reflection step.
+    reflection_enabled: bool = True
+    #: Maximum reflection iterations per turn (prevents infinite reflection loop).
+    reflection_max_turns: int = 1
+
+
 class MemorySettings(BaseSettings):
     """Memory-related settings."""
 
@@ -493,7 +666,7 @@ class SecuritySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CELSIUS_SECURITY_")
 
     sandbox_enabled: bool = True
-    sandbox_backend: Literal["local", "docker", "auto"] = "local"
+    sandbox_backend: Literal["local", "docker", "auto"] = "auto"
     sandbox_max_memory_mb: int = 256
     sandbox_max_cpu_seconds: int = 30
     sandbox_allowed_imports: tuple[str, ...] = (
@@ -724,7 +897,7 @@ class Settings(BaseSettings):
 
     environment: Environment = Environment.DEVELOPMENT
     base_dir: Path = Field(default_factory=_get_base_dir)
-    data_dir: Path = Field(default_factory=lambda: _get_base_dir() / "data")
+    data_dir: Path = Field(default_factory=lambda: _get_default_data_dir())
     resources_dir: Path = Field(default_factory=_get_resources_dir)
     logs_dir: Path = Field(default_factory=lambda: _get_base_dir() / "logs")
 
@@ -735,6 +908,8 @@ class Settings(BaseSettings):
     response: ResponseStyleSettings = Field(default_factory=ResponseStyleSettings)
     hardware: HardwareSettings = Field(default_factory=HardwareSettings)
     rag: RagSettings = Field(default_factory=RagSettings)
+    decision: DecisionLayerSettings = Field(default_factory=DecisionLayerSettings)
+    agent: AgentModeSettings = Field(default_factory=AgentModeSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     file: FileSettings = Field(default_factory=FileSettings)
     inventory: InventorySettings = Field(default_factory=InventorySettings)
@@ -765,12 +940,42 @@ class Settings(BaseSettings):
         self._sync_legacy_owner_name()
 
     @property
+    def _relocation_target(self) -> Path | None:
+        """Path an env override may relocate persistent files to.
+
+        An explicitly supplied ``data_dir`` always wins, so callers that point
+        the settings at a scratch directory (tests, portable installs) keep full
+        control over where their files live.
+        """
+        if self.data_dir != _get_default_data_dir():
+            return None
+        return self.data_dir
+
+    def _relocated(self, env_name: str) -> Path | None:
+        if self._relocation_target is None:
+            return None
+        return _env_path(env_name)
+
+    @property
     def customer_profile_file(self) -> Path:
-        return self.data_dir / "customer_profile.json"
+        """Persistent customer profile.
+
+        ``CELSIUS_CUSTOMER_PROFILE_FILE`` relocates it unless ``data_dir`` was
+        passed explicitly.
+        """
+        relocated = self._relocated("CELSIUS_CUSTOMER_PROFILE_FILE")
+        return relocated or (self.data_dir / "customer_profile.json")
 
     @property
     def local_preferences_file(self) -> Path:
-        return self.data_dir / "celsius_settings.json"
+        """Persistent local preferences (``celsius_settings.json``).
+
+        ``CELSIUS_PREFERENCES_FILE`` relocates the file unless ``data_dir`` was
+        passed explicitly. This keeps test runs and portable/secondary
+        installations from reading or writing the main installation's config.
+        """
+        relocated = self._relocated("CELSIUS_PREFERENCES_FILE")
+        return relocated or (self.data_dir / "celsius_settings.json")
 
     def _load_customer_profile(self) -> None:
         path = self.customer_profile_file
@@ -807,6 +1012,8 @@ class Settings(BaseSettings):
             self.notifications.apply_storage(data["notifications"], preserve_explicit=True)
         if isinstance(data.get("security"), dict):
             self.security.apply_storage(data["security"], preserve_explicit=True)
+        if isinstance(data.get("model"), dict):
+            self.model.apply_storage(data["model"], preserve_explicit=True)
 
     def _sync_legacy_owner_name(self) -> None:
         if self.assistant.owner_name and not self.customer.user_name:
@@ -837,6 +1044,7 @@ class Settings(BaseSettings):
                 "mobile": self.mobile.to_storage(),
                 "notifications": self.notifications.to_storage(),
                 "security": self.security.to_storage(),
+                "model": self.model.to_storage(),
             },
         )
         restrict_private_file(path)
@@ -972,11 +1180,17 @@ class Settings(BaseSettings):
 
     def get_model_path(self, model_id: str | None = None) -> Path:
         model_id = model_id or self.model.llm_model
-        from core.config import get_model_by_id
+        from core.config import discover_installed_models, get_model_by_id
 
         model = get_model_by_id(model_id)
         if model:
             return self._resolve_model_resource(model.filename)
+        search_dirs = [self.resources_dir]
+        if self.bundled_resources_dir.is_dir():
+            search_dirs.append(self.bundled_resources_dir)
+        for candidate in discover_installed_models(*search_dirs):
+            if candidate.id == model_id:
+                return self._resolve_model_resource(candidate.filename)
         return self._resolve_model_resource("model.gguf")
 
     def get_mmproj_path(self, model_id: str | None = None) -> Path | None:

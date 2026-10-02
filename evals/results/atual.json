@@ -1,0 +1,1562 @@
+{
+  "cases": [
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "A01",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_item_estoque"
+      ],
+      "prompt": "quais documentos eu tenho?"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": "documentos",
+      "expected_tools": [
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "A02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "liste meus documentos"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_arquivos",
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "A03",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "tem algum relatório salvo?"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_item_estoque",
+        "ler_arquivo",
+        "listar_arquivos"
+      ],
+      "hits": [
+        "buscar_item_estoque",
+        "listar_arquivos"
+      ],
+      "id": "A04",
+      "notes": [],
+      "offered_tools": [
+        "listar_arquivos",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "procure os arquivos relacionados a estoque"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_arquivos",
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "A05",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "o que já está armazenado aqui?"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "A06",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "liste os documentos disponíveis"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_item_estoque",
+        "listar_estoque"
+      ],
+      "hits": [
+        "buscar_item_estoque",
+        "listar_estoque"
+      ],
+      "id": "A07",
+      "notes": [],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "quantos itens de parafuso tem no estoque?"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "itens_estoque_baixo"
+      ],
+      "hits": [
+        "itens_estoque_baixo"
+      ],
+      "id": "A08",
+      "notes": [],
+      "offered_tools": [
+        "listar_produtos_servicos",
+        "listar_estoque",
+        "buscar_item_estoque",
+        "itens_estoque_baixo"
+      ],
+      "prompt": "quais produtos estão com estoque baixo?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_clientes"
+      ],
+      "hits": [
+        "listar_clientes"
+      ],
+      "id": "A09",
+      "notes": [],
+      "offered_tools": [
+        "listar_clientes"
+      ],
+      "prompt": "quais clientes estão cadastrados?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_orcamentos"
+      ],
+      "hits": [],
+      "id": "A10",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "liste os orçamentos abertos"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_agenda"
+      ],
+      "hits": [
+        "listar_agenda"
+      ],
+      "id": "A11",
+      "notes": [],
+      "offered_tools": [
+        "listar_agenda",
+        "buscar_item_estoque"
+      ],
+      "prompt": "quais compromissos tenho esta semana?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_processos_prazos"
+      ],
+      "hits": [
+        "listar_processos_prazos"
+      ],
+      "id": "A12",
+      "notes": [],
+      "offered_tools": [
+        "listar_processos_prazos",
+        "listar_agenda"
+      ],
+      "prompt": "quais processos têm prazo vencendo?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "gerar_grafico"
+      ],
+      "hits": [
+        "gerar_grafico"
+      ],
+      "id": "A13",
+      "notes": [],
+      "offered_tools": [
+        "gerar_grafico"
+      ],
+      "prompt": "gere um gráfico de vendas"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "gerar_relatorio_local"
+      ],
+      "hits": [],
+      "id": "A14",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "gere um relatório PDF do estoque"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "criar_editar_arquivo"
+      ],
+      "hits": [],
+      "id": "A15",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "crie um arquivo chamado notas.txt"
+    },
+    {
+      "actual_mode": "desenvolvedor",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "executar_codigo"
+      ],
+      "hits": [
+        "executar_codigo"
+      ],
+      "id": "A16",
+      "notes": [],
+      "offered_tools": [
+        "informacoes_sistema",
+        "executar_codigo"
+      ],
+      "prompt": "execute este script python e me diga o resultado"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_fornecedores"
+      ],
+      "hits": [
+        "listar_fornecedores"
+      ],
+      "id": "A17",
+      "notes": [],
+      "offered_tools": [
+        "listar_fornecedores"
+      ],
+      "prompt": "quais fornecedores estão cadastrados?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_produtos_servicos"
+      ],
+      "hits": [
+        "listar_produtos_servicos"
+      ],
+      "id": "A18",
+      "notes": [],
+      "offered_tools": [
+        "listar_produtos_servicos",
+        "listar_estoque"
+      ],
+      "prompt": "liste o catálogo de produtos e serviços"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "entrada_estoque"
+      ],
+      "hits": [
+        "entrada_estoque"
+      ],
+      "id": "A19",
+      "notes": [],
+      "offered_tools": [
+        "entrada_estoque"
+      ],
+      "prompt": "registre a entrada de 10 unidades de parafuso"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "historico_movimentacoes"
+      ],
+      "hits": [],
+      "id": "A20",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "quais são as últimas movimentações do estoque?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_arquivos"
+      ],
+      "hits": [],
+      "id": "A21",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "liste as pastas do diretório de trabalho"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "informacoes_sistema"
+      ],
+      "hits": [
+        "informacoes_sistema"
+      ],
+      "id": "A22",
+      "notes": [],
+      "offered_tools": [
+        "informacoes_sistema"
+      ],
+      "prompt": "quais informações o sistema tem sobre esta máquina?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "abrir_no_navegador",
+        "navegar_web"
+      ],
+      "hits": [],
+      "id": "A23",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "abra esse site no navegador"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "indexar_documento"
+      ],
+      "hits": [],
+      "id": "A24",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "indexe o contrato para busca"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "remover_documento"
+      ],
+      "hits": [],
+      "id": "A25",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "remova o documento antigo do índice"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "cadastrar_cliente"
+      ],
+      "hits": [],
+      "id": "A26",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "listar_clientes"
+      ],
+      "prompt": "crie um cliente novo chamado Maria"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "criar_compromisso_agenda"
+      ],
+      "hits": [
+        "criar_compromisso_agenda"
+      ],
+      "id": "A27",
+      "notes": [],
+      "offered_tools": [
+        "criar_compromisso_agenda"
+      ],
+      "prompt": "agende uma reunião amanhã às 14h"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_memoria"
+      ],
+      "hits": [
+        "buscar_memoria"
+      ],
+      "id": "A28",
+      "notes": [],
+      "offered_tools": [
+        "buscar_memoria",
+        "listar_clientes"
+      ],
+      "prompt": "o que você lembra sobre o cliente Ana?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "salvar_memoria"
+      ],
+      "hits": [],
+      "id": "A29",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "lembre que a Ana prefere pagamento à vista"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_fornecedores"
+      ],
+      "hits": [
+        "listar_fornecedores"
+      ],
+      "id": "A30",
+      "notes": [],
+      "offered_tools": [
+        "listar_fornecedores"
+      ],
+      "prompt": "liste os fornecedores"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_produtos_servicos"
+      ],
+      "hits": [],
+      "id": "A31",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "qual o catálogo de serviços?"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_estoque"
+      ],
+      "hits": [
+        "listar_estoque"
+      ],
+      "id": "A32",
+      "notes": [],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "quais itens estão no estoque?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_estoque",
+        "listar_produtos_servicos"
+      ],
+      "hits": [
+        "listar_estoque",
+        "listar_produtos_servicos"
+      ],
+      "id": "A33",
+      "notes": [],
+      "offered_tools": [
+        "listar_produtos_servicos",
+        "listar_estoque"
+      ],
+      "prompt": "mostre os produtos da loja"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "inspecionar_formulario_documento",
+        "ler_arquivo",
+        "processar_arquivo"
+      ],
+      "hits": [],
+      "id": "A34",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "abrir_no_navegador"
+      ],
+      "prompt": "abrir o arquivo contrato.pdf"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "A",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "inspecionar_formulario_documento"
+      ],
+      "hits": [
+        "inspecionar_formulario_documento"
+      ],
+      "id": "A35",
+      "notes": [],
+      "offered_tools": [
+        "inspecionar_formulario_documento"
+      ],
+      "prompt": "quais campos tem o formulário da ficha de emprego?"
+    },
+    {
+      "actual_mode": "pesquisador",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "pesquisador",
+      "expected_tools": [
+        "pesquisar_noticias",
+        "pesquisar_web"
+      ],
+      "hits": [
+        "pesquisar_web"
+      ],
+      "id": "B01",
+      "notes": [],
+      "offered_tools": [
+        "pesquisar_web"
+      ],
+      "prompt": "pesquise na internet as últimas notícias sobre lítio"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "pesquisador",
+      "expected_tools": [
+        "navegar_web",
+        "pesquisar_noticias",
+        "pesquisar_web"
+      ],
+      "hits": [],
+      "id": "B02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida",
+        "modo assistente != pesquisador"
+      ],
+      "offered_tools": [],
+      "prompt": "descubra informações atuais sobre o mercado de energia solar"
+    },
+    {
+      "actual_mode": "desenvolvedor",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "desenvolvedor",
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "executar_codigo"
+      ],
+      "hits": [
+        "executar_codigo"
+      ],
+      "id": "B03",
+      "notes": [],
+      "offered_tools": [
+        "informacoes_sistema",
+        "executar_codigo"
+      ],
+      "prompt": "escreva uma função python que inverte uma string"
+    },
+    {
+      "actual_mode": "desenvolvedor",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "desenvolvedor",
+      "expected_tools": [
+        "executar_codigo",
+        "ler_arquivo"
+      ],
+      "hits": [],
+      "id": "B04",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "me ajude a refatorar este código"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "estoque",
+      "expected_tools": [
+        "listar_estoque"
+      ],
+      "hits": [
+        "listar_estoque"
+      ],
+      "id": "B05",
+      "notes": [],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "modo estoque"
+    },
+    {
+      "actual_mode": "pesquisador",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "pesquisador",
+      "expected_tools": [
+        "pesquisar_web"
+      ],
+      "hits": [],
+      "id": "B06",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "modo pesquisador"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "documentos",
+      "expected_tools": [
+        "inspecionar_formulario_documento",
+        "preencher_documento"
+      ],
+      "hits": [],
+      "id": "B07",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "quero preencher um formulário em PDF"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "B",
+      "expect_no_tool": true,
+      "expected_mode": "assistente",
+      "expected_tools": [],
+      "hits": [],
+      "id": "B08",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "qual o dia da semana?"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "estoque",
+      "expected_tools": [
+        "listar_estoque"
+      ],
+      "hits": [
+        "listar_estoque"
+      ],
+      "id": "B09",
+      "notes": [],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "trocar modo estoque"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "B",
+      "expect_no_tool": false,
+      "expected_mode": "estoque",
+      "expected_tools": [
+        "historico_movimentacoes"
+      ],
+      "hits": [],
+      "id": "B10",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida",
+        "modo assistente != estoque"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "quero saber o histórico de movimentações do armazém"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "C",
+      "expect_no_tool": false,
+      "expected_mode": "documentos",
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "gerar_documento_local",
+        "ler_arquivo",
+        "listar_documentos_rag",
+        "processar_arquivo"
+      ],
+      "hits": [],
+      "id": "C01",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "encontre o documento contrato, leia, faça um resumo e salve como resumo_contrato"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "C",
+      "expect_no_tool": false,
+      "expected_mode": "documentos",
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "gerar_documento_local",
+        "ler_arquivo",
+        "listar_documentos_rag",
+        "processar_arquivo"
+      ],
+      "hits": [],
+      "id": "C02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida",
+        "modo assistente != documentos"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "Leia o relatório X, faça um resumo e salve em outro arquivo"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "C",
+      "expect_no_tool": false,
+      "expected_mode": "estoque",
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "gerar_grafico",
+        "listar_estoque"
+      ],
+      "hits": [
+        "gerar_grafico",
+        "listar_estoque"
+      ],
+      "id": "C03",
+      "notes": [],
+      "offered_tools": [
+        "listar_estoque",
+        "buscar_item_estoque",
+        "gerar_grafico"
+      ],
+      "prompt": "pegue os dados de estoque, gere um gráfico e salve o gráfico como PNG"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "C",
+      "expect_no_tool": false,
+      "expected_mode": "executor",
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "gerar_relatorio_local",
+        "listar_clientes"
+      ],
+      "hits": [
+        "listar_clientes"
+      ],
+      "id": "C04",
+      "notes": [
+        "modo assistente != executor"
+      ],
+      "offered_tools": [
+        "listar_clientes"
+      ],
+      "prompt": "consulte os clientes, gere um relatório PDF e salve o arquivo"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "D",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "ler_arquivo",
+        "listar_arquivos"
+      ],
+      "hits": [],
+      "id": "D01",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "leia o arquivo nao_existe_12345.txt"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "D",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "gerar_relatorio_local",
+        "listar_arquivos",
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "D02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "gere o relatório do arquivo que você não sabe qual é"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "D",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_item_estoque",
+        "listar_estoque"
+      ],
+      "hits": [
+        "buscar_item_estoque",
+        "listar_estoque"
+      ],
+      "id": "D03",
+      "notes": [],
+      "offered_tools": [
+        "listar_produtos_servicos",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "consulte o estoque de um produto que não existe"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "D",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "inspecionar_formulario_documento",
+        "listar_arquivos",
+        "preencher_documento"
+      ],
+      "hits": [
+        "inspecionar_formulario_documento",
+        "preencher_documento"
+      ],
+      "id": "D04",
+      "notes": [],
+      "offered_tools": [
+        "inspecionar_formulario_documento",
+        "preencher_documento",
+        "preencher_documento_com_fontes"
+      ],
+      "prompt": "preencha o formulário em /caminho/inexistente/formulario.pdf"
+    },
+    {
+      "actual_mode": "pesquisador",
+      "category": "D",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "navegar_web",
+        "pesquisar_google",
+        "pesquisar_noticias",
+        "pesquisar_web"
+      ],
+      "hits": [
+        "pesquisar_web"
+      ],
+      "id": "D05",
+      "notes": [],
+      "offered_tools": [
+        "pesquisar_web"
+      ],
+      "prompt": "pesquise na internet e se falhar tente novamente"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_arquivos",
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "E01",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "o que já está armazenado aqui?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_arquivos",
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "E02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "informacoes_sistema"
+      ],
+      "prompt": "me mostra o que tem guardado no sistema"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_documentos_rag"
+      ],
+      "hits": [],
+      "id": "E03",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "tem alguma coisa arquivada que eu possa ver?"
+    },
+    {
+      "actual_mode": "estoque",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_item_estoque",
+        "listar_estoque"
+      ],
+      "hits": [
+        "listar_estoque"
+      ],
+      "id": "E04",
+      "notes": [],
+      "offered_tools": [
+        "listar_estoque"
+      ],
+      "prompt": "quais peças de reposição estão disponíveis?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_orcamentos"
+      ],
+      "hits": [],
+      "id": "E05",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "pode me passar o que foi cotado este mês?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_agenda"
+      ],
+      "hits": [
+        "listar_agenda"
+      ],
+      "id": "E06",
+      "notes": [],
+      "offered_tools": [
+        "listar_agenda"
+      ],
+      "prompt": "quando é o meu próximo compromisso?"
+    },
+    {
+      "actual_mode": "desenvolvedor",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "executar_codigo"
+      ],
+      "hits": [],
+      "id": "E07",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "me ajuda a montar um código que resolva X"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "gerar_grafico",
+        "gerar_relatorio_local",
+        "listar_estoque"
+      ],
+      "hits": [],
+      "id": "E08",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "quero ver o panorama das vendas"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_memoria"
+      ],
+      "hits": [],
+      "id": "E09",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "o que você sabe sobre o que já conversamos?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "E",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "listar_arquivos"
+      ],
+      "hits": [],
+      "id": "E10",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "preciso do material guardado no computador"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F01",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "o que é computação quântica?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F02",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "explique o que é aprendizado de máquina"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F03",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "Explique energia solar"
+    },
+    {
+      "actual_mode": "desenvolvedor",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F04",
+      "notes": [
+        "recebeu 2 ferramentas sem necessidade"
+      ],
+      "offered_tools": [
+        "informacoes_sistema",
+        "executar_codigo"
+      ],
+      "prompt": "qual a diferença entre lista e tupla em Python?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F05",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "me explique a teoria da relatividade"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F06",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "como funciona a fotosíntese?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F07",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "obrigado, muito útil!"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F08",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "bom dia"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F09",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "o que você sabe sobre oeuvres de arte?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "F",
+      "expect_no_tool": true,
+      "expected_mode": null,
+      "expected_tools": [],
+      "hits": [],
+      "id": "F10",
+      "notes": [],
+      "offered_tools": [],
+      "prompt": "resuma o conceito de entropia"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "G",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "buscar_item_estoque",
+        "listar_estoque"
+      ],
+      "hits": [],
+      "id": "G01",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "e o preço dele?"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "G",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "cadastrar_cliente",
+        "cadastrar_fornecedor",
+        "cadastrar_produto_servico"
+      ],
+      "hits": [],
+      "id": "G02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "cadastre esse também"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "G",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "criar_editar_arquivo",
+        "gerar_relatorio_local"
+      ],
+      "hits": [],
+      "id": "G03",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "salve isso no mesmo lugar"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "G",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "criar_compromisso_agenda",
+        "listar_agenda"
+      ],
+      "hits": [
+        "criar_compromisso_agenda"
+      ],
+      "id": "G04",
+      "notes": [],
+      "offered_tools": [
+        "criar_compromisso_agenda"
+      ],
+      "prompt": "agende para o próximo dia útil"
+    },
+    {
+      "actual_mode": "executor",
+      "category": "G",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "gerar_relatorio_local"
+      ],
+      "hits": [],
+      "id": "G05",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "pesquisar_web"
+      ],
+      "prompt": "agora gere o relatório"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "H",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "ler_arquivo",
+        "listar_arquivos"
+      ],
+      "hits": [],
+      "id": "H01",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "tente ler esse arquivo até conseguir"
+    },
+    {
+      "actual_mode": "documentos",
+      "category": "H",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "inspecionar_formulario_documento",
+        "listar_arquivos",
+        "preencher_documento"
+      ],
+      "hits": [],
+      "id": "H02",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [
+        "buscar_memoria",
+        "informacoes_sistema",
+        "listar_estoque",
+        "buscar_item_estoque"
+      ],
+      "prompt": "insista no mesmo formulário até preencher"
+    },
+    {
+      "actual_mode": "assistente",
+      "category": "H",
+      "expect_no_tool": false,
+      "expected_mode": null,
+      "expected_tools": [
+        "informacoes_sistema",
+        "ler_arquivo",
+        "listar_arquivos"
+      ],
+      "hits": [],
+      "id": "H03",
+      "notes": [
+        "nenhuma ferramenta capaz foi oferecida"
+      ],
+      "offered_tools": [],
+      "prompt": "continue tentando o mesmo caminho"
+    }
+  ],
+  "embedding_model": "qwen3-embedding-0.6b",
+  "encoder_available": false,
+  "label": "atual",
+  "metrics": {
+    "cases_total": 82,
+    "cases_with_tool_expectation": 71,
+    "false_tool_rate_on_general": 0.0909,
+    "mode_accuracy": 0.7333,
+    "mode_labelled_cases": 15,
+    "operational_zero_tool_count": 18,
+    "recall_at_1": 0.3662,
+    "recall_at_3": 0.4085,
+    "registry_size": 42,
+    "should_be_silent": 11,
+    "silent_when_should_be": 10,
+    "tool_precision": 0.288,
+    "tool_recall": 0.4225,
+    "tool_recall_hits": 30,
+    "tools_offered_avg": 1.76,
+    "unnecessary_tool_call_ids": [],
+    "zero_tool_rate_operational": 0.2535,
+    "zero_tool_rate_operational_ids": [
+      "A03",
+      "A05",
+      "A23",
+      "A29",
+      "B02",
+      "B04",
+      "B06",
+      "E01",
+      "E03",
+      "E05",
+      "E07",
+      "E08",
+      "E09",
+      "E10",
+      "G01",
+      "G02",
+      "G03",
+      "H03"
+    ]
+  },
+  "mode": "_mode_for",
+  "retrieval": "select_current"
+}
