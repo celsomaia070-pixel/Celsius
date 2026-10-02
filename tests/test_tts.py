@@ -199,3 +199,21 @@ class TestEdgeTTSProvider:
         )
         assert ("pt-BR-TesteNeural", {}) in attempts
         assert ("pt-BR-AntonioNeural", {}) in attempts
+
+
+class TestVozWorkerStop:
+    def test_stop_does_not_block_calling_thread(self):
+        """VozWorker.stop() deve retornar rapidamente sem bloquear a thread chamadora."""
+        import time
+
+        from workers.tts_worker import VozWorker
+
+        worker = VozWorker("Texto de teste", force_enabled=True)
+        worker.start()
+        time.sleep(0.1)
+
+        start = time.monotonic()
+        worker.stop()
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        assert elapsed_ms < 100, f"stop() bloqueou por {elapsed_ms:.0f}ms"

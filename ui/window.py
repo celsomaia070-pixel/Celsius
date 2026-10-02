@@ -5,6 +5,7 @@ Main Window - Janela principal refatorada usando controllers e views extraídos.
 import contextlib
 import logging
 import tempfile
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -12,9 +13,13 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -51,10 +56,12 @@ from ui.jarvis_visualizer import JarvisVoiceVisualizer
 from ui.kanban_view import KanbanContainer
 from ui.sidebar import Sidebar
 from ui.state.theme_manager import ThemeManager
+from ui.task_panel import TaskPanel
 from ui.theme import ThemeMode, scheme_from_name
 from workers.ai_worker import WorkerManager
 
 logger = logging.getLogger(__name__)
+
 
 
 class ModernChatWindow(QMainWindow):
@@ -101,8 +108,12 @@ class ModernChatWindow(QMainWindow):
         self._voice_stream_finish_requested = False
         self._pending_mobile_voice_audio = []
         self._ai_busy = False
+        self._is_processing_message = False
+        self._work_mode_enabled = False
         self._slow_model_suggestions_shown = set()
         self._next_response_should_speak_on_pc = False
+        self._response_from_mobile = False
+        self._mobile_partial_buffer = ""
         self._mobile_server = None
         self._agenda_timer = None
         self._agenda_alert_flash_timer = None
@@ -122,6 +133,7 @@ class ModernChatWindow(QMainWindow):
         self.setWindowTitle("Celsius Project AI")
         self.resize(1100, 700)
         self._setup_ui()
+        self._refresh_workspace_branding()
         self._apply_theme()
         self._load_conversations()
 
@@ -132,9 +144,6 @@ class ModernChatWindow(QMainWindow):
         # Connect controllers
         self._connect_controllers()
         self.mobile_command_received.connect(self._on_mobile_command_received)
-
-        # Populate model combo with all available models
-        self._populate_model_combo()
 
         # Command palette
         self.palette_manager = CommandPaletteManager(self)
@@ -210,6 +219,52 @@ class ModernChatWindow(QMainWindow):
         title_layout.addWidget(self.workspace_subtitle)
         top_bar_layout.addWidget(title_block)
 
+        # WORK button
+        self.work_btn = QPushButton("WORK")
+        self.work_btn.setToolTip("Modo Work: múltiplos agentes colaborando (Ctrl+W)")
+        self.work_btn.setCursor(Qt.PointingHandCursor)
+        self.work_btn.setCheckable(True)
+        self.work_btn.setFixedHeight(36)
+        s = scheme_from_name(self._theme_mode.value)
+        self.work_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {s.accent_primary};
+                border-radius: 6px;
+                padding: 4px 16px;
+                color: {s.accent_primary};
+                font-weight: 700;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: {s.accent_primary};
+                color: {s.text_on_accent};
+            }}
+            QPushButton:checked {{
+                background: {s.accent_primary};
+                color: {s.text_on_accent};
+            }}
+        """)
+        self.work_btn.clicked.connect(self._toggle_work_mode)
+        top_bar_layout.addWidget(self.work_btn)
+
+        # WORK status label (shows what agents are doing)
+        self.work_status_label = QLabel("")
+        self.work_status_label.setObjectName("workStatusLabel")
+        self.work_status_label.setWordWrap(True)
+        self.work_status_label.setMaximumWidth(280)
+        self.work_status_label.setStyleSheet(f"""
+            QLabel#workStatusLabel {{
+                color: {s.text_secondary};
+                font-size: 10px;
+                font-style: italic;
+                padding: 2px 8px;
+                background: transparent;
+            }}
+        """)
+        self.work_status_label.hide()
+        top_bar_layout.addWidget(self.work_status_label)
+
         top_bar_layout.addStretch(1)
 
         # Theme toggle button
@@ -253,13 +308,23 @@ class ModernChatWindow(QMainWindow):
         self.chat_view = ModernChatView(scheme=scheme_from_name(self._theme_mode.value))
         main_layout.addWidget(self.chat_view, 1)
 
+        # Task panel (for agentic modes)
+        self.task_panel = TaskPanel(scheme=scheme_from_name(self._theme_mode.value))
+        self.task_panel.confirm_requested.connect(self._on_task_confirm)
+        self.task_panel.cancel_requested.connect(self._on_task_cancel)
+        self.task_panel.pause_requested.connect(self._on_task_pause)
+        self.task_panel.continue_requested.connect(self._on_task_continue)
+        self.task_panel.mode_changed.connect(self._on_task_mode_changed)
+        self.task_panel.hide()
+        main_layout.addWidget(self.task_panel, 1)
+
         # Input area
         self.input_area = ModernInputArea(scheme=scheme_from_name(self._theme_mode.value))
         self.input_area.send_message.connect(self._on_user_message)
         self.input_area.attach_file.connect(self._on_attach_file)
         self.input_area.toggle_mic.connect(self._toggle_mic)
         self.input_area.toggle_voice.connect(self._toggle_voice)
-        self.input_area.change_model.connect(self._on_model_changed)
+        self.input_area.stop_response.connect(self._on_stop_response)
         main_layout.addWidget(self.input_area)
 
         # Inventory panel
@@ -299,9 +364,11 @@ class ModernChatWindow(QMainWindow):
         self.worker_controller.ai_response_started.connect(self._on_ai_response_started)
         self.worker_controller.ai_response_token.connect(self._on_ai_response_token)
         self.worker_controller.ai_response_finished.connect(self._on_ai_response_finished)
+        self.worker_controller.ai_response_cancelled.connect(self._on_ai_response_cancelled)
         self.worker_controller.ai_response_error.connect(self._on_ai_response_error)
         self.worker_controller.ai_status_update.connect(self._on_ai_status_update)
         self.worker_controller.ai_suggestion.connect(self._on_ai_suggestion)
+        self.worker_controller.ai_notice.connect(self._on_ai_notice)
         self.worker_controller.model_loaded.connect(self._on_model_loaded)
         self.worker_controller.model_load_error.connect(self._on_model_load_error)
         self.worker_controller.model_list_loaded.connect(self._on_model_list_loaded)
@@ -376,6 +443,40 @@ class ModernChatWindow(QMainWindow):
             )
         if hasattr(self, "agenda_alert"):
             self._apply_agenda_alert_style()
+        if hasattr(self, "task_panel"):
+            self.task_panel.set_scheme(scheme)
+        # Update WORK button style
+        if hasattr(self, "work_btn"):
+            self.work_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: 1px solid {scheme.accent_primary};
+                    border-radius: 6px;
+                    padding: 4px 16px;
+                    color: {scheme.accent_primary};
+                    font-weight: 700;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background: {scheme.accent_primary};
+                    color: {scheme.text_on_accent};
+                }}
+                QPushButton:checked {{
+                    background: {scheme.accent_primary};
+                    color: {scheme.text_on_accent};
+                }}
+            """)
+        # Update WORK status label style
+        if hasattr(self, "work_status_label"):
+            self.work_status_label.setStyleSheet(f"""
+                QLabel#workStatusLabel {{
+                    color: {scheme.text_secondary};
+                    font-size: 10px;
+                    font-style: italic;
+                    padding: 2px 8px;
+                    background: transparent;
+                }}
+            """)
 
     def _toggle_theme(self):
         self._theme_mode = self.theme_controller.toggle()
@@ -397,6 +498,15 @@ class ModernChatWindow(QMainWindow):
         self.conversation_manager.set_current(conv_id)
         self._current_conv_id = conv_id
         self.chat_view.clear()
+        # Initialize task panel for this conversation
+        if hasattr(self, "task_panel"):
+            from core.agent_tasks import AgentTaskStore
+
+            if not hasattr(self, "_task_store"):
+                self._task_store = AgentTaskStore(self.settings.data_dir / "agent_tasks.db")
+                self.task_panel.set_store(self._task_store)
+            self.task_panel.set_scope(conv_id)
+            self.task_panel.refresh_current_task()
 
     def _switch_conversation(self, conv_id: str):
         self.conversation_manager.set_current(conv_id)
@@ -409,6 +519,11 @@ class ModernChatWindow(QMainWindow):
                 self.chat_view.add_user_message(msg["content"], msg.get("attachments"))
             else:
                 self.chat_view.add_assistant_message(msg["content"])
+
+        # Update task panel scope
+        if hasattr(self, "task_panel") and hasattr(self, "_task_store"):
+            self.task_panel.set_scope(conv_id)
+            self.task_panel.refresh_current_task()
 
     def _on_conversation_changed(self, conv_id: str):
         self._current_conv_id = conv_id
@@ -441,24 +556,36 @@ class ModernChatWindow(QMainWindow):
             self.inventory_panel.hide()
             self.kanban_container.hide()
             self.module_placeholder.hide()
+            # Show task panel for non-assistente modes
+            mode = self.input_area.get_mode()
+            if mode != "assistente" and hasattr(self, "task_panel"):
+                self.task_panel.show()
+            elif hasattr(self, "task_panel"):
+                self.task_panel.hide()
         elif tab == "inventory":
             self.chat_view.hide()
             self.input_area.hide()
             self.inventory_panel.show()
             self.kanban_container.hide()
             self.module_placeholder.hide()
+            if hasattr(self, "task_panel"):
+                self.task_panel.hide()
         elif tab == "kanban":
             self.chat_view.hide()
             self.input_area.hide()
             self.inventory_panel.hide()
             self.kanban_container.show()
             self.module_placeholder.hide()
+            if hasattr(self, "task_panel"):
+                self.task_panel.hide()
         elif tab in {"suppliers", "settings"}:
             self.chat_view.show()
             self.input_area.show()
             self.inventory_panel.hide()
             self.kanban_container.hide()
             self.module_placeholder.hide()
+            if hasattr(self, "task_panel"):
+                self.task_panel.hide()
         else:
             module = get_module_definition(tab)
             if module and module.is_ready:
@@ -470,6 +597,8 @@ class ModernChatWindow(QMainWindow):
                 self._show_module_records_dialog(tab)
             else:
                 self._show_module_placeholder(tab)
+            if hasattr(self, "task_panel"):
+                self.task_panel.hide()
 
     def _show_module_placeholder(self, module_id: str):
         module = get_module_definition(module_id)
@@ -636,6 +765,7 @@ class ModernChatWindow(QMainWindow):
             self.settings, scheme=scheme_from_name(self._theme_mode.value), parent=self
         )
         if dialog.exec():
+            self._refresh_workspace_branding()
             self._apply_module_configuration()
             self._apply_theme()
 
@@ -743,9 +873,174 @@ class ModernChatWindow(QMainWindow):
                 False,
                 "O Celsius ainda esta respondendo. Tente novamente em instantes.",
             )
+        mode_switch = self._apply_mode_command(message)
+        if mode_switch is not None:
+            return True, mode_switch
         prefix = "Comando por voz do celular" if source == "phone_voice" else "Comando do celular"
         self.mobile_command_received.emit(f"{prefix}: {message}")
         return True, "Comando enviado ao Celsius no PC."
+
+    def _apply_mode_command(self, message: str) -> str | None:
+        """Honour "modo X" on the phone/voice, returning the notice or None."""
+        from core.agent_modes import get_mode, parse_mode_command
+
+        mode_id = parse_mode_command(message)
+        if mode_id is None:
+            return None
+        self.input_area.set_mode(mode_id)
+        mode = get_mode(mode_id)
+        return f"Modo alterado para {mode.label}. {mode.summary}"
+
+    def _apply_task_voice_command(self, message: str) -> str | None:
+        """Handle task-related voice commands."""
+        from core.agent_modes import get_mode
+        from core.agent_tasks import normalize_state
+
+        if not hasattr(self, "_task_store") or not self._current_conv_id:
+            return None
+
+        cleaned = message.strip().lower()
+
+        # Task progress query
+        if any(
+            cmd in cleaned
+            for cmd in [
+                "consulte o andamento",
+                "andamento da tarefa",
+                "status da tarefa",
+                "como está a tarefa",
+            ]
+        ):
+            tasks = self._task_store.list(self._current_conv_id, limit=1)
+            if not tasks:
+                return "Nenhuma tarefa ativa no momento."
+            task = tasks[0]
+            status = normalize_state(task.get("status", "unknown"))
+            mode = get_mode(task.get("mode", ""))
+            steps = task.get("steps", [])
+            completed = sum(1 for s in steps if normalize_state(s.get("status", "")) == "succeeded")
+            total = len(steps)
+            return f"Tarefa {task['id']} ({mode.label}): {status}. Objetivo: {task.get('objective', '')[:100]}. Progresso: {completed}/{total} passos."
+
+        # Cancel task
+        if any(cmd in cleaned for cmd in ["cancele a tarefa", "cancelar tarefa", "pare a tarefa"]):
+            tasks = self._task_store.list(self._current_conv_id, limit=1)
+            if not tasks:
+                return "Nenhuma tarefa ativa para cancelar."
+            task = tasks[0]
+            task["status"] = "cancelled"
+            task["error"] = "Tarefa cancelada por comando de voz."
+            self._task_store.save(task)
+            if hasattr(self, "task_panel"):
+                self.task_panel.refresh_current_task()
+            return f"Tarefa {task['id']} cancelada."
+
+        # Confirm (approve)
+        if any(cmd in cleaned for cmd in ["confirma", "confirmar", "autorizar", "sim, confirmo"]):
+            tasks = self._task_store.list(self._current_conv_id, limit=1)
+            if not tasks:
+                return "Nenhuma tarefa aguardando confirmação."
+            task = tasks[0]
+            for step in task.get("steps", []):
+                if step.get("status") in ("waiting_confirmation", "awaiting_approval"):
+                    code = step.get("approval_code")
+                    if code and step.get("expires", 0) > time.time():
+                        step["status"] = "authorized"
+                        self._task_store.save(task)
+                        if hasattr(self, "task_panel"):
+                            self.task_panel.refresh_current_task()
+                        return f"Ação confirmada. A tarefa {task['id']} vai continuar."
+                    elif code:
+                        return "A autorização expirou. Use 'retomar' para revisar."
+            return "Nenhuma ação pendente de confirmação."
+
+        # Reject (não confirme)
+        if any(
+            cmd in cleaned
+            for cmd in [
+                "não confirme",
+                "nao confirme",
+                "rejeitar",
+                "cancelar ação",
+                "não autorizo",
+                "nao autorizo",
+            ]
+        ):
+            tasks = self._task_store.list(self._current_conv_id, limit=1)
+            if not tasks:
+                return "Nenhuma tarefa aguardando confirmação."
+            task = tasks[0]
+            for step in task.get("steps", []):
+                if step.get("status") in ("waiting_confirmation", "awaiting_approval"):
+                    code = step.get("approval_code")
+                    if code:
+                        step["status"] = "cancelled"
+                        step.pop("approval_code", None)
+                        task["status"] = "cancelled"
+                        task["rejected_action"] = True
+                        self._task_store.save(task)
+                        if hasattr(self, "task_panel"):
+                            self.task_panel.refresh_current_task()
+                        return f"Ação rejeitada. Tarefa {task['id']} cancelada."
+            return "Nenhuma ação pendente de confirmação."
+
+        # Pause task
+        if any(cmd in cleaned for cmd in ["pause a tarefa", "pausar tarefa", "pause"]):
+            tasks = self._task_store.list(self._current_conv_id, limit=1)
+            if not tasks:
+                return "Nenhuma tarefa ativa para pausar."
+            task = tasks[0]
+            if task["status"] in ("running", "waiting_confirmation", "awaiting_approval"):
+                task["status"] = "paused"
+                task["error"] = "Tarefa pausada por comando de voz."
+                self._task_store.save(task)
+                if hasattr(self, "task_panel"):
+                    self.task_panel.refresh_current_task()
+                return f"Tarefa {task['id']} pausada."
+            return f"Tarefa {task['id']} não pode ser pausada no estado atual."
+
+        # Continue task
+        if any(
+            cmd in cleaned
+            for cmd in [
+                "continue a tarefa",
+                "continuar tarefa",
+                "retome a tarefa",
+                "retomar tarefa",
+            ]
+        ):
+            tasks = self._task_store.list(self._current_conv_id, limit=1)
+            if not tasks:
+                return "Nenhuma tarefa para continuar."
+            task = tasks[0]
+            if task["status"] in ("paused", "waiting_confirmation", "awaiting_approval"):
+                task["status"] = "running"
+                task["error"] = ""
+                self._task_store.save(task)
+                if hasattr(self, "task_panel"):
+                    self.task_panel.refresh_current_task()
+                return f"Tarefa {task['id']} continuada."
+            return f"Tarefa {task['id']} não está pausada."
+
+        return None
+
+    @staticmethod
+    def _strip_transport_prefix(text: str) -> str:
+        """Drop the "Comando do celular:" label before the model reads the text.
+
+        The label is useful for the user on screen, but it is transport noise
+        for the model, so a voice/phone order like "modo estoque" still
+        reaches the mode parser as a plain request.
+        """
+        cleaned = str(text or "").strip()
+        for prefix in (
+            "Comando por voz do celular:",
+            "Comando do celular:",
+            "Comando por voz:",
+        ):
+            if cleaned.lower().startswith(prefix.lower()):
+                return cleaned[len(prefix) :].strip()
+        return cleaned
 
     def _queue_mobile_voice_command(self, audio: bytes, mime_type: str):
         if self._ai_busy:
@@ -764,6 +1059,12 @@ class ModernChatWindow(QMainWindow):
                 transcript = transcribe_mobile_wav(
                     audio, model_name=self.settings.model.whisper_model
                 )
+                mode_switch = self._apply_mode_command(transcript)
+                if mode_switch is not None:
+                    return True, transcript, mode_switch
+                task_switch = self._apply_task_voice_command(transcript)
+                if task_switch is not None:
+                    return True, transcript, task_switch
                 self.mobile_command_received.emit(f"Comando por voz do celular: {transcript}")
                 return True, transcript, "Voz transcrita no PC e enviada ao Celsius."
 
@@ -789,6 +1090,12 @@ class ModernChatWindow(QMainWindow):
             if not transcript:
                 return False, "", "Nao consegui entender a gravacao."
 
+            mode_switch = self._apply_mode_command(transcript)
+            if mode_switch is not None:
+                return True, transcript, mode_switch
+            task_switch = self._apply_task_voice_command(transcript)
+            if task_switch is not None:
+                return True, transcript, task_switch
             self.mobile_command_received.emit(f"Comando por voz do celular: {transcript}")
             return True, transcript, "Voz transcrita no PC e enviada ao Celsius."
         except Exception as exc:
@@ -812,6 +1119,7 @@ class ModernChatWindow(QMainWindow):
 
     def _on_mobile_command_received(self, message: str):
         self._next_response_should_speak_on_pc = True
+        self._response_from_mobile = True
         self._on_user_message(message)
 
     # AI Response handlers
@@ -820,26 +1128,38 @@ class ModernChatWindow(QMainWindow):
         self.input_area.set_busy(True)
         self.chat_view.start_streaming()
         self._reset_voice_stream()
+        self._mobile_partial_buffer = ""
         should_stream_voice = self._voice_enabled or self._next_response_should_speak_on_pc
         self._voice_stream_enabled_for_response = should_stream_voice
         self._voice_stream_force_enabled = should_stream_voice
+        # Show work status when WORK mode is active
+        if getattr(self, "_work_mode_enabled", False) and hasattr(self, "work_status_label"):
+            self.work_status_label.setText("Iniciando análise...")
+            self.work_status_label.show()
 
     def _on_ai_response_token(self, token: str):
         self.chat_view.append_streaming(token)
         self._stream_voice_token(token)
+        if self._mobile_server is not None and self._response_from_mobile:
+            self._mobile_partial_buffer += token
+            self._mobile_server.publish_partial(self._mobile_partial_buffer)
 
     def _on_ai_response_finished(self, full_text: str):
         self._ai_busy = False
         self.input_area.set_busy(False)
-        self.chat_view.finish_streaming(full_text)
+        keep_stream = self.worker_controller.last_turn_was_task
+        full_text = self.chat_view.finish_streaming(full_text, keep_stream=keep_stream)
         if self._current_conv_id:
             self.conversation_manager.add_message(self._current_conv_id, "assistant", full_text)
         self._kick_memory_extraction()
         if self._mobile_server:
-            self._mobile_server.publish_response(full_text, kind="assistant")
+            self._mobile_server.publish_response(
+                full_text or "(sem resposta visivel)", kind="assistant"
+            )
             self._publish_pending_mobile_voice_audio()
         should_speak_on_pc = self._voice_enabled or self._next_response_should_speak_on_pc
         self._next_response_should_speak_on_pc = False
+        self._response_from_mobile = False
         if should_speak_on_pc and full_text.strip():
             if self._voice_stream_had_content:
                 self._flush_voice_stream(full_text)
@@ -847,6 +1167,34 @@ class ModernChatWindow(QMainWindow):
                 self._enqueue_voice_stream_chunk(full_text, continuation=False)
         else:
             self._reset_voice_stream()
+        # Clear work status when WORK mode response finishes
+        if getattr(self, "_work_mode_enabled", False) and hasattr(self, "work_status_label"):
+            self.work_status_label.setText("Concluído")
+            # Hide after a short delay
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(2000, lambda: self.work_status_label.setText("Aguardando tarefa...") if getattr(self, "_work_mode_enabled", False) else None)
+
+    def _on_stop_response(self) -> bool:
+        stopped = self.worker_controller.stop_response()
+        if not stopped and self._ai_busy:
+            self.chat_view.show_thinking("Interrompendo...")
+        return stopped
+
+    def _on_ai_response_cancelled(self, partial_text: str):
+        self._ai_busy = False
+        self.input_area.set_busy(False)
+        partial_text = self.chat_view.finish_streaming(
+            partial_text, keep_stream=self.worker_controller.last_turn_was_task
+        )
+        if self._current_conv_id and partial_text.strip():
+            self.conversation_manager.add_message(self._current_conv_id, "assistant", partial_text)
+        if self._mobile_server:
+            self._mobile_server.publish_response(
+                partial_text or "(resposta interrompida)", kind="assistant"
+            )
+        self._reset_voice_stream()
+        self._next_response_should_speak_on_pc = False
+        self._response_from_mobile = False
 
     def _kick_memory_extraction(self) -> None:
         """Learn durable user facts from the finished turn, in background."""
@@ -897,6 +1245,7 @@ class ModernChatWindow(QMainWindow):
         if self._mobile_server:
             self._mobile_server.publish_response(error_text, kind="error")
         self._next_response_should_speak_on_pc = False
+        self._response_from_mobile = False
 
     def _on_ai_suggestion(self, suggestion: str):
         """Show a lighter-model suggestion in the chat as a non-persistent bubble."""
@@ -907,10 +1256,22 @@ class ModernChatWindow(QMainWindow):
         self._slow_model_suggestions_shown.add(suggestion)
         self.chat_view.add_assistant_message(f"[Dica] {suggestion}")
 
+    def _on_ai_notice(self, notice: str):
+        """Show a model-switch/context notice as a non-persistent assistant bubble."""
+        if not notice or not notice.strip():
+            return
+        if notice in self._slow_model_suggestions_shown:
+            return
+        self._slow_model_suggestions_shown.add(notice)
+        self.chat_view.add_assistant_message(notice)
+
     def _on_ai_status_update(self, status: str):
         label = self._friendly_ai_status(status)
         if label:
             self.chat_view.show_thinking(label)
+            # Also show in work status label when WORK mode is active
+            if getattr(self, "_work_mode_enabled", False) and hasattr(self, "work_status_label"):
+                self.work_status_label.setText(label)
 
     def _friendly_ai_status(self, status: str) -> str:
         raw = (status or "").strip()
@@ -953,60 +1314,48 @@ class ModernChatWindow(QMainWindow):
         return raw or "Pensando"
 
     # Model handlers
-    def _populate_model_combo(self):
-        """Fill model combo with GGUF_MODELS and mark missing local files."""
-        from core.config import GGUF_MODELS, get_model_by_id
 
-        model_entries = []
-        for model in GGUF_MODELS:
-            model_path = self.settings.get_model_path(model.id)
-            installed = model_path.exists()
-            status = "" if installed else " - nao instalado"
-            model_entries.append(
-                {
-                    "id": model.id,
-                    "label": f"{model.display_name}{status}",
-                    "display_name": model.display_name,
-                    "installed": installed,
-                    "path": str(model_path),
-                    "hf_repo": model.hf_repo,
-                    "hf_file": model.hf_file,
-                }
-            )
-        self.input_area.set_models(model_entries)
-        current = get_model_by_id(self.settings.llm_model)
-        if current:
-            self._select_model_in_combo(current.id)
-
-    def _select_model_in_combo(self, model_id: str) -> None:
-        combo = self.input_area.model_combo
-        previous_state = combo.blockSignals(True)
-        try:
-            for idx in range(combo.count()):
-                data = combo.itemData(idx)
-                if isinstance(data, dict) and data.get("id") == model_id:
-                    combo.setCurrentIndex(idx)
-                    return
-        finally:
-            combo.blockSignals(previous_state)
 
     def _on_model_list_loaded(self, models: list):
         self.input_area.set_models(models)
 
     def _on_model_changed(self, display_name: str):
-        """Switch to the selected model by display name."""
-        from core.config import GGUF_MODELS
+        """Switch to the selected model by display name.
+
+        Selecting a specific downloaded model pins it (the client's choice and
+        JEV stops auto-routing); selecting "Auto (JEV)" unpins it.
+        """
+        from core.config import GGUF_MODELS, discover_installed_models
 
         selected_data = self.input_area.model_combo.currentData()
         selected_id = selected_data.get("id") if isinstance(selected_data, dict) else None
+        if not selected_id:
+            return
+
+        if selected_id == COMBO_MODEL_AUTO:
+            if self.settings.model.model_client_choice:
+                self.settings.model.model_client_choice = False
+                self.settings.save_local_preferences()
+            return
+
+        old_model = self.settings.llm_model
+        self.settings.model.model_client_choice = True
+        if selected_id == old_model:
+            self.settings.save_local_preferences()
+            return
+
         match = next(
             (m for m in GGUF_MODELS if m.id == selected_id or m.display_name == display_name),
             None,
         )
-        if not match:
-            return
-        old_model = self.settings.llm_model
-        if match.id == old_model:
+        if match is None:
+            dirs = [self.settings.get_resources_dir()]
+            if self.settings.bundled_resources_dir.is_dir():
+                dirs.append(self.settings.bundled_resources_dir)
+            match = next((m for m in discover_installed_models(*dirs) if m.id == selected_id), None)
+        if match is None:
+            self.settings.model.model_client_choice = False
+            self._select_model_in_combo(COMBO_MODEL_AUTO)
             return
         model_path = self.settings.get_model_path(match.id)
         installed = model_path.exists()
@@ -1015,7 +1364,8 @@ class ModernChatWindow(QMainWindow):
             if not installed:
                 model_path = type(model_path)(selected_data.get("path", model_path))
         if not installed:
-            self._select_model_in_combo(old_model)
+            self.settings.model.model_client_choice = False
+            self._select_model_in_combo(COMBO_MODEL_AUTO)
             QMessageBox.information(
                 self,
                 "Modelo nao instalado",
@@ -1041,12 +1391,17 @@ class ModernChatWindow(QMainWindow):
                 n_threads=0,
             ):
                 self.settings.llm_model = old_model
-                self._select_model_in_combo(old_model)
+                self.settings.model.model_client_choice = False
+                self._select_model_in_combo(COMBO_MODEL_AUTO)
                 QMessageBox.warning(self, "Erro", f"Falha ao carregar modelo {match.name}")
+                return
         except Exception as e:
             self.settings.llm_model = old_model
-            self._select_model_in_combo(old_model)
+            self.settings.model.model_client_choice = False
+            self._select_model_in_combo(COMBO_MODEL_AUTO)
             QMessageBox.warning(self, "Erro", f"Falha ao trocar modelo: {e}")
+            return
+        self.settings.save_local_preferences()
 
     def _on_model_loaded(self, model_name: str):
         self.input_area.set_models(self.input_area.model_combo.currentText(), model_name)
@@ -1123,33 +1478,92 @@ class ModernChatWindow(QMainWindow):
     def _on_jarvis_stopped(self):
         pass
 
+    # Task panel handlers
+    def _on_task_confirm(self, approval_code: str, step: dict):
+        """Handle task confirmation."""
+        if self._task_store and self._current_conv_id:
+            task = self._task_store.find_approval(approval_code, self._current_conv_id)
+            if task:
+                for s in task["steps"]:
+                    if s.get("approval_code") == approval_code:
+                        s["status"] = "authorized"
+                        break
+                self._task_store.save(task)
+                self.task_panel.refresh_current_task()
+
+    def _on_task_cancel(self, task_id: str):
+        """Handle task cancellation."""
+        if self._task_store and self._current_conv_id:
+            task = self._task_store.get(task_id, self._current_conv_id)
+            if task:
+                task["status"] = "cancelled"
+                task["error"] = "Tarefa cancelada pelo usuário."
+                self._task_store.save(task)
+                self.task_panel.refresh_current_task()
+
+    def _on_task_pause(self, task_id: str):
+        """Handle task pause."""
+        if self._task_store and self._current_conv_id:
+            task = self._task_store.get(task_id, self._current_conv_id)
+            if task:
+                task["status"] = "paused"
+                task["error"] = "Tarefa pausada pelo usuário."
+                self._task_store.save(task)
+                self.task_panel.refresh_current_task()
+
+    def _on_task_continue(self, task_id: str):
+        """Handle task continuation."""
+        if self._task_store and self._current_conv_id:
+            task = self._task_store.get(task_id, self._current_conv_id)
+            if task and task["status"] in ("paused", "waiting_confirmation"):
+                task["status"] = "running"
+                task["error"] = ""
+                self._task_store.save(task)
+                self.task_panel.refresh_current_task()
+                # The task runtime will pick it up on next RETOMAR or auto-continue
+
+    def _on_task_mode_changed(self, mode_id: str):
+        """Handle agent mode change from task panel."""
+        self.input_area.set_mode(mode_id)
+
+
     # User message handler
     def _on_user_message(self, text: str):
-        self._reset_voice_stream()
-        self.worker_controller.stop_voice()
-        if self._jarvis:
-            self._jarvis.stop_speaking()
-
         if self._ai_busy:
             self.chat_view.add_assistant_message(
-                "Ainda estou terminando a resposta anterior. Envie a proxima mensagem quando eu concluir."
+                "Ainda estou terminando a resposta anterior. "
+                "Use o botao Parar (ou Esc) para interromper e enviar a nova pergunta."
             )
             return
 
-        self._ai_busy = True
-        self.input_area.set_busy(True)
+        if self._is_processing_message:
+            return
 
-        if not self._current_conv_id:
-            self._new_conversation()
+        text = self._strip_transport_prefix(text)
+        if not text:
+            return
 
-        attachments = self.input_area.get_attachments()
-        self.conversation_manager.add_message(self._current_conv_id, "user", text, attachments)
-        self.chat_view.add_user_message(text, attachments)
-        self.input_area.clear_attachments()
+        self._is_processing_message = True
+        try:
+            self._ai_busy = True
+            self.input_area.set_busy(True)
 
-        # Defer heavy operations (history/memory retrieval) to next event loop iteration
-        # so the user message can render first
-        QTimer.singleShot(0, lambda: self._start_ai_response(text, attachments))
+            self._reset_voice_stream()
+            self.worker_controller.stop_voice()
+            if self._jarvis:
+                self._jarvis.stop_speaking()
+
+            if not self._current_conv_id:
+                self._new_conversation()
+
+            attachments = self.input_area.get_attachments()
+            self.conversation_manager.add_message(self._current_conv_id, "user", text, attachments)
+            self.chat_view.add_user_message(text, attachments)
+            self.input_area.clear_attachments()
+
+            QTimer.singleShot(0, lambda: self._start_ai_response(text, attachments))
+        finally:
+            self._is_processing_message = False
 
     def _stream_voice_token(self, token: str):
         if not self._voice_stream_enabled_for_response or not token:
@@ -1247,6 +1661,14 @@ class ModernChatWindow(QMainWindow):
 
         system_prompt = self._build_system_prompt()
 
+        # Auto-select agents when WORK mode is enabled
+        work_agents = []
+        if getattr(self, "_work_mode_enabled", False):
+            from ai.agents import classificar_tarefa
+            agente = classificar_tarefa(text)
+            if agente and agente.id != "assistente":
+                work_agents = [agente.id]
+
         sent = self.worker_controller.send_message(
             message=text,
             system_prompt=system_prompt,
@@ -1254,10 +1676,25 @@ class ModernChatWindow(QMainWindow):
             memories=memories,
             model_name=self.settings.llm_model,
             attachments=attachments or [],
+            conversation_id=self._current_conv_id or "",
+            agent_mode=self._selected_agent_mode(),
+            work_agents=work_agents,
         )
         if sent is False:
             self._ai_busy = False
             self.input_area.set_busy(False)
+
+    def _selected_agent_mode(self) -> str:
+        """Mode chosen in the input area, or the configured default."""
+        from core.agent_modes import get_mode, is_valid_mode
+
+        if not self.settings.agent.enabled:
+            return get_mode(None).id
+        # Use the default mode since input_area no longer has mode selector
+        mode_id = self.settings.agent.default_mode
+        if not is_valid_mode(mode_id):
+            return get_mode(None).id
+        return mode_id
 
     def _build_system_prompt(self) -> str:
         today = date.today().strftime("%d/%m/%Y")
@@ -1368,6 +1805,15 @@ class ModernChatWindow(QMainWindow):
         dialog.exec()
 
     # Settings
+    def _refresh_workspace_branding(self):
+        """Exibe o nome da empresa (Config > Perfil do cliente/empresa > Empresa)
+        no titulo da janela e no topo da tela; 'Celsius Project AI' se vazio."""
+        company = self.settings.customer.company_name.strip()
+        title = company if company else "Celsius Project AI"
+        self.setWindowTitle(title)
+        if self.workspace_title is not None:
+            self.workspace_title.setText(title)
+
     def _show_settings(self):
         from ui.dialogs import ConfiguracoesDialog
 
@@ -1375,6 +1821,7 @@ class ModernChatWindow(QMainWindow):
             self.settings, scheme=scheme_from_name(self._theme_mode.value), parent=self
         )
         if dialog.exec():
+            self._refresh_workspace_branding()
             self._apply_module_configuration()
             if dialog.mobile_action in {"pair", "regenerate"}:
                 self._restart_mobile_access(show_message=True, show_pairing=True)
@@ -1407,6 +1854,37 @@ class ModernChatWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Shift+Delete"), self, activated=self.chat_view.clear)
         QShortcut(QKeySequence("Ctrl+Shift+L"), self, activated=self._toggle_theme)
         QShortcut(QKeySequence("Ctrl+,"), self, activated=self._show_settings)
+        QShortcut(QKeySequence("Ctrl+W"), self, activated=self._toggle_work_mode)
+
+    def _toggle_work_mode(self):
+        """Toggle WORK mode on/off."""
+        if self.work_btn.isChecked():
+            self._enable_work_mode()
+        else:
+            self._disable_work_mode()
+
+    def _enable_work_mode(self):
+        """Enable WORK mode - system will auto-select agents based on task."""
+        self._work_mode_enabled = True
+        # Show task panel for work mode
+        if hasattr(self, "task_panel"):
+            self.task_panel.show()
+        # Show work status label
+        if hasattr(self, "work_status_label"):
+            self.work_status_label.setText("Aguardando tarefa...")
+            self.work_status_label.show()
+
+    def _disable_work_mode(self):
+        """Disable WORK mode."""
+        self._work_mode_enabled = False
+        if hasattr(self, "task_panel"):
+            self.task_panel.hide()
+        # Hide work status label
+        if hasattr(self, "work_status_label"):
+            self.work_status_label.hide()
+            self.work_status_label.setText("")
+
+
 
     def closeEvent(self, event):
         if self._jarvis:

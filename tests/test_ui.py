@@ -59,6 +59,30 @@ class TestTheme:
         assert LIGHT_SCHEME.accent_primary in input_area.btn_send.styleSheet()
         assert not input_area.btn_send.icon().isNull()
 
+    def test_input_area_lists_the_six_modes_and_reports_the_selection(self, qapp):
+        from core.agent_modes import MODES, get_mode
+        from ui.chat import ModernInputArea
+
+        input_area = ModernInputArea()
+
+        assert input_area.mode_combo.count() == len(MODES)
+        assert input_area.get_mode() == get_mode(None).id
+        input_area.set_mode("estoque")
+        assert input_area.get_mode() == "estoque"
+        input_area.set_mode("nao-existe")
+        assert input_area.get_mode() == "estoque"
+
+    def test_input_area_emits_change_mode(self, qapp):
+        from ui.chat import ModernInputArea
+
+        input_area = ModernInputArea()
+        received: list[str] = []
+        input_area.change_mode.connect(received.append)
+
+        input_area.set_mode("pesquisador")
+
+        assert received == ["pesquisador"]
+
     def test_inventory_status_colors_follow_dark_scheme(self):
         from types import SimpleNamespace
 
@@ -291,6 +315,28 @@ class TestChatView:
 
         assert bubble.status_label.isHidden()
         assert bubble.status_label.text() == ""
+
+    def test_a_task_keeps_its_streamed_work_and_gains_the_footer(self, qapp):
+        from ui.window import ModernChatView
+
+        view = ModernChatView()
+        view.start_streaming()
+        view.append_streaming("Secao 1: ja convertida.")
+        shown = view.finish_streaming(
+            "Secao 1: ja convertida.\n\nLimite de etapas atingido.", keep_stream=True
+        )
+        assert "Secao 1" in shown
+        assert "Limite de etapas" in shown
+
+    def test_a_task_keeps_its_work_when_the_engine_answers_something_else(self, qapp):
+        from ui.window import ModernChatView
+
+        view = ModernChatView()
+        view.start_streaming()
+        view.append_streaming("Secao 1: ja convertida.")
+        shown = view.finish_streaming("Confirme o codigo ABC123", keep_stream=True)
+        assert "Secao 1" in shown
+        assert "ABC123" in shown
 
     def test_thinking_indicator_updates_existing_text(self, qapp):
         from ui.window import ModernChatView
@@ -534,6 +580,43 @@ class TestWorkerController:
         assert second is False
         assert len(calls) == 1
 
+    def test_stop_response_delegates_to_worker_manager(self, qapp):
+        from ui.controllers.worker_controller import WorkerController
+
+        calls = []
+
+        class FakeWorkerManager:
+            def cancel_current(self):
+                calls.append(True)
+                return True
+
+        controller = WorkerController()
+        controller.worker_manager = FakeWorkerManager()
+        controller._ai_busy = True
+
+        assert controller.stop_response() is True
+        assert calls == [True]
+
+    def test_stop_response_returns_false_when_idle(self, qapp):
+        from ui.controllers.worker_controller import WorkerController
+
+        controller = WorkerController()
+        controller.worker_manager = type("M", (), {"cancel_current": lambda self: True})()
+
+        assert controller.stop_response() is False
+
+    def test_cancelled_signal_emits_partial_text(self, qapp):
+        from ui.controllers.worker_controller import WorkerController
+
+        controller = WorkerController()
+        received = []
+        controller.ai_response_cancelled.connect(received.append)
+
+        controller._on_cancelled("Trecho parcial")
+
+        assert received == ["Trecho parcial"]
+        assert controller._ai_busy is False
+
 
 class TestEngineConversationHistory:
     def test_gerar_resposta_passes_prior_history_without_current_duplicate(self, monkeypatch):
@@ -545,7 +628,12 @@ class TestEngineConversationHistory:
         monkeypatch.setattr(engine, "_responder_rapido", lambda _pergunta: None)
 
         def fake_loop_react(
-            prompt_dict, fn_status=None, fn_passo=None, fn_chunk=None, history=None
+            prompt_dict,
+            fn_status=None,
+            fn_passo=None,
+            fn_chunk=None,
+            history=None,
+            should_cancel=None,
         ):
             captured["history"] = history
             return "Seu nome e Celso.", []
@@ -611,6 +699,40 @@ class TestResponseSafety:
         stream_filter = _ReasoningStreamFilter()
 
         assert stream_filter.feed("Resposta direta.") == "Resposta direta."
+
+    def test_reasoning_stream_filter_hides_heretic_plain_reasoning(self):
+        from ai.react import REASONING_CLOSE_TAGS, _ReasoningStreamFilter
+
+        output = []
+        stream_filter = _ReasoningStreamFilter(assume_reasoning=True)
+        for chunk in (
+            "The user is asking a simple factual question. ",
+            "I need to provide a direct answer.",
+            "\n",
+            REASONING_CLOSE_TAGS[0],
+            "\n\nA capital do Brasil e Paris.",
+        ):
+            result = stream_filter.feed(chunk)
+            if result:
+                output.append(result)
+
+        assert "".join(output) == "\n\nA capital do Brasil e Paris."
+        assert stream_filter.finish() == ""
+
+    def test_reasoning_stream_filter_finish_flushes_when_no_marker(self):
+        from ai.react import _ReasoningStreamFilter
+
+        stream_filter = _ReasoningStreamFilter(assume_reasoning=True)
+        assert stream_filter.feed("Resposta direta sem marcador.") == ""
+        assert stream_filter.finish() == "Resposta direta sem marcador."
+
+    def test_is_reasoning_model_detects_heretic_family(self):
+        from ai.react import _is_reasoning_model
+
+        assert _is_reasoning_model("qwen-heretic-q4_k_m")
+        assert _is_reasoning_model("deepseek-r1-distill-qwen-7b-q4km")
+        assert not _is_reasoning_model("qwen2.5-vl-7b-q4km")
+        assert not _is_reasoning_model("gemma3-4b-q4km")
 
     def test_limpar_resposta_removes_internal_chat_template_markers(self):
         from ai.react import _limpar_resposta
@@ -729,7 +851,9 @@ class TestModernInputArea:
 
         assert emitted == []
         assert area._busy is True
-        assert area.input.isEnabled() is False
+        assert area.input.isEnabled() is True
+        assert area.btn_send.isHidden() is True
+        assert area.btn_stop.isHidden() is False
 
 
 class TestJarvisVoiceVisualizer:
@@ -833,6 +957,74 @@ class TestModernChatWindow:
 
         assert missing == ""
 
+    def test_model_combo_auto_entry_unpins_client_choice(self, qapp, monkeypatch, tmp_path):
+        from PySide6.QtWidgets import QComboBox
+
+        from core.settings import Settings
+        from ui.window import COMBO_MODEL_AUTO, ModernChatWindow
+
+        class FakeInputArea:
+            def __init__(self, combo):
+                self.model_combo = combo
+
+            def set_models(self, entries):
+                self.model_combo.blockSignals(True)
+                self.model_combo.clear()
+                for entry in entries:
+                    self.model_combo.addItem(entry["label"], entry)
+                self.model_combo.blockSignals(False)
+
+        combo = QComboBox()
+        window = ModernChatWindow.__new__(ModernChatWindow)
+        window.settings = Settings(data_dir=tmp_path)
+        window.settings.initialize()
+        window.settings.model.model_client_choice = False
+        window.input_area = FakeInputArea(combo)
+        monkeypatch.setattr(type(window.settings), "save_local_preferences", lambda self: None)
+
+        window._populate_model_combo()
+        assert combo.itemData(0)["id"] == COMBO_MODEL_AUTO
+        assert combo.currentData()["id"] == COMBO_MODEL_AUTO
+
+        combo.setCurrentIndex(1)
+        window._on_model_changed(combo.currentText())
+        assert window.settings.model.model_client_choice is True
+        assert window.settings.llm_model == combo.currentData()["id"]
+
+        combo.setCurrentIndex(0)
+        window._on_model_changed(combo.currentText())
+        assert window.settings.model.model_client_choice is False
+
+    def test_ai_notice_shows_bubble_once(self, qapp):
+        from ui.window import ModernChatWindow
+
+        class FakeChatView:
+            def __init__(self):
+                self.messages = []
+
+            def add_assistant_message(self, text):
+                self.messages.append(text)
+
+        window = ModernChatWindow.__new__(ModernChatWindow)
+        window.chat_view = FakeChatView()
+        window._slow_model_suggestions_shown = {
+            "O JEV sugeriu 'qwen3-8b-q4km', mas mantive 'qwen2.5-vl-7b-q4km' para "
+            "preservar o contexto desta conversa. O novo modelo sera aplicado "
+            "na proxima conversa ou se voce escolher manualmente no seletor."
+        }
+
+        window._on_ai_notice("")
+        window._on_ai_notice("   ")
+        assert window.chat_view.messages == []
+
+        notice = "Troquei para qwen3-8b-q4km. A conversa era curta e o contexto foi reiniciado."
+        window._on_ai_notice(notice)
+        assert window.chat_view.messages == [notice]
+
+        window._on_ai_notice(notice)
+        assert window.chat_view.messages == [notice]
+        assert notice in window._slow_model_suggestions_shown
+
     @pytest.mark.skip(reason="Requires full inventory/kanban stack (mocked in test env)")
     def test_window_creation(self, qapp):
         from ui.window import ModernChatWindow
@@ -848,3 +1040,42 @@ class TestModernChatWindow:
         window = ModernChatWindow()
         window._new_conversation()
         assert len(window.chat_view.messages) == 0
+
+    def test_on_user_message_prevents_reentrancy(self, qapp):
+        from ui.window import ModernChatWindow
+
+        window = ModernChatWindow()
+        window._is_processing_message = True
+
+        window._on_user_message("Primeira mensagem")
+
+        assert window._ai_busy is False
+        assert window._is_processing_message is True
+
+    def test_on_user_message_restores_flag_on_exception(self, qapp):
+        from unittest.mock import MagicMock, patch
+
+        with patch("ui.window.ModernChatWindow.__init__", lambda self: None):
+            from ui.window import ModernChatWindow
+
+            window = ModernChatWindow()
+            window._ai_busy = False
+            window._is_processing_message = False
+            window._strip_transport_prefix = lambda text: text
+            window.input_area = MagicMock()
+            window._reset_voice_stream = MagicMock()
+            window.worker_controller = MagicMock()
+            window._jarvis = None
+            window._current_conv_id = None
+            window.conversation_manager = MagicMock()
+            window.chat_view = MagicMock()
+
+            def raise_error(*args, **kwargs):
+                raise RuntimeError("Erro simulado")
+
+            window._new_conversation = raise_error
+
+            with pytest.raises(RuntimeError, match="Erro simulado"):
+                window._on_user_message("Mensagem com erro")
+
+            assert window._is_processing_message is False

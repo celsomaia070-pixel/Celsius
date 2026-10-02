@@ -206,8 +206,6 @@ class VozWorker(QThread):
         if pygame.mixer.get_init():
             pygame.mixer.music.stop()
         self._cleanup()
-        self.quit()
-        self.wait(1000)
 
     def enqueue_text(self, text: str, *, continuation: bool = True) -> None:
         cleaned = naturalize_tts_text(text)
